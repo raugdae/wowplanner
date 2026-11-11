@@ -9,6 +9,7 @@ from discord.ext import commands
 from . import __version__
 from .config import Config
 from .db import Database
+from .ephemeral import EphemeralCleaner
 from .instances import InstanceRegistry
 from .roles import RoleEmojis
 
@@ -33,6 +34,7 @@ class WowPlannerBot(commands.Bot):
         self.role_emojis = RoleEmojis(
             {"tank": config.emoji_tank, "heal": config.emoji_heal, "dps": config.emoji_dps}
         )
+        self.ephemeral = EphemeralCleaner()
 
     async def setup_hook(self) -> None:
         self.http_session = aiohttp.ClientSession(headers={"User-Agent": USER_AGENT})
@@ -55,6 +57,10 @@ class WowPlannerBot(commands.Bot):
     async def on_ready(self) -> None:
         log.info("Connecté en tant que %s (%s)", self.user, self.user.id if self.user else "?")
         await self.change_presence(activity=discord.Game("/ajouter event"))
+
+    async def on_interaction(self, interaction: discord.Interaction) -> None:
+        # Simple écoute : le traitement des commandes et des boutons se fait ailleurs, en parallèle.
+        await self.ephemeral.on_interaction(interaction)
 
     async def close(self) -> None:
         if getattr(self, "http_session", None):

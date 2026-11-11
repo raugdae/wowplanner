@@ -64,6 +64,7 @@ Tu peux surcharger n'importe quel rôle. Exemple : `tanks:2` sur Hyjal Summit ga
   - plusieurs : un menu visible seulement par toi demande lequel. Les persos dont c'est le rôle préféré ⭐ sont en tête et présélectionnés ;
   - aucun perso déclaré : tu es inscrit avec ton pseudo Discord ;
   - des persos, mais aucun pour ce rôle : inscription refusée, le bot liste ce que tes persos peuvent jouer.
+- Les réponses du bot visibles seulement par toi ne s'empilent pas : à ta commande ou ton clic suivant, la précédente est effacée. Discord ne le permet que pendant 15 minutes ; au-delà, elle reste jusqu'à ce que tu la fermes ou recharges Discord.
 - Si le bot redémarre, les boutons continuent de marcher. Les sorties créées avec l'ancienne version (inscription par réaction) sont converties au démarrage : les réactions sont retirées, les inscrits sont gardés.
 
 ### Classes et rôles

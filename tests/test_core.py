@@ -297,3 +297,43 @@ def test_character_name_normalization():
     assert normalize_name("élodie dupré") == "Élodie Dupré"
     for bad in ("Grommash  Hurlenfer", "Jean Paul Dupont", "Grom1", "Gr-om", "G Hurlenfer", "a" * 33):
         assert normalize_name(bad) is None, bad
+
+
+def test_ephemeral_cleaner():
+    import asyncio
+    import datetime
+    from types import SimpleNamespace
+
+    import discord
+
+    from wowplanner.ephemeral import EphemeralCleaner
+
+    deleted = []
+    now = discord.utils.utcnow()
+
+    def inter(id_, user, kind="command", ephemeral_msg=False, age_min=0):
+        async def delete_original_response():
+            deleted.append(id_)
+
+        message = SimpleNamespace(flags=SimpleNamespace(ephemeral=ephemeral_msg))
+        return SimpleNamespace(
+            id=id_,
+            user=SimpleNamespace(id=user),
+            type=discord.InteractionType.application_command if kind == "command" else discord.InteractionType.component,
+            message=None if kind == "command" else message,
+            expires_at=now + datetime.timedelta(minutes=15 - age_min),
+            delete_original_response=delete_original_response,
+        )
+
+    async def scenario():
+        c = EphemeralCleaner()
+        await c.on_interaction(inter(1, user=7))  # /liste persos
+        await c.on_interaction(inter(2, user=7, kind="button"))  # clic Heal sur une sortie → efface 1
+        await c.on_interaction(inter(3, user=7, kind="button", ephemeral_msg=True))  # choix du perso : on garde 2
+        await c.on_interaction(inter(4, user=8))  # autre joueur : n'efface rien de 7
+        await c.on_interaction(inter(5, user=7))  # nouvelle commande → efface 2
+        c._last[7] = inter(6, user=7, age_min=15)  # réponse expirée : plus supprimable
+        await c.on_interaction(inter(7, user=7))
+
+    asyncio.run(scenario())
+    assert deleted == [1, 2]
