@@ -104,7 +104,7 @@ class CommandsCog(commands.Cog):
 
     @ajouter.command(name="perso", description="Déclarer un de tes personnages")
     @app_commands.describe(
-        nom="Nom du personnage en jeu",
+        nom="Nom du perso en jeu, prénom et nom séparés par un espace (ex. : Grommash Hurlenfer)",
         classe="Classe",
         race="Race",
         role_prefere="Ton rôle préféré avec ce perso (s'il peut en jouer plusieurs)",
@@ -113,7 +113,7 @@ class CommandsCog(commands.Cog):
     async def ajouter_perso(
         self,
         interaction: discord.Interaction,
-        nom: app_commands.Range[str, 2, 24],
+        nom: app_commands.Range[str, 2, 32],
         classe: app_commands.Choice[str],
         race: app_commands.Choice[str],
         role_prefere: Optional[app_commands.Choice[str]] = None,
@@ -152,7 +152,7 @@ class CommandsCog(commands.Cog):
         self,
         interaction: discord.Interaction,
         perso: str,
-        nom: Optional[app_commands.Range[str, 2, 24]] = None,
+        nom: Optional[app_commands.Range[str, 2, 32]] = None,
         classe: Optional[app_commands.Choice[str]] = None,
         race: Optional[app_commands.Choice[str]] = None,
         role_prefere: Optional[app_commands.Choice[str]] = None,

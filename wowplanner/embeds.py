@@ -21,7 +21,7 @@ def player_name(signup: Signup, with_pseudo: bool = True) -> str:
     pseudo = _clean(signup.display_name) if signup.display_name else f"<@{signup.user_id}>"
     if not signup.character_name:
         return pseudo
-    text = f"**{_clean(signup.character_name, 24)}** · {class_label(signup.character_class or '')}"
+    text = f"**{_clean(signup.character_name, 32)}** · {class_label(signup.character_class or '')}"
     return f"{text} ({pseudo})" if with_pseudo else text
 
 

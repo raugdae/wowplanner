@@ -27,8 +27,14 @@ if TYPE_CHECKING:
 
 # Le menu de choix du perso est limité à 25 options par Discord.
 MAX_CHARACTERS = 25
-# Lettres uniquement (accents compris), comme les noms de personnage en jeu.
-NAME_RE = re.compile(r"^[^\W\d_]{2,24}$")
+# Lettres uniquement (accents compris), en un ou deux mots (prénom nom, comme dans WoW Forever)
+# séparés par un seul espace. Chaque mot fait au moins 2 lettres.
+NAME_RE = re.compile(r"^[^\W\d_]{2,}( [^\W\d_]{2,})?$")
+NAME_MAX = 32
+NAME_ERROR = (
+    f"⚠️ Le nom ne doit contenir que des lettres ({NAME_MAX} max), en un ou deux mots "
+    "séparés par **un seul** espace (ex. : `Grommash` ou `Grommash Hurlenfer`)."
+)
 
 
 def roles_text(c: Character) -> str:
@@ -51,11 +57,11 @@ def character_block(c: Character) -> str:
 
 
 def normalize_name(name: str) -> str | None:
-    """« grommash » → « Grommash », comme en jeu. None si le nom n'est pas valide."""
+    """« grommash hurlenfer » → « Grommash Hurlenfer », comme en jeu. None si le nom n'est pas valide."""
     name = name.strip()
-    if not NAME_RE.match(name):
+    if len(name) > NAME_MAX or not NAME_RE.match(name):
         return None
-    return name[0].upper() + name[1:].lower()
+    return " ".join(part[0].upper() + part[1:].lower() for part in name.split(" "))
 
 
 def role_refusal(wow_class: str, role: str) -> str:
@@ -92,7 +98,7 @@ class CharacterCommands:
     ) -> None:
         name = normalize_name(nom)
         if name is None:
-            return await self._send(interaction, "⚠️ Le nom ne doit contenir que des lettres (2 à 24).")
+            return await self._send(interaction, NAME_ERROR)
         if not race_allows(race, classe):
             return await self._send(interaction, race_refusal(race, classe))
         if role_prefere and role_prefere not in roles_for(classe):
@@ -136,7 +142,7 @@ class CharacterCommands:
         if nom:
             name = normalize_name(nom)
             if name is None:
-                return await self._send(interaction, "⚠️ Le nom ne doit contenir que des lettres (2 à 24).")
+                return await self._send(interaction, NAME_ERROR)
             updated.name = name
         updated.wow_class = classe or character.wow_class
         updated.race = race or character.race

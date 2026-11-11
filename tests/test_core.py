@@ -287,3 +287,13 @@ def test_signup_choices_isolated_per_event(tmp_path):
     assert cog.signup_choices(None, "") == []  # sortie pas encore choisie : rien
     assert [c.value for c in cog.signup_choices(str(ev_a), "raug")] == ["1"]
     db.close()
+
+
+def test_character_name_normalization():
+    from wowplanner.cogs.characters import normalize_name
+
+    assert normalize_name("grommash") == "Grommash"
+    assert normalize_name("  grommash HURLENFER ") == "Grommash Hurlenfer"
+    assert normalize_name("élodie dupré") == "Élodie Dupré"
+    for bad in ("Grommash  Hurlenfer", "Jean Paul Dupont", "Grom1", "Gr-om", "G Hurlenfer", "a" * 33):
+        assert normalize_name(bad) is None, bad
