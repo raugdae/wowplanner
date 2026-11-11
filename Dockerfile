@@ -10,7 +10,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY wowplanner ./wowplanner
 
-RUN useradd --create-home bot && mkdir -p /app/data && chown bot /app/data
+# UID/GID fixes : le dossier ./data de l'hôte doit appartenir à 1000:1000 (voir README).
+RUN groupadd --gid 1000 bot && useradd --uid 1000 --gid 1000 --create-home bot \
+    && mkdir -p /app/data && chown 1000:1000 /app/data
 USER bot
 VOLUME ["/app/data"]
 
