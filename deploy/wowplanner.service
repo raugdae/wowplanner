@@ -1,0 +1,18 @@
+# Service systemd (alternative à Docker).
+# Installation : voir README.md, section « Déploiement sans Docker ».
+[Unit]
+Description=WoW Planner - bot Discord
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=wowplanner
+WorkingDirectory=/opt/wowplanner
+EnvironmentFile=/opt/wowplanner/.env
+ExecStart=/opt/wowplanner/.venv/bin/python -m wowplanner
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

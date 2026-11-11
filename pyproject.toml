@@ -1,0 +1,13 @@
+[project]
+name = "wowplanner"
+version = "1.0.0"
+description = "Bot Discord d'organisation de sorties donjon/raid pour WoW Forever"
+requires-python = ">=3.11"
+dependencies = ["discord.py>=2.4,<3", "python-dotenv>=1.0", "tzdata>=2024.1"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

@@ -218,3 +218,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# WoW Planner : données runtime (base SQLite, cache des instances)
+data/
