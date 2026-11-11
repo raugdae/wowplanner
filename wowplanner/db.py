@@ -23,9 +23,42 @@ CREATE TABLE IF NOT EXISTS events (
     dps_cap      INTEGER NOT NULL,
     description  TEXT,
     cancelled    INTEGER NOT NULL DEFAULT 0,
-    created_at   INTEGER NOT NULL
+    created_at   INTEGER NOT NULL,
+    reminder_sent    INTEGER NOT NULL DEFAULT 0,
+    voice_channel_id INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_events_guild_start ON events (guild_id, starts_at);
+
+CREATE TABLE IF NOT EXISTS characters (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL,
+    name       TEXT    NOT NULL,
+    wow_class  TEXT    NOT NULL,
+    race       TEXT    NOT NULL,
+    preferred_role TEXT,
+    created_at INTEGER NOT NULL,
+    UNIQUE (user_id, name COLLATE NOCASE)
+);
+
+CREATE TABLE IF NOT EXISTS character_professions (
+    character_id INTEGER NOT NULL REFERENCES characters (id) ON DELETE CASCADE,
+    profession   TEXT    NOT NULL,
+    skill        INTEGER,
+    PRIMARY KEY (character_id, profession)
+);
+
+CREATE TABLE IF NOT EXISTS players (
+    user_id    INTEGER PRIMARY KEY,
+    battletag  TEXT,
+    updated_at INTEGER NOT NULL
+);
+
+-- Joueurs vus sur chaque serveur : les listes (BattleTag, métiers) ne montrent que les membres du serveur.
+CREATE TABLE IF NOT EXISTS guild_members (
+    guild_id INTEGER NOT NULL,
+    user_id  INTEGER NOT NULL,
+    PRIMARY KEY (guild_id, user_id)
+);
 
 CREATE TABLE IF NOT EXISTS signups (
     message_id INTEGER NOT NULL REFERENCES events (message_id) ON DELETE CASCADE,
@@ -33,6 +66,7 @@ CREATE TABLE IF NOT EXISTS signups (
     role       TEXT    NOT NULL,
     signed_at  REAL    NOT NULL,
     display_name TEXT,
+    character_id INTEGER REFERENCES characters (id) ON DELETE SET NULL,
     PRIMARY KEY (message_id, user_id)
 );
 """
@@ -52,6 +86,9 @@ class Event:
     description: str | None = None
     cancelled: bool = False
     created_at: int = field(default_factory=lambda: int(time.time()))
+    reminder_sent: bool = False
+    # None : pas encore créé · 0 : supprimé ou création impossible · >0 : ID du salon vocal
+    voice_channel_id: int | None = None
 
     @property
     def size(self) -> int:
@@ -64,6 +101,21 @@ class Signup:
     role: str
     signed_at: float
     display_name: str | None = None
+    character_id: int | None = None
+    character_name: str | None = None
+    character_class: str | None = None
+
+
+@dataclass
+class Character:
+    id: int
+    user_id: int
+    name: str
+    wow_class: str
+    race: str
+    preferred_role: str | None = None
+    # métier -> niveau (None si non renseigné)
+    professions: dict[str, int | None] = field(default_factory=dict)
 
 
 class Database:
@@ -81,6 +133,22 @@ class Database:
         columns = {row["name"] for row in self.conn.execute("PRAGMA table_info(signups)")}
         if "display_name" not in columns:
             self.conn.execute("ALTER TABLE signups ADD COLUMN display_name TEXT")
+        # v1.2 → v1.3 : personnage joué.
+        if "character_id" not in columns:
+            self.conn.execute(
+                "ALTER TABLE signups ADD COLUMN character_id INTEGER REFERENCES characters (id) ON DELETE SET NULL"
+            )
+        # v1.1 → v1.2 : rappel en MP et salon vocal automatique.
+        columns = {row["name"] for row in self.conn.execute("PRAGMA table_info(events)")}
+        if "reminder_sent" not in columns:
+            self.conn.execute("ALTER TABLE events ADD COLUMN reminder_sent INTEGER NOT NULL DEFAULT 0")
+        if "voice_channel_id" not in columns:
+            self.conn.execute("ALTER TABLE events ADD COLUMN voice_channel_id INTEGER")
+        # Les joueurs déjà inscrits à des sorties sont membres du serveur de ces sorties.
+        self.conn.execute(
+            """INSERT OR IGNORE INTO guild_members (guild_id, user_id)
+               SELECT DISTINCT e.guild_id, s.user_id FROM signups s JOIN events e ON e.message_id = s.message_id"""
+        )
 
     def close(self) -> None:
         self.conn.close()
@@ -102,6 +170,8 @@ class Database:
             description=row["description"],
             cancelled=bool(row["cancelled"]),
             created_at=row["created_at"],
+            reminder_sent=bool(row["reminder_sent"]),
+            voice_channel_id=row["voice_channel_id"],
         )
 
     def create_event(self, ev: Event) -> None:
@@ -138,6 +208,39 @@ class Database:
         with self.conn:
             self.conn.execute("UPDATE events SET cancelled = 1 WHERE message_id = ?", (message_id,))
 
+    def events_to_remind(self, now: int, lead: int) -> list[Event]:
+        """Sorties qui commencent dans moins de `lead` secondes et dont le rappel n'est pas parti."""
+        rows = self.conn.execute(
+            """SELECT * FROM events WHERE cancelled = 0 AND reminder_sent = 0
+                   AND starts_at > ? AND starts_at <= ? ORDER BY starts_at""",
+            (now, now + lead),
+        ).fetchall()
+        return [self._row_to_event(r) for r in rows]
+
+    def mark_reminded(self, message_id: int) -> None:
+        with self.conn:
+            self.conn.execute("UPDATE events SET reminder_sent = 1 WHERE message_id = ?", (message_id,))
+
+    def events_needing_voice(self, now: int, lead: int, late: int) -> list[Event]:
+        """Sorties qui commencent dans moins de `lead` secondes (ou ont commencé il y a moins de
+        `late` secondes, pour rattraper un redémarrage) et n'ont pas encore de salon vocal."""
+        rows = self.conn.execute(
+            """SELECT * FROM events WHERE cancelled = 0 AND voice_channel_id IS NULL
+                   AND starts_at > ? AND starts_at <= ? ORDER BY starts_at""",
+            (now - late, now + lead),
+        ).fetchall()
+        return [self._row_to_event(r) for r in rows]
+
+    def events_with_voice(self) -> list[Event]:
+        rows = self.conn.execute("SELECT * FROM events WHERE voice_channel_id > 0").fetchall()
+        return [self._row_to_event(r) for r in rows]
+
+    def set_voice_channel(self, message_id: int, channel_id: int) -> None:
+        with self.conn:
+            self.conn.execute(
+                "UPDATE events SET voice_channel_id = ? WHERE message_id = ?", (channel_id, message_id)
+            )
+
     def delete_event(self, message_id: int) -> None:
         with self.conn:
             self.conn.execute("DELETE FROM events WHERE message_id = ?", (message_id,))
@@ -146,23 +249,164 @@ class Database:
 
     def get_signups(self, message_id: int) -> list[Signup]:
         rows = self.conn.execute(
-            "SELECT user_id, role, signed_at, display_name FROM signups WHERE message_id = ? ORDER BY signed_at",
+            """SELECT s.user_id, s.role, s.signed_at, s.display_name, s.character_id,
+                      c.name AS character_name, c.wow_class AS character_class
+               FROM signups s LEFT JOIN characters c ON c.id = s.character_id
+               WHERE s.message_id = ? ORDER BY s.signed_at""",
             (message_id,),
         ).fetchall()
         return [
-            Signup(r["user_id"], r["role"], r["signed_at"], r["display_name"]) for r in rows if r["role"] in ROLES
+            Signup(
+                r["user_id"], r["role"], r["signed_at"], r["display_name"],
+                r["character_id"], r["character_name"], r["character_class"],
+            )
+            for r in rows
+            if r["role"] in ROLES
         ]
 
-    def upsert_signup(self, message_id: int, user_id: int, role: str, display_name: str | None) -> None:
+    def upsert_signup(
+        self, message_id: int, user_id: int, role: str, display_name: str | None, character_id: int | None = None
+    ) -> None:
+        """Inscrit ou met à jour. Changer seulement de perso garde la place dans l'ordre d'inscription."""
         with self.conn:
             self.conn.execute(
-                """INSERT INTO signups (message_id, user_id, role, signed_at, display_name) VALUES (?, ?, ?, ?, ?)
-                   ON CONFLICT (message_id, user_id) DO UPDATE SET role = excluded.role,
-                                                                   signed_at = excluded.signed_at,
-                                                                   display_name = excluded.display_name""",
-                (message_id, user_id, role, time.time(), display_name),
+                """INSERT INTO signups (message_id, user_id, role, signed_at, display_name, character_id)
+                   VALUES (?, ?, ?, ?, ?, ?)
+                   ON CONFLICT (message_id, user_id) DO UPDATE SET
+                       signed_at = CASE WHEN role = excluded.role THEN signed_at ELSE excluded.signed_at END,
+                       role = excluded.role,
+                       display_name = excluded.display_name,
+                       character_id = excluded.character_id""",
+                (message_id, user_id, role, time.time(), display_name, character_id),
             )
 
     def delete_signup(self, message_id: int, user_id: int) -> None:
         with self.conn:
             self.conn.execute("DELETE FROM signups WHERE message_id = ? AND user_id = ?", (message_id, user_id))
+
+    # -------------------------------------------------------------- characters
+
+    def _load_characters(self, rows: list[sqlite3.Row]) -> list[Character]:
+        characters = [
+            Character(r["id"], r["user_id"], r["name"], r["wow_class"], r["race"], r["preferred_role"]) for r in rows
+        ]
+        if characters:
+            by_id = {c.id: c for c in characters}
+            marks = ",".join("?" * len(by_id))
+            for p in self.conn.execute(
+                f"SELECT * FROM character_professions WHERE character_id IN ({marks}) ORDER BY profession",
+                tuple(by_id),
+            ):
+                by_id[p["character_id"]].professions[p["profession"]] = p["skill"]
+        return characters
+
+    def add_character(
+        self, user_id: int, name: str, wow_class: str, race: str, preferred_role: str | None = None
+    ) -> Character:
+        """Lève sqlite3.IntegrityError si le joueur a déjà un perso de ce nom."""
+        with self.conn:
+            cur = self.conn.execute(
+                """INSERT INTO characters (user_id, name, wow_class, race, preferred_role, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (user_id, name, wow_class, race, preferred_role, int(time.time())),
+            )
+        return Character(cur.lastrowid, user_id, name, wow_class, race, preferred_role)
+
+    def get_characters(self, user_id: int) -> list[Character]:
+        rows = self.conn.execute(
+            "SELECT * FROM characters WHERE user_id = ? ORDER BY name COLLATE NOCASE", (user_id,)
+        ).fetchall()
+        return self._load_characters(rows)
+
+    def get_character(self, character_id: int) -> Character | None:
+        rows = self.conn.execute("SELECT * FROM characters WHERE id = ?", (character_id,)).fetchall()
+        found = self._load_characters(rows)
+        return found[0] if found else None
+
+    def update_character(self, c: Character) -> None:
+        """Enregistre nom, classe, race et rôle préféré. Lève sqlite3.IntegrityError si le nom est déjà pris."""
+        with self.conn:
+            self.conn.execute(
+                "UPDATE characters SET name = ?, wow_class = ?, race = ?, preferred_role = ? WHERE id = ?",
+                (c.name, c.wow_class, c.race, c.preferred_role, c.id),
+            )
+
+    def character_events(self, character_id: int) -> list[int]:
+        """Sorties où ce perso est inscrit."""
+        rows = self.conn.execute(
+            "SELECT DISTINCT message_id FROM signups WHERE character_id = ?", (character_id,)
+        ).fetchall()
+        return [r["message_id"] for r in rows]
+
+    def set_preferred_role(self, character_id: int, role: str | None) -> None:
+        with self.conn:
+            self.conn.execute("UPDATE characters SET preferred_role = ? WHERE id = ?", (role, character_id))
+
+    def delete_character(self, user_id: int, character_id: int) -> list[int]:
+        """Supprime le perso et renvoie les sorties où il était inscrit (pour mettre leur message à jour)."""
+        with self.conn:
+            rows = self.conn.execute(
+                "SELECT DISTINCT message_id FROM signups WHERE character_id = ?", (character_id,)
+            ).fetchall()
+            self.conn.execute("DELETE FROM characters WHERE id = ? AND user_id = ?", (character_id, user_id))
+        return [r["message_id"] for r in rows]
+
+    # --------------------------------------------------------------- métiers
+
+    def set_profession(self, character_id: int, profession: str, skill: int | None) -> None:
+        with self.conn:
+            self.conn.execute(
+                """INSERT INTO character_professions (character_id, profession, skill) VALUES (?, ?, ?)
+                   ON CONFLICT (character_id, profession) DO UPDATE SET skill = excluded.skill""",
+                (character_id, profession, skill),
+            )
+
+    def remove_profession(self, character_id: int, profession: str) -> bool:
+        with self.conn:
+            cur = self.conn.execute(
+                "DELETE FROM character_professions WHERE character_id = ? AND profession = ?",
+                (character_id, profession),
+            )
+        return cur.rowcount > 0
+
+    def characters_with_profession(self, guild_id: int, profession: str) -> list[tuple[Character, int | None]]:
+        """Persos des membres du serveur qui ont ce métier, du plus haut niveau au plus bas."""
+        rows = self.conn.execute(
+            """SELECT c.*, p.skill FROM characters c
+               JOIN character_professions p ON p.character_id = c.id
+               JOIN guild_members m ON m.user_id = c.user_id AND m.guild_id = ?
+               WHERE p.profession = ?
+               ORDER BY p.skill IS NULL, p.skill DESC, c.name COLLATE NOCASE""",
+            (guild_id, profession),
+        ).fetchall()
+        return [(c, r["skill"]) for c, r in zip(self._load_characters(rows), rows)]
+
+    # ------------------------------------------------------- joueurs / serveurs
+
+    def touch_member(self, guild_id: int, user_id: int) -> None:
+        with self.conn:
+            self.conn.execute(
+                "INSERT OR IGNORE INTO guild_members (guild_id, user_id) VALUES (?, ?)", (guild_id, user_id)
+            )
+
+    def set_battletag(self, user_id: int, battletag: str | None) -> None:
+        with self.conn:
+            self.conn.execute(
+                """INSERT INTO players (user_id, battletag, updated_at) VALUES (?, ?, ?)
+                   ON CONFLICT (user_id) DO UPDATE SET battletag = excluded.battletag,
+                                                       updated_at = excluded.updated_at""",
+                (user_id, battletag, int(time.time())),
+            )
+
+    def get_battletag(self, user_id: int) -> str | None:
+        row = self.conn.execute("SELECT battletag FROM players WHERE user_id = ?", (user_id,)).fetchone()
+        return row["battletag"] if row else None
+
+    def battletags(self, guild_id: int) -> list[tuple[int, str]]:
+        rows = self.conn.execute(
+            """SELECT p.user_id, p.battletag FROM players p
+               JOIN guild_members m ON m.user_id = p.user_id AND m.guild_id = ?
+               WHERE p.battletag IS NOT NULL ORDER BY p.battletag COLLATE NOCASE""",
+            (guild_id,),
+        ).fetchall()
+        return [(r["user_id"], r["battletag"]) for r in rows]

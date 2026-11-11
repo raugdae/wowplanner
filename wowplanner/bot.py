@@ -23,8 +23,8 @@ class WowPlannerBot(commands.Bot):
     def __init__(self, config: Config):
         intents = discord.Intents.none()
         intents.guilds = True
-        intents.guild_reactions = True  # inscriptions par réaction
         intents.guild_messages = True  # détection des messages de sortie supprimés
+        intents.voice_states = True  # savoir si un salon vocal de sortie est vide avant de le supprimer
         super().__init__(command_prefix=commands.when_mentioned, intents=intents, help_command=None)
 
         self.config = config
@@ -40,6 +40,8 @@ class WowPlannerBot(commands.Bot):
 
         await self.load_extension("wowplanner.cogs.instances")
         await self.load_extension("wowplanner.cogs.events")
+        await self.load_extension("wowplanner.cogs.commands")  # après events et instances, qu'il appelle
+        await self.load_extension("wowplanner.cogs.schedule")
 
         if self.config.guild_id:
             guild = discord.Object(id=self.config.guild_id)
@@ -52,7 +54,7 @@ class WowPlannerBot(commands.Bot):
 
     async def on_ready(self) -> None:
         log.info("Connecté en tant que %s (%s)", self.user, self.user.id if self.user else "?")
-        await self.change_presence(activity=discord.Game("/event creer"))
+        await self.change_presence(activity=discord.Game("/ajouter event"))
 
     async def close(self) -> None:
         if getattr(self, "http_session", None):

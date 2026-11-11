@@ -1,11 +1,11 @@
-"""Commandes /instances et mise à jour automatique de la liste depuis le wiki."""
+"""Liste des instances : mise à jour automatique depuis le wiki, et logique de /liste instances
+et /modifier instances (déclarées dans cogs/commands.py)."""
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Literal, Optional
+from typing import TYPE_CHECKING
 
 import discord
-from discord import app_commands
 from discord.ext import commands, tasks
 
 from ..instances import WIKI_URL
@@ -17,8 +17,6 @@ log = logging.getLogger(__name__)
 
 
 class InstancesCog(commands.Cog):
-    instances_group = app_commands.Group(name="instances", description="Donjons et raids de WoW Forever")
-
     def __init__(self, bot: WowPlannerBot):
         self.bot = bot
         self.registry = bot.instances
@@ -47,11 +45,7 @@ class InstancesCog(commands.Cog):
     async def _before_refresh(self) -> None:
         await self.bot.wait_until_ready()
 
-    @instances_group.command(name="liste", description="Afficher les donjons et raids disponibles")
-    @app_commands.describe(type="Filtrer par type")
-    async def list_instances(
-        self, interaction: discord.Interaction, type: Optional[Literal["donjons", "raids"]] = None
-    ) -> None:
+    async def list_instances(self, interaction: discord.Interaction, type: str | None) -> None:
         embed = discord.Embed(title="WoW Forever — Donjons & Raids", url=WIKI_URL, color=0x3498DB)
         dungeons = [i for i in self.registry.all if not i.is_raid]
         raids = [i for i in self.registry.all if i.is_raid]
@@ -72,9 +66,12 @@ class InstancesCog(commands.Cog):
         embed.set_footer(text=f"Source : warcraft.wiki.gg · {self.registry.source} · maj {updated}")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @instances_group.command(name="maj", description="Recharger la liste depuis le wiki maintenant")
-    @app_commands.default_permissions(manage_guild=True)
     async def refresh_now(self, interaction: discord.Interaction) -> None:
+        if not interaction.permissions.manage_guild:
+            await interaction.response.send_message(
+                "Réservé aux membres qui ont la permission « Gérer le serveur ».", ephemeral=True
+            )
+            return
         await interaction.response.defer(ephemeral=True, thinking=True)
         try:
             count = await self.registry.refresh(self.bot.http_session)

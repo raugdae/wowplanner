@@ -2,22 +2,45 @@
 
 Bot Discord pour organiser des sorties donjon / raid sur **World of Warcraft: Forever**.
 
-- `/event creer` publie un message de sortie : instance, date, nombre de joueurs et places par rôle.
-- Les joueurs s'inscrivent en réagissant : 🛡️ Tank, ⛑️ Heal, ⚔️ DPS.
-- Quand un rôle est complet, il est verrouillé : le bot retire son émote, refuse les nouvelles réactions sur ce rôle et prévient le joueur par MP.
-- Toute autre émote ajoutée au message est retirée automatiquement.
+- `/ajouter event` publie un message de sortie : instance, date, nombre de joueurs et places par rôle.
+- Les joueurs s'inscrivent avec les boutons sous le message : 🛡️ Tank, ⛑️ Heal, ⚔️ DPS, Se désinscrire.
+- Chaque joueur déclare ses persos (`/ajouter perso`). À l'inscription, le bot prend le perso capable de tenir le rôle, ou demande lequel s'il y en a plusieurs.
+- Quand un rôle est complet, son bouton passe en gris et les nouvelles inscriptions sont refusées.
+- Chaque perso peut avoir un rôle préféré et ses métiers. `/liste metier` retrouve qui a un métier donné, et `/liste battletags` donne les BattleTag de tout le monde.
+- 30 minutes avant le départ, chaque inscrit reçoit un rappel en MP.
+- 15 minutes avant le départ, le bot crée un salon vocal pour la sortie et ajoute son lien au message. Le salon est supprimé quand il est vide, au plus tôt 30 minutes après le début.
 - La liste des donjons et raids vient de [warcraft.wiki.gg](https://warcraft.wiki.gg/wiki/World_of_Warcraft:_Forever) et se met à jour toute seule une fois par jour.
 
 ## Commandes
 
+Toutes les commandes suivent la logique **verbe + catégorie** : `/ajouter`, `/modifier`, `/supprimer`, `/liste`, puis ce sur quoi ça porte.
+
+| | event | perso | metier | battletag | autre |
+|---|---|---|---|---|---|
+| **`/ajouter`** | crée une sortie | ✅ | ✅ | ✅ | |
+| **`/modifier`** | | nom, classe, race, rôle préféré | niveau | | `instances` (modos) |
+| **`/supprimer`** | annule la sortie | ✅ | ✅ | ✅ | `inscrit` |
+| **`/liste`** | `events` | `persos` | `metier` (qui l'a) | `battletags` | `instances` |
+
 | Commande | Rôle |
 |---|---|
-| `/event creer instance date heure [joueurs] [tanks] [heals] [dps] [description]` | Crée une sortie. L'instance se cherche par nom ou abréviation (`brd`, `ony`, `sm cath`…). |
-| `/event liste` | Prochaines sorties du serveur. |
-| `/event annuler sortie` | Annule la sortie, prévient les inscrits. Réservé à l'organisateur et aux modérateurs. |
-| `/event retirer sortie joueur` | Désinscrit un joueur. Réservé à l'organisateur et aux modérateurs. |
-| `/instances liste [type]` | Affiche les donjons (avec niveaux) et les raids. |
-| `/instances maj` | Force la mise à jour depuis le wiki (permission « Gérer le serveur »). |
+| `/ajouter event instance date heure [joueurs] [tanks] [heals] [dps] [description]` | Crée une sortie. L'instance se cherche par nom ou abréviation (`brd`, `ony`, `sm cath`…). |
+| `/ajouter perso nom classe race [role_prefere]` | Déclare un de tes persos. La combinaison race/classe et le rôle préféré sont vérifiés. |
+| `/ajouter metier perso metier [niveau]` | Ajoute un métier à un perso (niveau 1 à 300). 2 métiers principaux maximum. |
+| `/ajouter battletag tag` | Enregistre ton BattleTag (`Nom#1234`), ou remplace l'ancien. |
+| `/modifier perso perso [nom] [classe] [race] [role_prefere]` | Modifie un perso sans perdre ses métiers ni ses inscriptions. Rôle préféré « Aucun » pour le retirer. |
+| `/modifier metier perso metier niveau` | Change le niveau d'un métier. |
+| `/modifier instances` | Recharge la liste des donjons/raids depuis le wiki (permission « Gérer le serveur »). |
+| `/supprimer event sortie` | Annule la sortie après confirmation, et prévient les inscrits. Réservé à l'organisateur et aux modérateurs. |
+| `/supprimer inscrit sortie joueur` | Désinscrit un joueur d'**une** sortie. Choisis la sortie d'abord : le champ `joueur` ne propose que ses inscrits. Les autres sorties du joueur ne changent pas. Réservé à l'organisateur et aux modérateurs. |
+| `/supprimer perso perso` | Supprime un perso et ses métiers. Ses inscriptions en cours restent, avec ton pseudo à la place. |
+| `/supprimer metier perso metier` | Retire un métier. |
+| `/supprimer battletag` | Retire ton BattleTag. |
+| `/liste events` | Prochaines sorties du serveur. |
+| `/liste persos [joueur]` | Tes persos (ou ceux d'un autre joueur) : rôles possibles, rôle préféré ⭐, métiers, BattleTag. |
+| `/liste metier metier` | Les persos du serveur qui ont ce métier, du plus haut niveau au plus bas. |
+| `/liste battletags` | Les BattleTag des joueurs du serveur. |
+| `/liste instances [type]` | Les donjons (avec niveaux) et les raids. |
 
 **Date** : `25/12/2026`, `25/12`, `aujourd'hui`, `demain`. **Heure** : `21:00`, `21h30`, `21h`.
 
@@ -34,11 +57,40 @@ Tu peux surcharger n'importe quel rôle. Exemple : `tanks:2` sur Hyjal Summit ga
 
 ### Règles d'inscription
 
-- Le message affiche le pseudo des inscrits sous chaque rôle, dans l'ordre d'inscription, avec les places restantes.
-- Un seul rôle par joueur. Réagir sur un autre rôle te déplace, s'il reste de la place.
-- Retirer ta réaction te désinscrit.
-- Discord ne permet pas d'interdire une émote précise sur un message. Le « blocage » fonctionne donc ainsi : le bot retire sa propre réaction du rôle complet, puis supprime aussitôt toute nouvelle réaction sur ce rôle. Dès qu'une place se libère, il remet son émote.
-- Si le bot redémarre, il resynchronise les sorties à venir avec les réactions présentes sur les messages.
+- Le message affiche les inscrits sous chaque rôle, dans l'ordre d'inscription : perso, classe et pseudo Discord. Sur les gros raids, le pseudo est retiré si la liste devient trop longue pour Discord.
+- Un seul rôle par joueur. Cliquer sur un autre rôle te déplace, s'il reste de la place. Recliquer sur ton rôle permet de changer de perso sans perdre ta place.
+- **Choix du perso** :
+  - un seul de tes persos peut tenir le rôle : il est pris automatiquement ;
+  - plusieurs : un menu visible seulement par toi demande lequel. Les persos dont c'est le rôle préféré ⭐ sont en tête et présélectionnés ;
+  - aucun perso déclaré : tu es inscrit avec ton pseudo Discord ;
+  - des persos, mais aucun pour ce rôle : inscription refusée, le bot liste ce que tes persos peuvent jouer.
+- Si le bot redémarre, les boutons continuent de marcher. Les sorties créées avec l'ancienne version (inscription par réaction) sont converties au démarrage : les réactions sont retirées, les inscrits sont gardés.
+
+### Classes et rôles
+
+| Classe | Tank | Heal | DPS |
+|---|:-:|:-:|:-:|
+| Guerrier | ✅ | | ✅ |
+| Paladin | ✅ | ✅ | ✅ |
+| Druide | ✅ | ✅ | ✅ |
+| Prêtre | | ✅ | ✅ |
+| Chaman | | ✅ | ✅ |
+| Chasseur, Voleur, Mage, Démoniste | | | ✅ |
+
+Le Paladin tank est viable dans Forever (Seal of Fury, Consecration de base). Le Chaman n'est pas compté comme tank : l'Amélioration peut dépanner en petit groupe, mais ce n'est pas un rôle prévu. Les combinaisons race/classe suivent le [wiki](https://warcraft.wiki.gg/wiki/World_of_Warcraft:_Forever), Skyborne compris (sans distinction de faction). Tout est dans `wowplanner/gamedata.py`.
+
+### Métiers et BattleTag
+
+- Métiers principaux : Alchimie, Forge, Enchantement, Ingénierie, Herboristerie, Travail du cuir, Minage, Dépeçage, Couture (2 maximum par perso). Secondaires : Cuisine, Secourisme, Pêche. C'est la même liste qu'en Classic : le « Camping » de Forever est un système de feux de camp, pas un métier.
+- Le niveau de métier est facultatif. Pense à le mettre à jour avec `/modifier metier`.
+- Les listes (`/liste metier`, `/liste battletags`) ne montrent que les joueurs vus sur le serveur : ceux qui y ont utilisé une commande du bot ou se sont inscrits à une sortie. Elles s'affichent seulement pour celui qui tape la commande.
+
+### Rappel et salon vocal
+
+- **Rappel** (`REMINDER_MINUTES`, 30 par défaut) : un MP à chaque inscrit, avec son rôle et le lien de la sortie. Pas de rappel si la sortie a été créée moins de 30 minutes avant le départ. Les joueurs qui ont fermé leurs MP ne le reçoivent pas.
+- **Salon vocal** (`VOICE_CHANNEL_MINUTES`, 15 par défaut) : créé seulement s'il y a au moins un inscrit, dans la catégorie du salon des sorties (ou `VOICE_CATEGORY_ID`), limité au nombre de joueurs de la sortie. Il est ouvert à tous ceux qui peuvent voir la catégorie. Il est supprimé dès qu'il est vide, au plus tôt 30 minutes après le début, ou dès que la sortie est annulée (s'il est vide).
+- Si le bot était éteint au moment prévu, le salon vocal est quand même créé à son retour, tant que la sortie a commencé depuis moins d'une heure. Rien n'est envoyé ni créé en double.
+- Mettre `0` désactive la fonction correspondante.
 
 ## Installation
 
@@ -47,9 +99,9 @@ Tu peux surcharger n'importe quel rôle. Exemple : `tanks:2` sur Hyjal Summit ga
 1. Ouvre <https://discord.com/developers/applications> et clique sur **New Application**.
 2. Dans l'onglet **Bot**, clique sur **Reset Token** et copie le token. Aucun *Privileged Gateway Intent* n'est nécessaire.
 3. Dans l'onglet **OAuth2 → URL Generator**, coche les scopes `bot` et `applications.commands`, puis ces permissions :
-   View Channel, Send Messages, Embed Links, Add Reactions, **Manage Messages** (pour retirer les réactions refusées), Read Message History.
+   View Channel, **Manage Channels** (pour les salons vocaux des sorties), Send Messages, Embed Links, **Manage Messages** (pour garder le salon des sorties propre), Read Message History.
    Tu peux aussi utiliser directement le lien suivant, en remplaçant `CLIENT_ID` :
-   `https://discord.com/oauth2/authorize?client_id=CLIENT_ID&scope=bot+applications.commands&permissions=93248`
+   `https://discord.com/oauth2/authorize?client_id=CLIENT_ID&scope=bot+applications.commands&permissions=93200`
 4. Ouvre le lien et invite le bot sur ton serveur.
 
 ### 2. Configurer
@@ -63,21 +115,21 @@ Pour utiliser des émotes du serveur à la place des émotes par défaut : `EMOJ
 
 ### 3. Configurer le salon des sorties
 
-L'objectif est que, dans ce salon, les joueurs ne puissent que lancer les commandes et réagir avec les 3 émotes. Ça se règle dans Discord : **Modifier le salon → Permissions**.
+L'objectif est que, dans ce salon, les joueurs ne puissent que lancer les commandes et cliquer sur les boutons. Ça se règle dans Discord : **Modifier le salon → Permissions**.
 
 **@everyone** :
 
 | Permission | Réglage | Pourquoi |
 |---|---|---|
 | Voir le salon, Voir les anciens messages | ✅ | lire les sorties |
-| Utiliser les commandes de l'application | ✅ | `/event creer`, etc. |
+| Utiliser les commandes de l'application | ✅ | `/ajouter event`, etc. |
 | Envoyer des messages | ❌ | pas de discussion dans le salon |
-| Ajouter des réactions | ❌ | voir ci-dessous |
+| Ajouter des réactions | ❌ | pas d'émotes sur les sorties |
 | Créer des fils publics / privés, Envoyer des messages dans les fils | ❌ | pas de fils de discussion |
 
-Le réglage « Ajouter des réactions ❌ » fait le gros du travail. Sans cette permission, un membre peut toujours **cliquer sur une réaction déjà présente**, mais il ne peut pas en ajouter une nouvelle. Les joueurs n'ont donc accès qu'aux 3 émotes posées par le bot, et aucune autre émote ne peut apparaître. Envoyer des messages n'est pas nécessaire pour les commandes slash : c'est le bot qui poste.
+Les boutons marchent sans aucune permission particulière, et envoyer des messages n'est pas nécessaire pour les commandes slash : c'est le bot qui poste.
 
-**Le rôle du bot** (ajoute-le dans les permissions du salon) : ✅ Voir le salon, Envoyer des messages, Intégrer des liens, Ajouter des réactions, Gérer les messages, Voir les anciens messages. Sinon l'interdiction posée sur @everyone s'applique aussi à lui.
+**Le rôle du bot** (ajoute-le dans les permissions du salon) : ✅ Voir le salon, Envoyer des messages, Intégrer des liens, Gérer les messages, Voir les anciens messages. Sinon l'interdiction posée sur @everyone s'applique aussi à lui.
 
 En complément, indique l'ID du salon dans `.env` (clic droit sur le salon → *Copier l'identifiant*, après avoir activé le mode développeur dans Paramètres → Avancés) :
 
@@ -85,7 +137,7 @@ En complément, indique l'ID du salon dans `.env` (clic droit sur le salon → *
 EVENT_CHANNEL_IDS=123456789012345678
 ```
 
-Le bot n'acceptera `/event creer` que dans ce salon. Il supprimera aussi tout message qu'un joueur arriverait quand même à y poster, par exemple à cause d'une permission mal réglée sur un rôle. Les messages des modérateurs (permission « Gérer les messages ») restent en place.
+Le bot n'acceptera `/ajouter event` que dans ce salon. Il supprimera aussi tout message qu'un joueur arriverait quand même à y poster, par exemple à cause d'une permission mal réglée sur un rôle. Les messages des modérateurs (permission « Gérer les messages ») restent en place.
 
 ## Déploiement
 
@@ -129,7 +181,7 @@ python -m wowplanner
 Blizzard ne publie pas d'API pour WoW Forever. Le bot lit donc le tableau « Dungeons and raids » de la page [World of Warcraft: Forever](https://warcraft.wiki.gg/wiki/World_of_Warcraft:_Forever) du wiki communautaire, via son API MediaWiki :
 
 - au démarrage, puis toutes les `INSTANCES_REFRESH_HOURS` heures (24 par défaut) ;
-- à la demande avec `/instances maj`.
+- à la demande avec `/modifier instances`.
 
 Le résultat est mis en cache dans `data/instances_cache.json`. Une liste intégrée (`wowplanner/instances_default.json`, à jour au 11/11/2026) sert de secours si le wiki est injoignable. Si la page change de structure et que le bot ne trouve plus qu'une liste suspecte (moins de 10 donjons ou aucun raid), la mise à jour est ignorée et l'ancienne liste est conservée.
 
@@ -140,12 +192,17 @@ wowplanner/
   __main__.py         point d'entrée (python -m wowplanner)
   bot.py              client Discord, synchronisation des commandes
   config.py           lecture du .env
-  db.py               SQLite : sorties + inscriptions
+  db.py               SQLite : sorties, inscriptions, persos
   embeds.py           rendu du message de sortie
   instances.py        liste des instances, lecture du wiki
-  roles.py            rôles, compositions par défaut, correspondance des émotes
+  roles.py            rôles, compositions par défaut, émotes
+  gamedata.py         classes, races, rôles et métiers de WoW Forever
   timeparse.py        lecture des dates et heures
-  cogs/events.py      /event + gestion des réactions
-  cogs/instances.py   /instances + mise à jour périodique
+  cogs/commands.py    déclaration de toutes les commandes slash (/ajouter, /modifier, /supprimer, /liste)
+  cogs/events.py      sorties + boutons d'inscription
+  cogs/characters.py  persos et métiers
+  cogs/players.py     BattleTag
+  cogs/instances.py   instances + mise à jour périodique
+  cogs/schedule.py    rappels en MP et salons vocaux temporaires
 tests/test_core.py
 ```

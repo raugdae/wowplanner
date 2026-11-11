@@ -1,8 +1,6 @@
 """Rôles (Tank / Heal / DPS), compositions par défaut et correspondance des émotes."""
 from __future__ import annotations
 
-from typing import Union
-
 import discord
 
 ROLES: tuple[str, ...] = ("tank", "heal", "dps")
@@ -74,22 +72,6 @@ def resolve_composition(
     return comp
 
 
-AnyEmoji = Union[discord.PartialEmoji, discord.Emoji, str]
-
-
-def _norm(name: str | None) -> str:
-    # Les émotes unicode arrivent parfois avec ou sans le sélecteur de variante U+FE0F.
-    return (name or "").replace("️", "")
-
-
-def to_partial(emoji: AnyEmoji) -> discord.PartialEmoji:
-    if isinstance(emoji, discord.PartialEmoji):
-        return emoji
-    if isinstance(emoji, str):
-        return discord.PartialEmoji.from_str(emoji)
-    return discord.PartialEmoji(name=emoji.name, id=emoji.id, animated=emoji.animated)
-
-
 class RoleEmojis:
     """Associe chaque rôle à son émote (unicode ou émote personnalisée `<:nom:id>`)."""
 
@@ -102,12 +84,3 @@ class RoleEmojis:
     def display(self, role: str) -> str:
         return str(self._emojis[role])
 
-    def role_for(self, emoji: AnyEmoji) -> str | None:
-        emoji = to_partial(emoji)
-        for role, expected in self._emojis.items():
-            if expected.id is not None:
-                if emoji.id == expected.id:
-                    return role
-            elif emoji.id is None and _norm(emoji.name) == _norm(expected.name):
-                return role
-        return None

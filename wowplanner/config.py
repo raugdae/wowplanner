@@ -18,8 +18,10 @@ class Config:
     emoji_heal: str
     emoji_dps: str
     instances_refresh_hours: float
-    dm_on_refusal: bool
     event_channel_ids: frozenset[int] = frozenset()
+    reminder_minutes: int = 30
+    voice_channel_minutes: int = 15
+    voice_category_id: int | None = None
 
     @property
     def db_path(self) -> Path:
@@ -30,12 +32,6 @@ class Config:
         return self.data_dir / "instances_cache.json"
 
 
-def _bool(value: str | None, default: bool) -> bool:
-    if value is None or not value.strip():
-        return default
-    return value.strip().lower() in {"1", "true", "yes", "oui", "on"}
-
-
 def load_config() -> Config:
     load_dotenv()
 
@@ -44,6 +40,7 @@ def load_config() -> Config:
         raise SystemExit("DISCORD_TOKEN manquant : copie .env.example en .env et renseigne le token du bot.")
 
     guild_raw = os.getenv("GUILD_ID", "").strip()
+    category_raw = os.getenv("VOICE_CATEGORY_ID", "").strip()
     data_dir = Path(os.getenv("DATA_DIR", "data"))
     data_dir.mkdir(parents=True, exist_ok=True)
 
@@ -56,8 +53,10 @@ def load_config() -> Config:
         emoji_heal=os.getenv("EMOJI_HEAL", "⛑️"),
         emoji_dps=os.getenv("EMOJI_DPS", "⚔️"),
         instances_refresh_hours=float(os.getenv("INSTANCES_REFRESH_HOURS", "24")),
-        dm_on_refusal=_bool(os.getenv("DM_ON_REFUSAL"), True),
         event_channel_ids=frozenset(
             int(cid) for cid in os.getenv("EVENT_CHANNEL_IDS", "").replace(" ", "").split(",") if cid
         ),
+        reminder_minutes=int(os.getenv("REMINDER_MINUTES", "30") or 0),
+        voice_channel_minutes=int(os.getenv("VOICE_CHANNEL_MINUTES", "15") or 0),
+        voice_category_id=int(category_raw) if category_raw else None,
     )
