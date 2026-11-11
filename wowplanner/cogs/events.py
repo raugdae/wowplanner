@@ -90,22 +90,30 @@ class SignupView(discord.ui.View):
 
 
 class CharacterPickView(discord.ui.View):
-    """Menu privé (éphémère) pour choisir le perso quand plusieurs peuvent tenir le rôle."""
+    """Menu privé (éphémère) pour choisir le perso quand plusieurs peuvent tenir le rôle.
 
-    def __init__(self, cog: EventsCog, message_id: int, role: str, characters: list[Character], default_id: int | None):
+    Aucune option n'est présélectionnée : Discord n'envoie rien quand on choisit l'option déjà
+    sélectionnée, le joueur ne pourrait donc pas valider ce perso-là. Le perso actuel et les
+    rôles préférés sont seulement signalés dans la description.
+    """
+
+    def __init__(self, cog: EventsCog, message_id: int, role: str, characters: list[Character], current_id: int | None):
         super().__init__(timeout=180)
         self.cog = cog
         self.message_id = message_id
         self.role = role
         self.characters = {c.id: c for c in characters}
         select = discord.ui.Select(
-            placeholder="Choisis ton perso",
+            placeholder="Choisis ton perso…",
             options=[
                 discord.SelectOption(
-                    label=c.name[:100],
-                    description=(describe_character(c) + (" · ⭐ rôle préféré" if c.preferred_role == role else ""))[:100],
+                    label=(f"⭐ {c.name}" if c.preferred_role == role else c.name)[:100],
+                    description=(
+                        describe_character(c)
+                        + (" · rôle préféré" if c.preferred_role == role else "")
+                        + (" · actuel" if c.id == current_id else "")
+                    )[:100],
                     value=str(c.id),
-                    default=c.id == default_id,
                 )
                 for c in characters[:25]
             ],
@@ -374,13 +382,10 @@ class EventsCog(commands.Cog):
             return
 
         if len(capable) > 1:
-            if current and current.role == role and current.character_id:
-                default_id = current.character_id
-            else:
-                default_id = capable[0].id if capable[0].preferred_role == role else None
+            current_id = current.character_id if current and current.role == role else None
             await interaction.response.send_message(
                 f"Quel perso pour **{LABELS[role]}** sur **{ev.instance}** ?",
-                view=CharacterPickView(self, message_id, role, capable, default_id),
+                view=CharacterPickView(self, message_id, role, capable, current_id),
                 ephemeral=True,
             )
             return

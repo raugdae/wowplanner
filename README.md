@@ -61,7 +61,7 @@ Tu peux surcharger n'importe quel rôle. Exemple : `tanks:2` sur Hyjal Summit ga
 - Un seul rôle par joueur. Cliquer sur un autre rôle te déplace, s'il reste de la place. Recliquer sur ton rôle permet de changer de perso sans perdre ta place.
 - **Choix du perso** :
   - un seul de tes persos peut tenir le rôle : il est pris automatiquement ;
-  - plusieurs : un menu visible seulement par toi demande lequel. Les persos dont c'est le rôle préféré ⭐ sont en tête et présélectionnés ;
+  - plusieurs : un menu visible seulement par toi demande lequel. Les persos dont c'est le rôle préféré ⭐ sont en tête, rien n'est présélectionné ;
   - aucun perso déclaré : tu es inscrit avec ton pseudo Discord ;
   - des persos, mais aucun pour ce rôle : inscription refusée, le bot liste ce que tes persos peuvent jouer.
 - Les réponses du bot visibles seulement par toi ne s'empilent pas : à ta commande ou ton clic suivant, la précédente est effacée. Discord ne le permet que pendant 15 minutes ; au-delà, elle reste jusqu'à ce que tu la fermes ou recharges Discord.
