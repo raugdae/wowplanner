@@ -33,42 +33,98 @@ def esc(value: object) -> str:
     return html.escape(str(value), quote=True)
 
 
+# Thèmes : Alliance (par défaut) et une capitale par race de l'Alliance. Tout passe par des
+# variables CSS ; le choix est mémorisé dans le navigateur du visiteur (localStorage).
+THEMES = {
+    "alliance": "Alliance",
+    "humain": "Humain · Hurlevent",
+    "nain": "Nain · Forgefer",
+    "elfe_nuit": "Elfe de la nuit · Darnassus",
+    "gnome": "Gnome · Gnomeregan",
+}
+DEFAULT_THEME = "alliance"
+
 STYLE = """
-:root { --bg:#14161b; --panel:#1d2027; --panel2:#252933; --text:#e6e6e6; --muted:#9aa0aa; --accent:#e0b04a;
-        --line:#323744; }
+:root, [data-theme="alliance"] {
+  --bg:#0a1222; --glow:rgba(40,90,190,.35); --panel:#111d36; --panel2:#182848; --text:#e9edf6;
+  --muted:#98a8c6; --accent:#f2c75c; --line:#253a62; --head1:#16336b; --head2:#0b1a3c; --crest:"🛡️";
+}
+[data-theme="humain"] {
+  --bg:#12161d; --glow:rgba(70,110,180,.28); --panel:#1b212b; --panel2:#232b38; --text:#eef0f3;
+  --muted:#a3abb8; --accent:#e9c46a; --line:#323c4c; --head1:#1f4f9a; --head2:#163a73; --crest:"🦁";
+}
+[data-theme="nain"] {
+  --bg:#15100c; --glow:rgba(255,120,40,.20); --panel:#211912; --panel2:#2c2118; --text:#f2e8dc;
+  --muted:#b9a58e; --accent:#ff9447; --line:#45331f; --head1:#5a3417; --head2:#2a180b; --crest:"⚒️";
+}
+[data-theme="elfe_nuit"] {
+  --bg:#0e0b1a; --glow:rgba(140,110,255,.28); --panel:#18142b; --panel2:#211b3b; --text:#eeeaf9;
+  --muted:#a69fc7; --accent:#8ee6d8; --line:#352c5a; --head1:#3b2a72; --head2:#1a1340; --crest:"🌙";
+}
+[data-theme="gnome"] {
+  --bg:#0b1716; --glow:rgba(60,220,190,.20); --panel:#122321; --panel2:#18302d; --text:#e4f5f1;
+  --muted:#8fb6ad; --accent:#ff74d4; --line:#244340; --head1:#16534c; --head2:#0b2a27; --crest:"⚙️";
+}
 * { box-sizing:border-box; }
-body { margin:0; background:var(--bg); color:var(--text);
+[hidden] { display:none !important; }
+body { margin:0; color:var(--text); min-height:100vh;
+       background:radial-gradient(ellipse 90% 50% at 50% 0, var(--glow), transparent 70%) fixed, var(--bg);
        font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
 a { color:inherit; text-decoration:none; }
 a:hover { text-decoration:underline; }
-header { background:var(--panel); border-bottom:1px solid var(--line); padding:12px 16px;
-         display:flex; gap:20px; align-items:center; flex-wrap:wrap; position:sticky; top:0; z-index:5; }
-header .brand { font-weight:700; color:var(--accent); font-size:17px; }
-header nav { display:flex; gap:14px; }
+.title { font-family:"Cinzel","Trajan Pro","Palatino Linotype",Palatino,"Book Antiqua",Georgia,serif; }
+header { background:linear-gradient(180deg,var(--head1),var(--head2)); border-bottom:2px solid var(--accent);
+         box-shadow:0 2px 12px rgba(0,0,0,.45); padding:10px 16px; display:flex; gap:20px; align-items:center;
+         flex-wrap:wrap; position:sticky; top:0; z-index:5; }
+header .brand { font-weight:700; color:var(--accent); font-size:19px; letter-spacing:.04em; }
+header .brand::before { content:var(--crest); margin-right:8px; }
+header nav { display:flex; gap:16px; }
 header nav a { color:var(--muted); }
-header nav a.active { color:var(--text); font-weight:600; }
+header nav a.active { color:var(--text); font-weight:600; border-bottom:2px solid var(--accent); }
+header .theme { margin-left:auto; }
+header select { background:rgba(0,0,0,.25); color:var(--text); border:1px solid var(--accent); border-radius:8px;
+                padding:5px 8px; font:inherit; font-size:13px; }
+header select option { background:var(--panel); }
 main { max-width:1200px; margin:0 auto; padding:20px 16px 48px; }
-h1 { margin:0 0 4px; font-size:24px; }
-h2 { margin:28px 0 10px; font-size:18px; }
-h3 { margin:20px 0 8px; font-size:14px; color:var(--accent); text-transform:uppercase; letter-spacing:.06em; }
+h1 { margin:0 0 4px; font-size:28px; }
+h2 { margin:28px 0 10px; font-size:19px; color:var(--accent); }
 .sub { color:var(--muted); margin:0 0 16px; }
 .filters { display:flex; gap:8px; flex-wrap:wrap; margin:12px 0 16px; }
-.filters input, .filters select { background:var(--panel); color:var(--text); border:1px solid var(--line);
-  border-radius:8px; padding:8px 10px; font:inherit; }
+.filters input, .filters select, .filters button { background:var(--panel); color:var(--text);
+  border:1px solid var(--line); border-radius:8px; padding:8px 10px; font:inherit; }
 .filters input { flex:1 1 220px; }
-.table-wrap { overflow-x:auto; border:1px solid var(--line); border-radius:10px; }
+.filters button { cursor:pointer; }
+.filters button:hover, .filters input:focus, .filters select:focus { border-color:var(--accent); outline:none; }
+.table-wrap { overflow-x:auto; border:1px solid var(--line); border-radius:10px; background:var(--panel); }
 table { width:100%; border-collapse:collapse; }
 th, td { text-align:left; padding:9px 12px; border-bottom:1px solid var(--line); vertical-align:top; }
-th { background:var(--panel); color:var(--muted); font-weight:600; font-size:13px; white-space:nowrap; }
+th { background:var(--panel2); color:var(--accent); font-weight:600; font-size:13px; white-space:nowrap; }
 tr:last-child td { border-bottom:none; }
-tbody tr:hover { background:var(--panel); }
+tbody tr:hover { background:var(--panel2); }
 .num { text-align:right; font-variant-numeric:tabular-nums; }
 .tag { display:inline-block; background:var(--panel2); border:1px solid var(--line); border-radius:999px;
        padding:1px 9px; margin:2px 4px 2px 0; font-size:13px; white-space:nowrap; }
-.tag b { font-variant-numeric:tabular-nums; }
+.tag b { font-variant-numeric:tabular-nums; color:var(--accent); }
 .muted { color:var(--muted); }
+details.fold { border:1px solid var(--line); border-radius:10px; background:var(--panel); margin:8px 0; }
+details.fold > summary { cursor:pointer; list-style:none; padding:10px 14px; display:flex; align-items:center;
+  gap:10px; color:var(--accent); font-weight:600; text-transform:uppercase; letter-spacing:.06em; font-size:14px;
+  user-select:none; border-radius:10px; }
+details.fold > summary::-webkit-details-marker { display:none; }
+details.fold > summary::before { content:"▸"; transition:transform .15s; }
+details.fold[open] > summary::before { transform:rotate(90deg); }
+details.fold > summary:hover { background:var(--panel2); }
+details.fold > summary .n { margin-left:auto; color:var(--muted); font-weight:400; font-size:12px;
+  background:var(--panel2); border:1px solid var(--line); border-radius:999px; padding:0 9px; }
+details.fold > .fold-body { padding:4px 12px 12px; }
+details.fold.big { background:transparent; border:none; margin:18px 0 6px; }
+details.fold.big > summary { font-size:19px; text-transform:none; letter-spacing:.02em; padding:6px 2px;
+  border-bottom:1px solid var(--line); border-radius:0; }
+details.fold.big > summary:hover { background:transparent; }
+details.fold.big > .fold-body { padding:6px 0 0; }
 .cards { display:grid; grid-template-columns:repeat(auto-fill,minmax(250px,1fr)); gap:10px; }
-.card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:10px 12px; }
+.card { background:var(--panel2); border:1px solid var(--line); border-top:2px solid var(--accent);
+        border-radius:10px; padding:10px 12px; }
 .card h4 { margin:0 0 6px; font-size:15px; }
 .card ul { list-style:none; margin:0; padding:0; }
 .card li { padding:1px 0; }
@@ -77,12 +133,34 @@ tbody tr:hover { background:var(--panel); }
 .card li.d3 { padding-left:54px; color:var(--muted); }
 .card li.d1::before, .card li.d2::before, .card li.d3::before { content:"↳ "; }
 .card .who { margin-top:6px; font-size:13px; color:var(--muted); }
+.card .who a { color:var(--text); }
 .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:10px; }
-.tile { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px; display:block; }
-.tile:hover { border-color:var(--accent); text-decoration:none; }
-.tile .big { font-size:22px; font-weight:700; }
+.tile { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px; display:block;
+        transition:border-color .15s, transform .15s; }
+.tile:hover { border-color:var(--accent); text-decoration:none; transform:translateY(-2px); }
+.tile .big { font-size:20px; font-weight:700; color:var(--accent); }
 .empty { color:var(--muted); font-style:italic; }
 footer { color:var(--muted); font-size:12px; text-align:center; padding:24px; }
+@media (max-width:600px) { header .theme { margin-left:0; width:100%; } header select { width:100%; } }
+"""
+
+# Appliqué dans <head> pour éviter un flash du thème par défaut.
+THEME_BOOT = (
+    "<script>try{const t=localStorage.getItem('wp-theme');"
+    f"if({list(THEMES)!r}.includes(t))document.documentElement.dataset.theme=t;}}catch(e){{}}</script>"
+)
+
+THEME_SCRIPT = """
+<script>
+(() => {
+  const sel = document.getElementById("theme");
+  sel.value = document.documentElement.dataset.theme || sel.options[0].value;
+  sel.addEventListener("change", () => {
+    document.documentElement.dataset.theme = sel.value;
+    try { localStorage.setItem("wp-theme", sel.value); } catch (e) {}
+  });
+})();
+</script>
 """
 
 FILTER_SCRIPT = """
@@ -93,7 +171,10 @@ FILTER_SCRIPT = """
   const selects = [...document.querySelectorAll("select[data-filter]")];
   const items = [...document.querySelectorAll("[data-search]")];
   const sections = [...document.querySelectorAll("[data-section]")];
+  const folds = [...document.querySelectorAll("details.fold")];
+  folds.forEach(d => d.dataset.default = d.open ? "1" : "");
   const count = document.getElementById("count");
+  let searching = false;
   function apply() {
     const text = q ? norm(q.value.trim()) : "";
     let shown = 0;
@@ -105,15 +186,33 @@ FILTER_SCRIPT = """
       el.hidden = !ok;
       if (ok) shown++;
     }
-    for (const sec of sections) sec.hidden = !sec.querySelector("[data-search]:not([hidden])");
+    for (const sec of sections) {
+      const n = sec.querySelectorAll("[data-search]:not([hidden])").length;
+      sec.hidden = !n;
+      const badge = sec.querySelector(":scope > summary .n");
+      if (badge) badge.textContent = n;
+    }
+    // Pendant une recherche on déplie ce qui correspond ; en l'effaçant on revient à l'état initial.
+    if (text) folds.forEach(d => { if (!d.hidden) d.open = true; });
+    else if (searching) folds.forEach(d => d.open = !!d.dataset.default);
+    searching = !!text;
     if (count) count.textContent = shown;
   }
   if (q) q.addEventListener("input", apply);
   selects.forEach(s => s.addEventListener("change", apply));
+  document.querySelectorAll("button[data-fold]").forEach(b => b.addEventListener("click", () => {
+    const open = b.dataset.fold === "open";
+    folds.forEach(d => { if (!d.hidden) d.open = open; });
+  }));
   apply();
 })();
 </script>
 """
+
+FOLD_BUTTONS = (
+    '<button type="button" data-fold="open">Tout déplier</button>'
+    '<button type="button" data-fold="close">Tout replier</button>'
+)
 
 
 def page(title: str, active: str, body: str, scripts: str = "") -> web.Response:
@@ -121,13 +220,16 @@ def page(title: str, active: str, body: str, scripts: str = "") -> web.Response:
         f'<a href="{href}" class="{"active" if key == active else ""}">{label}</a>'
         for key, href, label in (("persos", "/", "Persos"), ("metiers", "/metiers", "Métiers"))
     )
+    themes = "".join(f'<option value="{k}">{esc(v)}</option>' for k, v in THEMES.items())
     document = f"""<!doctype html>
-<html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{esc(title)} · WoW Planner</title><style>{STYLE}</style></head>
-<body><header><a class="brand" href="/">⚔️ WoW Planner</a><nav>{nav}</nav></header>
+<html lang="fr" data-theme="{DEFAULT_THEME}"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{esc(title)} · WoW Planner</title>{THEME_BOOT}<style>{STYLE}</style></head>
+<body><header><a class="brand title" href="/">WoW Planner</a><nav>{nav}</nav>
+<label class="theme" title="Thème d'affichage"><select id="theme" aria-label="Thème">{themes}</select></label></header>
 <main>{body}</main>
 <footer>Données des persos déclarés sur le Discord, complétées par l'armurerie Blizzard (WoW Forever).</footer>
-{scripts}</body></html>"""
+{THEME_SCRIPT}{scripts}</body></html>"""
     return web.Response(text=document, content_type="text/html")
 
 
@@ -179,7 +281,11 @@ def recipes_by_family_html(recipes: list[GuildRecipe], crafted_by: dict, crafter
     sections = []
     for family, members in group_by_family(filter_recipes(recipes, None)):
         cards = "".join(recipe_card(r, crafted_by, crafter_links) for r in members)
-        sections.append(f'<section data-section><h3>{esc(family)}</h3><div class="cards">{cards}</div></section>')
+        sections.append(
+            f'<details class="fold" data-section><summary><span>{esc(family)}</span>'
+            f'<span class="n">{len(members)}</span></summary><div class="fold-body"><div class="cards">{cards}</div>'
+            "</div></details>"
+        )
     return "".join(sections)
 
 
@@ -222,7 +328,7 @@ class WebSite:
             )
         options = lambda items: "".join(f'<option value="{esc(k)}">{esc(v)}</option>' for k, v in items)  # noqa: E731
         body = f"""
-<h1>Persos</h1>
+<h1 class="title">Persos</h1>
 <p class="sub"><span id="count">{len(characters)}</span> perso(s) · ⭐ rôle préféré</p>
 <div class="filters">
   <input id="q" type="search" placeholder="Chercher un perso, une classe, une race…" autocomplete="off">
@@ -264,19 +370,22 @@ class WebSite:
             mine = [r for r in self.db.guild_recipes(gid, profession) if r.id in known]
             if mine:
                 recipes_html += (
-                    f"<h2>{esc(profession_label(profession))} — {len(mine)} recette(s)</h2>"
+                    f'<details class="fold big" data-section open><summary><span>{esc(profession_label(profession))}'
+                    f'</span><span class="n">{len(mine)}</span></summary><div class="fold-body">'
                     + recipes_by_family_html(mine, crafted_by, None)
+                    + "</div></details>"
                 )
         if recipes_html:
             recipes_html = (
                 '<div class="filters"><input id="q" type="search" '
-                'placeholder="Chercher une recette ou un composant…" autocomplete="off"></div>' + recipes_html
+                f'placeholder="Chercher une recette ou un composant…" autocomplete="off">{FOLD_BUTTONS}</div>'
+                + recipes_html
             )
         else:
             recipes_html = '<p class="empty">Pas de recettes connues (perso absent de l\'armurerie, ou sans métier).</p>'
 
         body = f"""
-<h1 style="color:{CLASS_COLORS.get(character.wow_class, "inherit")}">{esc(character.name)}</h1>
+<h1 class="title" style="color:{CLASS_COLORS.get(character.wow_class, "inherit")}">{esc(character.name)}</h1>
 <p class="sub">{esc(class_label(character.wow_class))} {esc(race_label(character.race))} · {roles_html(character)}{synced}</p>
 <h2>Métiers</h2>
 {f'<div class="table-wrap" style="max-width:420px"><table><thead><tr><th>Métier</th><th class="num">Niveau</th></tr></thead><tbody>{prof_rows}</tbody></table></div>' if prof_rows else '<p class="empty">Aucun métier déclaré.</p>'}
@@ -294,7 +403,7 @@ class WebSite:
                 f'<a class="tile" href="/metier/{key}"><div class="big">{esc(label)}</div>'
                 f'<div class="muted">{count} perso(s){kind} · {recipes} recette(s)</div></a>'
             )
-        body = f'<h1>Métiers</h1><p class="sub">Qui a quel métier, et les recettes connues sur le serveur.</p><div class="grid">{"".join(tiles)}</div>'
+        body = f'<h1 class="title">Métiers</h1><p class="sub">Qui a quel métier, et les recettes connues sur le serveur.</p><div class="grid">{"".join(tiles)}</div>'
         return page("Métiers", "metiers", body)
 
     async def profession(self, request: web.Request) -> web.Response:
@@ -321,11 +430,11 @@ class WebSite:
         links = {c.name: c.id for c in self.db.guild_characters(gid)}
         recipes_html = (
             '<div class="filters"><input id="q" type="search" placeholder="Chercher une recette ou un composant…" '
-            f'autocomplete="off"></div><p class="sub"><span id="count">{len(recipes)}</span> recette(s)</p>'
+            f'autocomplete="off">{FOLD_BUTTONS}</div><p class="sub"><span id="count">{len(recipes)}</span> recette(s)</p>'
             + recipes_by_family_html(recipes, crafted_by, links)
             if recipes else '<p class="empty">Aucune recette connue (seuls les persos trouvés dans l\'armurerie en ont).</p>'
         )
-        body = f"<h1>{esc(label)}</h1><h2>Qui l'a</h2>{who}<h2>Recettes</h2>{recipes_html}"
+        body = f"<h1 class=\"title\">{esc(label)}</h1><h2>Qui l'a</h2>{who}<h2>Recettes</h2>{recipes_html}"
         return page(label, "metiers", body, FILTER_SCRIPT)
 
     # ------------------------------------------------------------ serveur
