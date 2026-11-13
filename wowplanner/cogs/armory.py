@@ -19,7 +19,7 @@ from discord.ext import commands, tasks
 from ..armory import CACHE_SECONDS, ArmoryClient, ArmoryError, ArmorySheet, parse_recipe
 from ..db import Character
 from ..gamedata import class_label, profession_label, race_label
-from ..recipes import build_pages, filter_recipes
+from ..recipes import Field, build_pages, filter_recipes
 
 if TYPE_CHECKING:
     from ..bot import WowPlannerBot
@@ -30,6 +30,8 @@ log = logging.getLogger(__name__)
 SYNC_PAUSE_SECONDS = 1.0
 # Requêtes simultanées pour récupérer les composants des recettes.
 RECIPE_FETCH_CONCURRENCY = 5
+# Caractères max par message de recettes (limite Discord : 6000 pour toutes les fiches du message).
+RECIPE_MESSAGE_CHARS = 5200
 
 CLASS_COLORS = {
     "guerrier": 0xC79C6E, "paladin": 0xF58CBA, "chasseur": 0xABD473, "voleur": 0xFFF569, "pretre": 0xFFFFFF,
@@ -183,24 +185,60 @@ def build_armory_embed(sheet: ArmorySheet, owners: list[int]) -> discord.Embed:
     return embed
 
 
-class RecipePagesView(discord.ui.View):
-    """Boutons ◀ ▶ pour feuilleter les pages de recettes (actifs une heure)."""
+def recipe_messages(field_pages: list[list[Field]], title: str) -> list[list[discord.Embed]]:
+    """Regroupe les fiches (≤ 25 champs chacune) en messages : jusqu'à 10 fiches et 6000 caractères par message.
 
-    def __init__(self, embeds: list[discord.Embed]):
+    Titre sur la première fiche du message, numéro de page sur la dernière.
+    """
+    groups: list[list[list[Field]]] = []
+    current: list[list[Field]] = []
+    size = 0
+    for fields in field_pages:
+        chars = sum(len(f.name) + len(f.value) for f in fields)
+        if current and (size + chars > RECIPE_MESSAGE_CHARS or len(current) >= 10):
+            groups.append(current)
+            current, size = [], 0
+        current.append(fields)
+        size += chars
+    if current:
+        groups.append(current)
+
+    messages = []
+    for n, group in enumerate(groups, 1):
+        embeds = []
+        for i, fields in enumerate(group):
+            embed = discord.Embed(title=title if i == 0 else None, color=0x3498DB)
+            for f in fields:
+                embed.add_field(name=f.name, value=f.value, inline=f.inline)
+            embeds.append(embed)
+        embeds[-1].set_footer(
+            text=f"Page {n}/{len(groups)} · 👥 = persos du serveur qui la connaissent · armurerie Blizzard"
+        )
+        messages.append(embeds)
+    return messages
+
+
+class RecipePagesView(discord.ui.View):
+    """Boutons ◀ ▶ pour feuilleter les pages de recettes (actifs une heure).
+
+    Une page = un message pouvant contenir plusieurs fiches (embeds).
+    """
+
+    def __init__(self, pages: list[list[discord.Embed]]):
         super().__init__(timeout=3600)
-        self.embeds = embeds
+        self.pages = pages
         self.index = 0
         self.message: discord.Message | None = None
         self._sync_buttons()
 
     def _sync_buttons(self) -> None:
         self.previous.disabled = self.index == 0
-        self.next.disabled = self.index >= len(self.embeds) - 1
+        self.next.disabled = self.index >= len(self.pages) - 1
 
     async def _show(self, interaction: discord.Interaction, delta: int) -> None:
-        self.index = max(0, min(len(self.embeds) - 1, self.index + delta))
+        self.index = max(0, min(len(self.pages) - 1, self.index + delta))
         self._sync_buttons()
-        await interaction.response.edit_message(embed=self.embeds[self.index], view=self)
+        await interaction.response.edit_message(embeds=self.pages[self.index], view=self)
 
     @discord.ui.button(emoji="◀️", style=discord.ButtonStyle.secondary)
     async def previous(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
@@ -402,24 +440,17 @@ class ArmoryCog(commands.Cog):
             )
             return
 
-        pages = build_pages(matched)
         title = f"⚒️ {label} — {len(matched)} recette(s)" + (f" · « {search} »" if search else "")
-        embeds = []
-        for i, page in enumerate(pages, 1):
-            embed = discord.Embed(title=title, description=page, color=0x3498DB)
-            embed.set_footer(
-                text=f"Page {i}/{len(pages)} · à droite : prénom des persos qui la connaissent · armurerie Blizzard"
-            )
-            embeds.append(embed)
-        view = RecipePagesView(embeds) if len(embeds) > 1 else None
+        pages = recipe_messages(build_pages(matched), title)
+        view = RecipePagesView(pages) if len(pages) > 1 else None
         extra = {"view": view} if view else {}
 
         try:
-            message = await interaction.user.send(embed=embeds[0], **extra)
+            message = await interaction.user.send(embeds=pages[0], **extra)
         except discord.HTTPException:
             message = await interaction.followup.send(
                 "Je n'ai pas pu t'envoyer de MP (ils sont peut-être fermés), les voici ici :",
-                embed=embeds[0], ephemeral=True, wait=True, **extra,
+                embeds=pages[0], ephemeral=True, wait=True, **extra,
             )
             if view:
                 view.message = message

@@ -1,24 +1,35 @@
-"""Mise en forme des recettes d'un métier : filtre de recherche et pages pour Discord.
+"""Mise en forme des recettes d'un métier : recherche, familles et pages de « cartes » Discord.
 
-Une recette tient sur deux lignes dans un bloc de code (police à chasse fixe) :
+Chaque recette est un champ d'embed (une carte) : nom complet en titre, un composant par ligne,
+les persos qui la connaissent en dessous. Discord range ces champs sur 3 colonnes sur PC et les
+empile sur mobile. Les recettes sont regroupées par famille (premier mot du nom : Élixir,
+Potion, Huile…) avec un titre de section.
 
-    Élixir de Force mineure         Hollie, Grommash
-      └ 1 Feuillargent · 1 Fiole vide
-
-Un vrai tableau « recette | compo 1 | compo 2 | … | crafteurs » ferait plus de 100 caractères
-de large : Discord le replierait (≈ 60 caractères sur PC, 40 sur mobile) et l'alignement
-serait perdu.
+(Un bloc de code façon tableau a été essayé : illisible, les lignes se replient et les noms
+coupés deviennent ambigus.)
 """
 from __future__ import annotations
 
 import unicodedata
+from collections import Counter
+from dataclasses import dataclass
 
 from .db import GuildRecipe
 
-NAME_WIDTH = 30
-CRAFTERS_WIDTH = 24
-# Limite Discord : 4096 caractères par description d'embed (blocs de code compris).
-PAGE_CHARS = 3900
+# Limites Discord par embed : 25 champs, 6000 caractères. On garde de la marge.
+MAX_FIELDS_PER_PAGE = 24
+MAX_CHARS_PER_PAGE = 5000
+# Une famille a sa section à partir de ce nombre de recettes ; les autres vont dans « Autres ».
+MIN_FAMILY_SIZE = 3
+MAX_CRAFTERS_SHOWN = 6
+OTHER_FAMILY = "Autres"
+
+
+@dataclass(frozen=True)
+class Field:
+    name: str
+    value: str
+    inline: bool
 
 
 def normalize(text: str) -> str:
@@ -34,46 +45,83 @@ def filter_recipes(recipes: list[GuildRecipe], search: str | None) -> list[Guild
     return sorted(matched, key=lambda r: (normalize(r.name), r.id))
 
 
-def _cut(text: str, width: int) -> str:
-    return text if len(text) <= width else text[: width - 1] + "…"
+def _first_word(name: str) -> str:
+    return name.split()[0] if name.split() else name
+
+
+def _family_label(words: list[str]) -> str:
+    """Libellé d'une famille, au pluriel. Les noms du jeu mélangent « Elixir » et « Élixir » :
+    on préfère la graphie accentuée (la bonne), puis la plus fréquente."""
+    counts = Counter(words)
+    word = max(counts, key=lambda w: (w.casefold() != normalize(w), counts[w]))
+    word = word[:1].upper() + word[1:]
+    return word if word[-1:] in ("s", "x") else word + "s"
+
+
+def group_by_family(recipes: list[GuildRecipe]) -> list[tuple[str, list[GuildRecipe]]]:
+    """[(famille, recettes)], familles par ordre alphabétique, « Autres » à la fin."""
+    families: dict[str, list[GuildRecipe]] = {}
+    for recipe in recipes:
+        families.setdefault(normalize(_first_word(recipe.name)), []).append(recipe)
+    grouped: list[tuple[str, list[GuildRecipe]]] = []
+    others: list[GuildRecipe] = []
+    for key in sorted(families):
+        members = families[key]
+        if len(members) >= MIN_FAMILY_SIZE:
+            grouped.append((_family_label([_first_word(r.name) for r in members]), members))
+        else:
+            others.extend(members)
+    if others:
+        label = OTHER_FAMILY if grouped else "Recettes"
+        grouped.append((label, sorted(others, key=lambda r: (normalize(r.name), r.id))))
+    return grouped
 
 
 def crafters_text(names: list[str]) -> str:
-    """Prénoms des persos (gain de place), « +N » au-delà de la largeur disponible."""
-    first_names = [n.split()[0] for n in names]
-    shown: list[str] = []
-    for i, name in enumerate(first_names):
-        rest = len(first_names) - i - 1
-        candidate = ", ".join([*shown, name]) + (f" +{rest}" if rest else "")
-        if shown and len(candidate) > CRAFTERS_WIDTH:
-            return ", ".join(shown) + f" +{len(first_names) - len(shown)}"
-        shown.append(name)
-    return ", ".join(shown)
+    """Prénoms des persos (le prénom suffit et prend moins de place), « +N » au-delà de 6."""
+    first_names = [n.split()[0] if n.split() else n for n in names]
+    shown = ", ".join(first_names[:MAX_CRAFTERS_SHOWN])
+    rest = len(first_names) - MAX_CRAFTERS_SHOWN
+    return shown + (f" +{rest}" if rest > 0 else "")
 
 
-def recipe_lines(recipe: GuildRecipe) -> str:
-    head = f"{_cut(recipe.name, NAME_WIDTH).ljust(NAME_WIDTH)}  {crafters_text(recipe.crafters)}"
+def recipe_field(recipe: GuildRecipe) -> Field:
     if recipe.reagents is None:
-        detail = "  └ composants inconnus pour l'instant"
+        reagents = "❔ composants inconnus pour l'instant"
     elif not recipe.reagents:
-        detail = "  └ aucun composant"
+        reagents = "aucun composant"
     else:
-        detail = "  └ " + " · ".join(f"{qty} {name}" for qty, name in recipe.reagents)
-    return f"{head.rstrip()}\n{detail}"
+        reagents = "\n".join(f"{qty}× {name}" for qty, name in recipe.reagents)
+    value = f"{reagents}\n👥 {crafters_text(recipe.crafters)}"
+    return Field(recipe.name[:256], value[:1024], inline=True)
 
 
-def build_pages(recipes: list[GuildRecipe]) -> list[str]:
-    """Découpe en pages ; chaque page est un bloc de code prêt à mettre dans une description d'embed."""
-    pages: list[str] = []
-    current: list[str] = []
+def build_pages(recipes: list[GuildRecipe]) -> list[list[Field]]:
+    """Pages de champs (titres de famille + cartes), chacune sous les limites Discord."""
+    pages: list[list[Field]] = []
+    page: list[Field] = []
     size = 0
-    for recipe in recipes:
-        block = recipe_lines(recipe)
-        if current and size + len(block) + 1 > PAGE_CHARS - 8:  # 8 = les deux « ``` » et leurs retours
-            pages.append("```\n" + "\n".join(current) + "\n```")
-            current, size = [], 0
-        current.append(block)
-        size += len(block) + 1
-    if current:
-        pages.append("```\n" + "\n".join(current) + "\n```")
+
+    def close_page() -> None:
+        nonlocal page, size
+        if page:
+            pages.append(page)
+        page, size = [], 0
+
+    for family, members in group_by_family(recipes):
+        for i, recipe in enumerate(members):
+            card = recipe_field(recipe)
+            header_needed = i == 0 or not page  # début de famille, ou famille qui continue sur une nouvelle page
+            needed = 1 + header_needed
+            card_size = len(card.name) + len(card.value) + 40
+            if page and (len(page) + needed > MAX_FIELDS_PER_PAGE or size + card_size > MAX_CHARS_PER_PAGE):
+                close_page()
+                header_needed = True
+            if header_needed:
+                suffix = " (suite)" if i > 0 else f" ({len(members)})"
+                page.append(Field(f"── {family}{suffix} ──", "​", inline=False))
+                size += len(family) + 20
+            page.append(card)
+            size += card_size
+    close_page()
     return pages

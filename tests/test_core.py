@@ -477,7 +477,7 @@ def test_armory_apply_replaces_professions_and_warns(tmp_path):
 
 def test_recipes_db_and_pages(tmp_path):
     from wowplanner.db import Database
-    from wowplanner.recipes import build_pages, crafters_text, filter_recipes, recipe_lines
+    from wowplanner.recipes import crafters_text, filter_recipes, recipe_field
 
     db = Database(tmp_path / "t.db")
     hollie = db.add_character(1, "Hollie Tétine", "pretre", "humain")
@@ -498,22 +498,63 @@ def test_recipes_db_and_pages(tmp_path):
     assert recipes[54211].name == "Elixir of Minor Force" and recipes[54211].reagents is None  # pas encore récupérée
 
     assert [r.id for r in filter_recipes(list(recipes.values()), "POTION")] == [1379]
-    assert recipe_lines(recipes[1379]).endswith("└ 1 Mage royal · 1 Fiole vide")
-    assert "composants inconnus" in recipe_lines(recipes[54211])
-    assert crafters_text(["Hollie Tétine", "Grommash Hurlenfer"]) == "Hollie, Grommash"
-    long_list = crafters_text([f"Perso{i} X" for i in range(8)])  # trop long : « +N »
-    assert long_list == "Perso0, Perso1 +6" and len(long_list) <= 24
+    card = recipe_field(recipes[1379])
+    assert card.name == "Potion de mana mineure" and card.inline
+    assert card.value == "1× Mage royal\n1× Fiole vide\n👥 Grommash, Hollie"
+    assert "composants inconnus" in recipe_field(recipes[54211]).value
+    assert crafters_text([f"Perso{i} X" for i in range(8)]) == "Perso0, Perso1, Perso2, Perso3, Perso4, Perso5 +2"
 
     # Resynchro : la liste des recettes du perso est remplacée, pas cumulée.
     db.replace_character_recipes(grom.id, {"alchimie": []})
-    assert db.guild_recipes(42, "alchimie")[0].crafters in (["Hollie Tétine"],)
+    assert db.guild_recipes(42, "alchimie")[0].crafters == ["Hollie Tétine"]
     db.close()
 
-    # Pagination : chaque page reste sous la limite Discord, aucune recette perdue.
-    from wowplanner.db import GuildRecipe
 
-    many = [GuildRecipe(i, f"Recette numéro {i:03d}", [(2, "Composant assez long"), (1, "Fiole vide")], ["Hollie"])
-            for i in range(200)]
-    pages = build_pages(filter_recipes(many, None))
-    assert len(pages) > 1 and all(len(p) <= 4096 and p.startswith("```") and p.endswith("```") for p in pages)
-    assert sum(p.count("└") for p in pages) == 200
+def test_recipe_families_and_pages():
+    from wowplanner.db import GuildRecipe
+    from wowplanner.recipes import MAX_FIELDS_PER_PAGE, build_pages, filter_recipes, group_by_family
+
+    def r(i, name):
+        return GuildRecipe(i, name, [(1, "Fiole vide")], ["Hollie Tétine"])
+
+    recipes = filter_recipes([
+        r(1, "Élixir de Force mineure"), r(2, "Elixir de Sagesse"), r(3, "Elixir d'Agilité mineure"),
+        r(4, "Potion de mana mineure"), r(5, "Potion de soins"), r(6, "Potion de Nage rapide"),
+        r(7, "Huile de feu"), r(8, "Acide sulfurique"),
+    ], None)
+    families = group_by_family(recipes)
+    # « Élixir » et « Elixir » forment une seule famille, libellé accentué au pluriel ; les isolées vont dans « Autres ».
+    assert [(f, [x.id for x in m]) for f, m in families] == [
+        ("Élixirs", [3, 1, 2]), ("Potions", [4, 6, 5]), ("Autres", [8, 7]),
+    ]
+    page = build_pages(recipes)[0]
+    assert [f.name for f in page if not f.inline] == ["── Élixirs (3) ──", "── Potions (3) ──", "── Autres (2) ──"]
+
+    # Pagination : limites Discord respectées, aucune recette perdue, titre « (suite) » en haut des pages suivantes.
+    many = filter_recipes([r(i, f"Potion numéro {i:03d}") for i in range(200)], None)
+    pages = build_pages(many)
+    assert len(pages) > 1
+    assert all(len(p) <= MAX_FIELDS_PER_PAGE and sum(len(f.name) + len(f.value) for f in p) < 6000 for p in pages)
+    assert sum(1 for p in pages for f in p if f.inline) == 200
+    assert all(not p[0].inline for p in pages) and pages[1][0].name == "── Potions (suite) ──"
+
+
+def test_recipe_messages_respect_discord_limits():
+    from wowplanner.cogs.armory import recipe_messages
+    from wowplanner.db import GuildRecipe
+    from wowplanner.recipes import build_pages, filter_recipes
+
+    many = filter_recipes([
+        GuildRecipe(i, f"Potion de protection contre le feu {i:03d}",
+                    [(1, "Doulourante"), (1, "Chardonnier"), (1, "Fiole plombée")],
+                    ["Hollie Tétine", "Xfalsia Truc", "Gwoo Machin", "Feuille Bidule"])
+        for i in range(300)
+    ], None)
+    messages = recipe_messages(build_pages(many), "⚒️ Alchimie — 300 recette(s)")
+    assert len(messages) > 1
+    for embeds in messages:
+        assert 1 <= len(embeds) <= 10
+        assert sum(len(e) for e in embeds) <= 6000  # limite Discord par message
+        assert all(len(e.fields) <= 25 for e in embeds)
+        assert embeds[0].title and embeds[-1].footer.text.startswith("Page ")
+    assert sum(1 for m in messages for e in m for f in e.fields if f.inline) == 300
