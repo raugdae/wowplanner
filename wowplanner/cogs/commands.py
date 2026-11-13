@@ -4,7 +4,8 @@
     /modifier  perso | metier | armurerie | instances
     /supprimer event | inscrit | perso | metier | battletag
     /liste     events | persos | metier | recettes | battletags | instances | armurerie
-    /admin     ajouter perso | modifier perso | modifier armurerie | supprimer perso   (« Gérer le serveur »)
+    /admin     ajouter perso | modifier perso | modifier armurerie | supprimer perso | atelier   (« Gérer le serveur »)
+    /commander objet          (raccourci de l'atelier ; sinon tout passe par les boutons du panneau)
 
 Ce fichier ne fait que déclarer les commandes et leurs options ; la logique est dans
 events.py (sorties), characters.py (persos, métiers), players.py (BattleTag), instances.py
@@ -28,6 +29,7 @@ if TYPE_CHECKING:
     from .armory import ArmoryCog
     from .events import EventsCog
     from .instances import InstancesCog
+    from .orders import OrdersCog
 
 CLASS_CHOICES = [app_commands.Choice(name=label, value=key) for key, (label, _) in CLASSES.items()]
 RACE_CHOICES = [app_commands.Choice(name=label, value=key) for key, (label, _) in RACES.items()]
@@ -89,6 +91,10 @@ class CommandsCog(commands.Cog):
     @property
     def instances(self) -> InstancesCog:
         return self.bot.get_cog("InstancesCog")  # type: ignore[return-value]
+
+    @property
+    def orders(self) -> OrdersCog:
+        return self.bot.get_cog("OrdersCog")  # type: ignore[return-value]
 
     @property
     def armory(self) -> ArmoryCog:
@@ -279,6 +285,28 @@ class CommandsCog(commands.Cog):
     ) -> None:
         await self.armory.show_recipes(interaction, metier.value, recherche)
 
+    # ============================================================== /commander
+
+    @app_commands.command(name="commander", description="Commander un objet à fabriquer à un perso du serveur")
+    @app_commands.guild_only()
+    @app_commands.describe(
+        objet="L'objet (tape pour chercher parmi les recettes connues sur le serveur)",
+        quantite="Combien (1 par défaut)",
+        note="Un mot pour l'artisan (ex. : j'ai les composants)",
+    )
+    async def commander(
+        self,
+        interaction: discord.Interaction,
+        objet: app_commands.Range[str, 2, 100],
+        quantite: Optional[app_commands.Range[int, 1, 100]] = None,
+        note: Optional[app_commands.Range[str, 1, 300]] = None,
+    ) -> None:
+        await self.orders.start(interaction, objet, quantite or 1, note)
+
+    @commander.autocomplete("objet")
+    async def _order_autocomplete(self, interaction: discord.Interaction, current: str):
+        return self.orders.recipe_choices(interaction, current)
+
     # ================================================================== /admin
 
     @staticmethod
@@ -352,6 +380,11 @@ class CommandsCog(commands.Cog):
             characters = self.db.guild_characters(interaction.guild.id)
             title = "🔄 Armurerie : tous les persos du serveur"
         await self.armory.refresh(interaction, characters, title, cooldown=False)
+
+    @admin.command(name="atelier", description="Poster (et épingler) le panneau de l'atelier dans ce salon")
+    async def admin_atelier(self, interaction: discord.Interaction) -> None:
+        if await self._is_admin(interaction):
+            await self.orders.post_panel(interaction)
 
     # ========================================================= autocomplétion
 

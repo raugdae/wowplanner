@@ -108,8 +108,31 @@ Intégrations → WoW Planner → `/admin`*. Le bot revérifie la permission à 
 | `/admin modifier perso joueur perso [nom] [classe] [race] [role_prefere]` | Modifie un perso d'un membre (choisir le membre d'abord : le champ `perso` propose ses persos). |
 | `/admin supprimer perso joueur perso` | Supprime un perso d'un membre (il reçoit un MP). |
 | `/admin modifier armurerie [joueur]` | Relit dans l'armurerie les persos d'un membre, ou de tout le serveur. Sans limite de fréquence. |
+| `/admin atelier` | Poste (et épingle) le panneau de l'atelier dans le salon courant. |
 
 Pour voir les persos d'un membre, `/liste persos joueur:@membre` suffit (ouvert à tous).
+
+## Atelier : commandes entre persos
+
+Pour demander à un autre joueur de fabriquer un objet, sans commande à taper. Un admin poste le panneau
+une fois avec `/admin atelier` ; il reste épinglé avec deux boutons :
+
+- **🛒 Commander** : une petite fenêtre demande l'objet (un bout du nom suffit : *mangouste*), la quantité et un
+  mot pour l'artisan. Le bot trouve la recette et qui sait la faire (menu si plusieurs choix), montre un récap
+  avec les composants nécessaires (sous-recettes dépliées, quantités recalculées), puis envoie la commande en MP
+  à l'artisan.
+- **📦 Mes commandes** : commandes passées et reçues, en cours et récentes ; un menu permet d'accepter, terminer
+  ou annuler.
+
+Côté artisan, le MP a les boutons **Accepter** / **Refuser**, puis **C'est prêt** / **Abandonner**. Le client
+reçoit un MP à chaque étape et peut **annuler** tant que ce n'est pas prêt. Composants et livraison se règlent
+entre eux en jeu (courrier, échange).
+
+Seules les recettes **débloquées par les persos du serveur** (vues dans l'armurerie) sont proposées, et jamais
+à ses propres persos. Pas de sécurité à ajouter : Discord dit qui clique ; seul le propriétaire du perso artisan
+peut accepter ou terminer, seul le client peut annuler. Les boutons marchent encore après un redémarrage du bot.
+
+Raccourci pour les habitués : `/commander objet:… [quantite] [note]`, avec autocomplétion.
 
 ## Installation
 
@@ -293,6 +316,8 @@ wowplanner/
   cogs/players.py     BattleTag
   cogs/instances.py   instances + mise à jour périodique
   cogs/armory.py      /liste armurerie et /liste recettes, synchro des métiers et recettes
+  cogs/orders.py      atelier : panneau, commandes entre persos, boutons en MP
+  orders.py           règles des commandes (recettes commandables, droits, composants)
   recipes.py          mise en forme des recettes (recherche, pages)
   web.py              site web public (persos, métiers, recettes)
   cogs/schedule.py    rappels en MP et salons vocaux temporaires

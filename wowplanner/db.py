@@ -86,6 +86,29 @@ CREATE TABLE IF NOT EXISTS signups (
     character_id INTEGER REFERENCES characters (id) ON DELETE SET NULL,
     PRIMARY KEY (message_id, user_id)
 );
+
+-- Commandes d'objets à fabriquer, passées à un perso qui connaît la recette.
+CREATE TABLE IF NOT EXISTS orders (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    guild_id         INTEGER NOT NULL,
+    requester_id     INTEGER NOT NULL,
+    requester_name   TEXT    NOT NULL,
+    recipe_id        INTEGER NOT NULL,
+    recipe_name      TEXT    NOT NULL,
+    quantity         INTEGER NOT NULL,
+    reagents_text    TEXT,
+    note             TEXT,
+    crafter_character_id INTEGER REFERENCES characters (id) ON DELETE SET NULL,
+    crafter_name     TEXT    NOT NULL,
+    crafter_user_id  INTEGER NOT NULL,
+    status           TEXT    NOT NULL DEFAULT 'pending',
+    created_at       INTEGER NOT NULL,
+    updated_at       INTEGER NOT NULL,
+    crafter_dm_channel_id INTEGER,
+    crafter_dm_message_id INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_orders_requester ON orders (requester_id);
+CREATE INDEX IF NOT EXISTS idx_orders_crafter ON orders (crafter_user_id);
 """
 
 
@@ -150,6 +173,43 @@ class GuildRecipe:
     crafters: list[str]  # noms des persos qui la connaissent
     crafted_item_id: int | None = None
     crafted_quantity: float = 1.0
+
+
+@dataclass
+class Crafter:
+    """Un perso d'un membre du serveur qui connaît une recette."""
+    character_id: int
+    name: str
+    user_id: int
+    wow_class: str
+
+
+ORDER_ACTIVE = ("pending", "accepted")
+
+
+@dataclass
+class Order:
+    guild_id: int
+    requester_id: int
+    requester_name: str
+    recipe_id: int
+    recipe_name: str
+    quantity: int
+    crafter_character_id: int | None
+    crafter_name: str
+    crafter_user_id: int
+    reagents_text: str | None = None
+    note: str | None = None
+    status: str = "pending"  # pending | accepted | done | refused | cancelled
+    created_at: int = field(default_factory=lambda: int(time.time()))
+    updated_at: int = field(default_factory=lambda: int(time.time()))
+    crafter_dm_channel_id: int | None = None
+    crafter_dm_message_id: int | None = None
+    id: int = 0
+
+    @property
+    def active(self) -> bool:
+        return self.status in ORDER_ACTIVE
 
 
 class Database:
@@ -571,3 +631,71 @@ class Database:
 
     def known_guild_ids(self) -> list[int]:
         return [r["guild_id"] for r in self.conn.execute("SELECT DISTINCT guild_id FROM guild_members ORDER BY guild_id")]
+
+    def recipe_crafters(self, guild_id: int) -> dict[int, list[Crafter]]:
+        """recette -> persos des membres du serveur qui la connaissent (triés par nom)."""
+        rows = self.conn.execute(
+            """SELECT cr.recipe_id, c.id, c.name, c.user_id, c.wow_class
+               FROM character_recipes cr
+               JOIN characters c ON c.id = cr.character_id
+               JOIN guild_members m ON m.user_id = c.user_id AND m.guild_id = ?
+               ORDER BY c.name COLLATE NOCASE""",
+            (guild_id,),
+        )
+        result: dict[int, list[Crafter]] = {}
+        for r in rows:
+            result.setdefault(r["recipe_id"], []).append(Crafter(r["id"], r["name"], r["user_id"], r["wow_class"]))
+        return result
+
+    # ---------------------------------------------------------------- commandes
+
+    _ORDER_COLUMNS = (
+        "guild_id", "requester_id", "requester_name", "recipe_id", "recipe_name", "quantity", "reagents_text",
+        "note", "crafter_character_id", "crafter_name", "crafter_user_id", "status", "created_at", "updated_at",
+        "crafter_dm_channel_id", "crafter_dm_message_id",
+    )
+
+    def create_order(self, order: Order) -> Order:
+        with self.conn:
+            cur = self.conn.execute(
+                f"INSERT INTO orders ({', '.join(self._ORDER_COLUMNS)}) "
+                f"VALUES ({', '.join('?' * len(self._ORDER_COLUMNS))})",
+                tuple(getattr(order, c) for c in self._ORDER_COLUMNS),
+            )
+        order.id = cur.lastrowid
+        return order
+
+    def _row_to_order(self, row: sqlite3.Row) -> Order:
+        return Order(**{c: row[c] for c in self._ORDER_COLUMNS}, id=row["id"])
+
+    def get_order(self, order_id: int) -> Order | None:
+        row = self.conn.execute("SELECT * FROM orders WHERE id = ?", (order_id,)).fetchone()
+        return self._row_to_order(row) if row else None
+
+    def set_order_status(self, order_id: int, status: str, expected: tuple[str, ...]) -> bool:
+        """Change l'état seulement s'il est encore dans `expected` (deux clics simultanés : un seul gagne)."""
+        with self.conn:
+            cur = self.conn.execute(
+                f"UPDATE orders SET status = ?, updated_at = ? WHERE id = ? AND status IN ({','.join('?' * len(expected))})",
+                (status, int(time.time()), order_id, *expected),
+            )
+        return cur.rowcount == 1
+
+    def set_order_dm(self, order_id: int, channel_id: int, message_id: int) -> None:
+        with self.conn:
+            self.conn.execute(
+                "UPDATE orders SET crafter_dm_channel_id = ?, crafter_dm_message_id = ? WHERE id = ?",
+                (channel_id, message_id, order_id),
+            )
+
+    def user_orders(self, user_id: int, closed_limit: int = 5) -> list[Order]:
+        """Commandes passées ou reçues : toutes celles en cours, puis les dernières terminées."""
+        base = "SELECT * FROM orders WHERE (requester_id = ? OR crafter_user_id = ?)"
+        active = self.conn.execute(
+            base + " AND status IN ('pending', 'accepted') ORDER BY created_at, id", (user_id, user_id)
+        ).fetchall()
+        closed = self.conn.execute(
+            base + " AND status NOT IN ('pending', 'accepted') ORDER BY updated_at DESC, id DESC LIMIT ?",
+            (user_id, user_id, closed_limit),
+        ).fetchall()
+        return [self._row_to_order(r) for r in [*active, *closed]]

@@ -16,6 +16,11 @@ import discord
 
 log = logging.getLogger(__name__)
 
+# Boutons publics qui ouvrent une fenêtre (formulaire) au lieu de répondre : pas de réponse à effacer,
+# et « supprimer la réponse » pourrait viser le message du bouton lui-même. C'est la validation du
+# formulaire qui crée la réponse privée.
+OPENS_MODAL = {"wowplanner:order:new"}
+
 # Marge avant l'expiration du jeton (15 min) pour ne pas tenter une suppression vouée à l'échec.
 SAFETY_MARGIN = datetime.timedelta(seconds=30)
 
@@ -57,7 +62,12 @@ class EphemeralCleaner:
         """
         if interaction.type == discord.InteractionType.application_command:
             return True
+        if interaction.type == discord.InteractionType.modal_submit:
+            return interaction.guild_id is not None  # formulaire de l'atelier : réponse privée nouvelle
         if interaction.type == discord.InteractionType.component:
             message = interaction.message
+            custom_id = (getattr(interaction, "data", None) or {}).get("custom_id")
+            if custom_id in OPENS_MODAL:
+                return False
             return interaction.guild_id is not None and message is not None and not message.flags.ephemeral
-        return False  # autocomplétion, formulaires…
+        return False  # autocomplétion

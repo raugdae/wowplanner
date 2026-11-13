@@ -752,3 +752,106 @@ def test_website_pages_and_no_personal_info(tmp_path):
     for status, text in pages.values():
         assert str(discord_id) not in text and "Raug" not in text and "2134" not in text  # aucune info perso
         assert "<script>alert(1)</script>" not in text  # HTML échappé
+
+
+def test_orders_db_and_rules(tmp_path):
+    """Commandes : recettes commandables (pas les siennes), recherche, composants × quantité, droits."""
+    from wowplanner.db import Database, Order
+    from wowplanner.orders import allowed_actions, orderable, parse_quantity, scaled_reagents, search
+    from wowplanner.recipes import crafted_by_map
+
+    db = Database(tmp_path / "t.db")
+    me, alice, bob = 1, 2, 3
+    mine = db.add_character(me, "Moi Même", "mage", "gnome")
+    a = db.add_character(alice, "Alice Alchi", "pretre", "humain")
+    b = db.add_character(bob, "Bob Couture", "mage", "humain")
+    for user in (me, alice, bob):
+        db.touch_member(42, user)
+    db.replace_character_recipes(mine.id, {"alchimie": [(1, "Mongoose")]})
+    db.replace_character_recipes(a.id, {"alchimie": [(1, "Mongoose"), (2, "Minor")]})
+    db.replace_character_recipes(b.id, {"couture": [(10, "Bolt"), (11, "Bag")]})
+    db.set_recipe_details(1, "Élixir de la mangouste", [(2, "Fleur de feu", 100)], 900, 1.0)
+    db.set_recipe_details(2, "Potion de soins mineure", [(1, "Pacifique", 101)], 901, 1.0)
+    db.set_recipe_details(10, "Rouleau d'étoffe de lin", [(2, "Étoffe de lin", 200)], 300, 1.0)
+    db.set_recipe_details(11, "Sac en lin", [(3, "Rouleau d'étoffe de lin", 300)], 301, 1.0)
+
+    candidates = orderable(db.guild_recipes(42), db.recipe_crafters(42), me)
+    assert {c.recipe.id for c in candidates} == {1, 2, 10, 11}
+    mongoose = next(c for c in candidates if c.recipe.id == 1)
+    assert [x.name for x in mongoose.crafters] == ["Alice Alchi"]  # pas mon propre perso
+    # Alice ne voit pas la 2 (elle seule la connaît), mais voit la 1 (mon perso la connaît aussi).
+    alice_view = orderable(db.guild_recipes(42), db.recipe_crafters(42), alice)
+    assert {c.recipe.id for c in alice_view} == {1, 10, 11}
+
+    assert [c.recipe.id for c in search(candidates, "mangouste")] == [1]
+    assert [c.recipe.id for c in search(candidates, "lin")] == [10, 11]
+    assert [c.recipe.id for c in search(candidates, "sac en lin")] == [11]  # nom exact
+    assert search(candidates, "épée") == []
+
+    bag = next(c for c in candidates if c.recipe.id == 11).recipe
+    text = scaled_reagents(bag, 2, crafted_by_map(db.guild_recipes(42)))
+    assert "6× Rouleau d'étoffe de lin" in text and "↳ 12× Étoffe de lin" in text
+
+    assert parse_quantity("") == 1 and parse_quantity(" 5 ") == 5 and parse_quantity("x3") == 3
+    assert parse_quantity("0") is None and parse_quantity("abc") is None and parse_quantity("101") is None
+
+    order = db.create_order(Order(
+        guild_id=42, requester_id=me, requester_name="Moi", recipe_id=1, recipe_name="Élixir de la mangouste",
+        quantity=5, crafter_character_id=a.id, crafter_name="Alice Alchi", crafter_user_id=alice,
+        reagents_text="10× Fleur de feu",
+    ))
+    assert order.id and db.get_order(order.id).status == "pending"
+    assert allowed_actions(order, alice) == ["accept", "refuse"]
+    assert allowed_actions(order, me) == ["cancel"]
+    assert allowed_actions(order, bob) == []
+    assert db.set_order_status(order.id, "accepted", ("pending",))
+    assert not db.set_order_status(order.id, "refused", ("pending",))  # déjà acceptée : refus ignoré
+    order = db.get_order(order.id)
+    assert allowed_actions(order, alice) == ["done", "drop"]
+    db.set_order_dm(order.id, 555, 666)
+    assert db.get_order(order.id).crafter_dm_message_id == 666
+    assert [o.id for o in db.user_orders(me)] == [order.id] and [o.id for o in db.user_orders(alice)] == [order.id]
+    assert db.user_orders(bob) == []
+    assert db.set_order_status(order.id, "done", ("accepted",))
+    assert allowed_actions(db.get_order(order.id), me) == []
+    db.close()
+
+
+def test_orders_discord_rendering():
+    """Embeds et boutons de commande ; le bouton qui ouvre le formulaire n'est pas « nettoyé »."""
+    import asyncio
+    import re
+    from types import SimpleNamespace
+
+    import discord
+
+    from wowplanner.cogs.orders import OrderActionButton, order_embed, order_view, panel_embed
+    from wowplanner.db import Order
+    from wowplanner.ephemeral import EphemeralCleaner
+
+    order = Order(
+        guild_id=42, requester_id=1, requester_name="Moi", recipe_id=1, recipe_name="Élixir", quantity=2,
+        crafter_character_id=5, crafter_name="Alice Alchi", crafter_user_id=2, reagents_text="4× Fleur", id=7,
+    )
+
+    async def scenario():
+        embed = order_embed(order)
+        assert "#7" in embed.title and "2× Élixir" in embed.title
+        view = order_view(order, 2)
+        ids = [item.custom_id for item in view.children]
+        assert ids == ["wowplanner:order:accept:7", "wowplanner:order:refuse:7"]
+        assert order_view(order, 99) is None
+        assert re.fullmatch(OrderActionButton.__discord_ui_compiled_template__, "wowplanner:order:done:12")
+        assert panel_embed().title
+
+    asyncio.run(scenario())
+
+    def inter(kind, custom_id=None):
+        return SimpleNamespace(
+            type=kind, guild_id=42, data={"custom_id": custom_id} if custom_id else {},
+            message=SimpleNamespace(flags=SimpleNamespace(ephemeral=False)),
+        )
+
+    assert not EphemeralCleaner._creates_new_response(inter(discord.InteractionType.component, "wowplanner:order:new"))
+    assert EphemeralCleaner._creates_new_response(inter(discord.InteractionType.component, "wowplanner:order:mine"))
+    assert EphemeralCleaner._creates_new_response(inter(discord.InteractionType.modal_submit))
