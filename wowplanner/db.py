@@ -137,12 +137,19 @@ class Character:
     armory_synced_at: int | None = None
 
 
+# Version du format des détails de recette ; une recette plus ancienne est redemandée à Blizzard.
+# 2 : identifiants des composants et de l'objet fabriqué (pour relier les sous-recettes).
+RECIPE_DETAILS_VERSION = 2
+
+
 @dataclass
 class GuildRecipe:
     id: int
     name: str
-    reagents: list[tuple[int, str]] | None  # None : composants pas encore récupérés
+    reagents: list[tuple[int, str, int | None]] | None  # (qté, nom, id objet) ; None : pas encore récupérés
     crafters: list[str]  # noms des persos qui la connaissent
+    crafted_item_id: int | None = None
+    crafted_quantity: float = 1.0
 
 
 class Database:
@@ -175,6 +182,11 @@ class Database:
         columns = {row["name"] for row in self.conn.execute("PRAGMA table_info(characters)")}
         if "armory_synced_at" not in columns:
             self.conn.execute("ALTER TABLE characters ADD COLUMN armory_synced_at INTEGER")
+        # v1.4 → v1.5 : liens entre recettes (composant fabriqué par une autre recette).
+        columns = {row["name"] for row in self.conn.execute("PRAGMA table_info(recipes)")}
+        for column in ("crafted_item_id INTEGER", "crafted_qty REAL", "details_version INTEGER"):
+            if column.split()[0] not in columns:
+                self.conn.execute(f"ALTER TABLE recipes ADD COLUMN {column}")
         # Les joueurs déjà inscrits à des sorties sont membres du serveur de ces sorties.
         self.conn.execute(
             """INSERT OR IGNORE INTO guild_members (guild_id, user_id)
@@ -495,39 +507,58 @@ class Database:
             )
 
     def recipes_missing_details(self, profession: str | None = None) -> list[int]:
-        """Recettes dont le nom français et les composants n'ont pas encore été récupérés."""
-        sql = "SELECT id FROM recipes WHERE fetched_at IS NULL"
-        args: tuple = ()
+        """Recettes dont le nom français et les composants n'ont pas encore été récupérés
+        (ou l'ont été dans un ancien format)."""
+        sql = "SELECT id FROM recipes WHERE (details_version IS NULL OR details_version < ?)"
+        args: tuple = (RECIPE_DETAILS_VERSION,)
         if profession:
             sql += " AND profession = ?"
-            args = (profession,)
+            args += (profession,)
         return [r["id"] for r in self.conn.execute(sql + " ORDER BY id", args)]
 
-    def set_recipe_details(self, recipe_id: int, name: str, reagents: list[tuple[int, str]]) -> None:
+    def set_recipe_details(
+        self,
+        recipe_id: int,
+        name: str,
+        reagents: list[tuple[int, str, int | None]],
+        crafted_item_id: int | None = None,
+        crafted_quantity: float = 1.0,
+    ) -> None:
         with self.conn:
             self.conn.execute(
-                "UPDATE recipes SET name = ?, reagents = ?, fetched_at = ? WHERE id = ?",
-                (name, json.dumps(reagents, ensure_ascii=False), int(time.time()), recipe_id),
+                """UPDATE recipes SET name = ?, reagents = ?, crafted_item_id = ?, crafted_qty = ?,
+                                      details_version = ?, fetched_at = ? WHERE id = ?""",
+                (
+                    name, json.dumps(reagents, ensure_ascii=False), crafted_item_id, crafted_quantity,
+                    RECIPE_DETAILS_VERSION, int(time.time()), recipe_id,
+                ),
             )
 
-    def guild_recipes(self, guild_id: int, profession: str) -> list[GuildRecipe]:
-        """Recettes de ce métier connues par au moins un perso d'un membre du serveur, avec leurs crafteurs."""
+    def guild_recipes(self, guild_id: int, profession: str | None = None) -> list[GuildRecipe]:
+        """Recettes (d'un métier, ou de tous) connues par au moins un perso d'un membre du serveur."""
         rows = self.conn.execute(
-            """SELECT r.id, r.name, r.name_en, r.reagents, c.name AS character_name
+            """SELECT r.id, r.name, r.name_en, r.reagents, r.crafted_item_id, r.crafted_qty,
+                      c.name AS character_name
                FROM recipes r
                JOIN character_recipes cr ON cr.recipe_id = r.id
                JOIN characters c ON c.id = cr.character_id
                JOIN guild_members m ON m.user_id = c.user_id AND m.guild_id = ?
-               WHERE r.profession = ?
+               WHERE (? IS NULL OR r.profession = ?)
                ORDER BY c.name COLLATE NOCASE""",
-            (guild_id, profession),
+            (guild_id, profession, profession),
         ).fetchall()
         by_id: dict[int, GuildRecipe] = {}
         for r in rows:
             recipe = by_id.get(r["id"])
             if recipe is None:
-                reagents = [tuple(x) for x in json.loads(r["reagents"])] if r["reagents"] else None
-                recipe = by_id[r["id"]] = GuildRecipe(r["id"], r["name"] or r["name_en"], reagents, [])
+                reagents = None
+                if r["reagents"]:
+                    # Ancien format : (qté, nom) sans id d'objet.
+                    reagents = [(x[0], x[1], x[2] if len(x) > 2 else None) for x in json.loads(r["reagents"])]
+                recipe = by_id[r["id"]] = GuildRecipe(
+                    r["id"], r["name"] or r["name_en"], reagents, [],
+                    r["crafted_item_id"], r["crafted_qty"] or 1.0,
+                )
             if r["character_name"] not in recipe.crafters:
                 recipe.crafters.append(r["character_name"])
         return list(by_id.values())

@@ -223,7 +223,8 @@ versionné).
 - `/liste recettes metier [recherche]` : toutes les recettes du métier connues par les persos du serveur, avec
   leurs composants (en français) et les persos qui savent les faire, **en MP**. Une carte par recette (nom complet,
   un composant par ligne, 👥 les persos), regroupées par famille (Élixirs, Potions…), 3 par ligne sur PC ; environ
-  45 recettes par page, pages ◀ ▶ au-delà. `recherche` filtre sur le nom, sans tenir compte des accents ni des majuscules. Si aucune
+  45 recettes par page, pages ◀ ▶ au-delà. Un composant lui-même fabriqué par une recette connue sur le serveur est
+  déplié en dessous, quantités recalculées (ex. : 3× Rouleau d'étoffe de lin ↳ 6× Étoffe de lin). `recherche` filtre sur le nom, sans tenir compte des accents ni des majuscules. Si aucune
   recette ne correspond, le bot répond seulement dans le salon, sans MP. Les recettes connues sont relues à chaque
   synchro ; les composants d'une recette sont demandés une seule fois puis gardés en base.
 - **Vérification à l'ajout** : `/ajouter perso` dit si le perso existe dans l'armurerie, et prévient si la classe ou

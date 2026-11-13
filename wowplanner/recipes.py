@@ -10,6 +10,7 @@ coupés deviennent ambigus.)
 """
 from __future__ import annotations
 
+import math
 import unicodedata
 from collections import Counter
 from dataclasses import dataclass
@@ -22,6 +23,8 @@ MAX_CHARS_PER_PAGE = 5000
 # Une famille a sa section à partir de ce nombre de recettes ; les autres vont dans « Autres ».
 MIN_FAMILY_SIZE = 3
 MAX_CRAFTERS_SHOWN = 6
+# Profondeur max des sous-recettes dépliées (lin → rouleau → sac = 2).
+MAX_SUBRECIPE_DEPTH = 3
 OTHER_FAMILY = "Autres"
 
 
@@ -85,18 +88,51 @@ def crafters_text(names: list[str]) -> str:
     return shown + (f" +{rest}" if rest > 0 else "")
 
 
-def recipe_field(recipe: GuildRecipe) -> Field:
+CraftedBy = dict[int, GuildRecipe]  # id d'objet → recette du serveur qui le fabrique
+
+
+def crafted_by_map(recipes: list[GuildRecipe]) -> CraftedBy:
+    """Objets fabricables par les recettes connues sur le serveur (tous métiers confondus)."""
+    mapping: CraftedBy = {}
+    for recipe in sorted(recipes, key=lambda r: r.id):  # en cas de doublon, toujours la même
+        if recipe.crafted_item_id and recipe.reagents is not None:
+            mapping.setdefault(recipe.crafted_item_id, recipe)
+    return mapping
+
+
+def reagent_lines(
+    reagents: list[tuple[int, str, int | None]],
+    crafted_by: CraftedBy,
+    depth: int = 0,
+    seen: frozenset[int] = frozenset(),
+) -> list[str]:
+    """Une ligne par composant ; ceux qu'une recette du serveur fabrique sont dépliés en dessous
+    (« ↳ »), avec les quantités recalculées. Ex. : 3× Rouleau d'étoffe de lin ↳ 6× Étoffe de lin."""
+    lines = []
+    for qty, name, item_id in reagents:
+        indent = " " * (2 * depth)  # espace cadratin : les espaces simples sont écrasés par Discord
+        lines.append(f"{indent}{'↳ ' if depth else ''}{qty}× {name}")
+        sub = crafted_by.get(item_id) if item_id is not None else None
+        if sub is None or sub.id in seen or depth >= MAX_SUBRECIPE_DEPTH or not sub.reagents:
+            continue
+        crafts = math.ceil(qty / (sub.crafted_quantity or 1))  # fabrications nécessaires
+        scaled = [(sub_qty * crafts, sub_name, sub_id) for sub_qty, sub_name, sub_id in sub.reagents]
+        lines.extend(reagent_lines(scaled, crafted_by, depth + 1, seen | {sub.id}))
+    return lines
+
+
+def recipe_field(recipe: GuildRecipe, crafted_by: CraftedBy | None = None) -> Field:
     if recipe.reagents is None:
         reagents = "❔ composants inconnus pour l'instant"
     elif not recipe.reagents:
         reagents = "aucun composant"
     else:
-        reagents = "\n".join(f"{qty}× {name}" for qty, name in recipe.reagents)
+        reagents = "\n".join(reagent_lines(recipe.reagents, crafted_by or {}, seen=frozenset({recipe.id})))
     value = f"{reagents}\n👥 {crafters_text(recipe.crafters)}"
     return Field(recipe.name[:256], value[:1024], inline=True)
 
 
-def build_pages(recipes: list[GuildRecipe]) -> list[list[Field]]:
+def build_pages(recipes: list[GuildRecipe], crafted_by: CraftedBy | None = None) -> list[list[Field]]:
     """Pages de champs (titres de famille + cartes), chacune sous les limites Discord."""
     pages: list[list[Field]] = []
     page: list[Field] = []
@@ -110,7 +146,7 @@ def build_pages(recipes: list[GuildRecipe]) -> list[list[Field]]:
 
     for family, members in group_by_family(recipes):
         for i, recipe in enumerate(members):
-            card = recipe_field(recipe)
+            card = recipe_field(recipe, crafted_by)
             header_needed = i == 0 or not page  # début de famille, ou famille qui continue sur une nouvelle page
             needed = 1 + header_needed
             card_size = len(card.name) + len(card.value) + 40

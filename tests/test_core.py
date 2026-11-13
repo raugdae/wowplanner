@@ -494,7 +494,7 @@ def test_recipes_db_and_pages(tmp_path):
     recipes = {r.id: r for r in db.guild_recipes(42, "alchimie")}
     assert set(recipes) == {1379, 54211}  # la recette de l'autre serveur n'apparaît pas
     assert recipes[1379].crafters == ["Grommash Hurlenfer", "Hollie Tétine"]
-    assert recipes[1379].reagents == [(1, "Mage royal"), (1, "Fiole vide")]
+    assert recipes[1379].reagents == [(1, "Mage royal", None), (1, "Fiole vide", None)]  # ancien format : sans id
     assert recipes[54211].name == "Elixir of Minor Force" and recipes[54211].reagents is None  # pas encore récupérée
 
     assert [r.id for r in filter_recipes(list(recipes.values()), "POTION")] == [1379]
@@ -515,7 +515,7 @@ def test_recipe_families_and_pages():
     from wowplanner.recipes import MAX_FIELDS_PER_PAGE, build_pages, filter_recipes, group_by_family
 
     def r(i, name):
-        return GuildRecipe(i, name, [(1, "Fiole vide")], ["Hollie Tétine"])
+        return GuildRecipe(i, name, [(1, "Fiole vide", 3371)], ["Hollie Tétine"])
 
     recipes = filter_recipes([
         r(1, "Élixir de Force mineure"), r(2, "Elixir de Sagesse"), r(3, "Elixir d'Agilité mineure"),
@@ -546,7 +546,7 @@ def test_recipe_messages_respect_discord_limits():
 
     many = filter_recipes([
         GuildRecipe(i, f"Potion de protection contre le feu {i:03d}",
-                    [(1, "Doulourante"), (1, "Chardonnier"), (1, "Fiole plombée")],
+                    [(1, "Doulourante", 1), (1, "Chardonnier", 2), (1, "Fiole plombée", 3)],
                     ["Hollie Tétine", "Xfalsia Truc", "Gwoo Machin", "Feuille Bidule"])
         for i in range(300)
     ], None)
@@ -656,3 +656,51 @@ def test_add_character_name_only_needs_class_race_when_not_found(tmp_path):
         asyncio.run(chars.add(_fake_interaction(1, sent), "Inconnu Perso", "mage", "gnome", None))
         assert db.get_characters(1)[0].wow_class == "mage"
         db.close()
+
+
+def test_subrecipes_are_expanded_with_scaled_quantities(tmp_path):
+    """Lin → rouleau → sac : les composants fabriqués par une recette du serveur sont dépliés."""
+    from wowplanner.db import Database
+    from wowplanner.recipes import crafted_by_map, filter_recipes, recipe_field
+
+    db = Database(tmp_path / "t.db")
+    hollie = db.add_character(1, "Hollie Tétine", "pretre", "humain")
+    db.touch_member(42, 1)
+    db.replace_character_recipes(hollie.id, {
+        "couture": [(2359, "Bolt of Linen Cloth"), (9001, "Linen Bag"), (9002, "Thread")],
+        "alchimie": [(9100, "Loop A")],
+    })
+    db.set_recipe_details(2359, "Rouleau d'étoffe de lin", [(2, "Etoffe de lin", 2589)], 2996, 1.0)
+    db.set_recipe_details(9002, "Bobine de fil grossier", [(1, "Etoffe de lin", 2589)], 2320, 2.0)  # 2 bobines par craft
+    db.set_recipe_details(9001, "Sac en lin", [(3, "Rouleau d'étoffe en lin", 2996), (3, "Bobine de fil grossier", 2320)], 4238, 1.0)
+    db.set_recipe_details(9100, "Boucle", [(1, "Boucle", 7777)], 7777, 1.0)  # se fabrique elle-même : pas de boucle infinie
+    assert db.recipes_missing_details() == []
+
+    every = db.guild_recipes(42)  # tous métiers : les sous-recettes peuvent venir d'un autre métier
+    crafted_by = crafted_by_map(every)
+    bag = filter_recipes(db.guild_recipes(42, "couture"), "sac")[0]
+    assert recipe_field(bag, crafted_by).value.split("\n") == [
+        "3× Rouleau d'étoffe en lin",
+        "\u2003\u2003↳ 6× Etoffe de lin",       # 3 rouleaux × 2 étoffes
+        "3× Bobine de fil grossier",
+        "\u2003\u2003↳ 2× Etoffe de lin",       # 3 bobines, 2 par craft → 2 crafts × 1 étoffe
+        "👥 Hollie",
+    ]
+    loop = next(r for r in every if r.id == 9100)
+    assert recipe_field(loop, crafted_by).value.split("\n") == ["1× Boucle", "👥 Hollie"]
+    db.close()
+
+
+def test_old_recipe_details_are_refetched_once(tmp_path):
+    from wowplanner.db import Database
+
+    db = Database(tmp_path / "t.db")
+    c = db.add_character(1, "Hollie Tétine", "pretre", "humain")
+    db.replace_character_recipes(c.id, {"alchimie": [(1379, "Minor Mana Potion")]})
+    # Détails au format v1.4 (sans ids) : la recette doit être redemandée…
+    db.conn.execute("UPDATE recipes SET name = 'Potion', reagents = '[[1, \"Mage royal\"]]', fetched_at = 1, details_version = NULL")
+    assert db.recipes_missing_details() == [1379]
+    # … puis plus jamais une fois au nouveau format.
+    db.set_recipe_details(1379, "Potion de mana mineure", [(1, "Mage royal", 785)], 2455, 1.0)
+    assert db.recipes_missing_details() == []
+    db.close()

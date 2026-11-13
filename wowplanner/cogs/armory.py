@@ -20,7 +20,7 @@ from discord.ext import commands, tasks
 from ..armory import CACHE_SECONDS, ArmoryClient, ArmoryError, ArmorySheet, parse_recipe
 from ..db import Character
 from ..gamedata import class_label, profession_label, race_label
-from ..recipes import Field, build_pages, filter_recipes
+from ..recipes import Field, build_pages, crafted_by_map, filter_recipes
 
 if TYPE_CHECKING:
     from ..bot import WowPlannerBot
@@ -411,11 +411,13 @@ class ArmoryCog(commands.Cog):
             nonlocal done
             async with semaphore:
                 try:
-                    name, reagents = parse_recipe(await client.recipe(recipe_id))
+                    details = parse_recipe(await client.recipe(recipe_id))
                 except (ArmoryError, aiohttp.ClientError, asyncio.TimeoutError) as exc:
                     log.warning("Recette %s : %s", recipe_id, exc)
                     return
-            self.db.set_recipe_details(recipe_id, name, reagents)
+            self.db.set_recipe_details(
+                recipe_id, details.name, details.reagents, details.crafted_item_id, details.crafted_quantity
+            )
             done += 1
 
         await asyncio.gather(*(one(rid) for rid in recipe_ids))
@@ -482,8 +484,9 @@ class ArmoryCog(commands.Cog):
             return
 
         await interaction.response.defer(ephemeral=True, thinking=True)
-        # Composants des recettes jamais vues : récupérés une fois pour toutes.
-        await self.fetch_recipe_details(self.db.recipes_missing_details(profession))
+        # Composants des recettes jamais vues : récupérés une fois pour toutes. Tous métiers, car une
+        # sous-recette peut venir d'un autre métier (ex. : barres du Minage pour la Forge).
+        await self.fetch_recipe_details(self.db.recipes_missing_details())
 
         known = self.db.guild_recipes(interaction.guild.id, profession)
         if not known:
@@ -504,7 +507,8 @@ class ArmoryCog(commands.Cog):
             return
 
         title = f"⚒️ {label} — {len(matched)} recette(s)" + (f" · « {search} »" if search else "")
-        pages = recipe_messages(build_pages(matched), title)
+        crafted_by = crafted_by_map(self.db.guild_recipes(interaction.guild.id))
+        pages = recipe_messages(build_pages(matched, crafted_by), title)
         view = RecipePagesView(pages) if len(pages) > 1 else None
         extra = {"view": view} if view else {}
 

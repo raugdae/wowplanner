@@ -231,10 +231,24 @@ class ArmorySheet:
         return recipes
 
 
-def parse_recipe(data: dict[str, Any]) -> tuple[str, list[tuple[int, str]]]:
-    """(nom localisé, [(quantité, composant), …]) depuis /data/wow/recipe/{id}."""
+@dataclass
+class RecipeDetails:
+    name: str
+    reagents: list[tuple[int, str, int | None]]  # (quantité, composant, id de l'objet)
+    crafted_item_id: int | None  # objet fabriqué (None : enchantement, etc.)
+    crafted_quantity: float  # objets obtenus par fabrication
+
+
+def parse_recipe(data: dict[str, Any]) -> RecipeDetails:
+    """Détail d'une recette depuis /data/wow/recipe/{id}."""
     reagents = [
-        (int(r.get("quantity") or 1), (r.get("reagent") or {}).get("name") or "?")
+        (
+            int(r.get("quantity") or 1),
+            (r.get("reagent") or {}).get("name") or "?",
+            (r.get("reagent") or {}).get("id"),
+        )
         for r in data.get("reagents") or []
     ]
-    return data.get("name") or "?", reagents
+    crafted = data.get("crafted_item") or data.get("alliance_crafted_item") or data.get("horde_crafted_item") or {}
+    quantity = (data.get("crafted_quantity") or {}).get("value") or 1
+    return RecipeDetails(data.get("name") or "?", reagents, crafted.get("id"), float(quantity))
