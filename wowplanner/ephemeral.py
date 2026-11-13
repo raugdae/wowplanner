@@ -48,14 +48,16 @@ class EphemeralCleaner:
 
     @staticmethod
     def _creates_new_response(interaction: discord.Interaction) -> bool:
-        """Commande slash, ou clic sur un bouton d'un message public (les boutons de sortie).
+        """Commande slash, ou clic sur un bouton d'un message public d'un salon (les boutons de sortie).
 
-        Les clics dans un message privé (menu de choix du perso, confirmation d'annulation)
-        modifient ce message au lieu d'en créer un nouveau : surtout ne pas l'effacer.
+        Exclus, car le clic modifie le message au lieu d'en créer un nouveau (et « supprimer la
+        réponse » supprimerait ce message) :
+        - les clics dans un message privé du salon (choix du perso, confirmation d'annulation) ;
+        - les clics dans les MP du bot (pages de recettes) : il ne faut jamais effacer un MP.
         """
         if interaction.type == discord.InteractionType.application_command:
             return True
         if interaction.type == discord.InteractionType.component:
             message = interaction.message
-            return message is not None and not message.flags.ephemeral
+            return interaction.guild_id is not None and message is not None and not message.flags.ephemeral
         return False  # autocomplétion, formulaires…

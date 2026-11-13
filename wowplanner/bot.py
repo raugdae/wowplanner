@@ -42,6 +42,7 @@ class WowPlannerBot(commands.Bot):
 
         await self.load_extension("wowplanner.cogs.instances")
         await self.load_extension("wowplanner.cogs.events")
+        await self.load_extension("wowplanner.cogs.armory")
         await self.load_extension("wowplanner.cogs.commands")  # après events et instances, qu'il appelle
         await self.load_extension("wowplanner.cogs.schedule")
 

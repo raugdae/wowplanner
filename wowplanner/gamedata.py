@@ -31,7 +31,7 @@ RACES: dict[str, tuple[str, frozenset[str]]] = {
     "tauren": ("Tauren", frozenset({"guerrier", "chasseur", "chaman", "druide"})),
     "troll": ("Troll", frozenset({"guerrier", "chasseur", "voleur", "pretre", "chaman", "mage", "demoniste"})),
     # Mage seulement côté Alliance, Chaman seulement côté Horde : on ne gère pas la faction, on accepte les deux.
-    "skyborne": ("Skyborne", frozenset({"guerrier", "chasseur", "voleur", "chaman", "mage", "druide"})),
+    "skyborne": ("Éolide", frozenset({"guerrier", "chasseur", "voleur", "chaman", "mage", "druide"})),
 }
 
 
@@ -81,3 +81,20 @@ def profession_label(key: str) -> str:
 
 def is_primary(profession: str) -> bool:
     return PROFESSIONS.get(profession, ("", False))[1]
+
+
+# Identifiants Blizzard (API « static-forever », vérifiés le 13/11/2026) -> nos clés.
+BLIZZARD_CLASS_IDS: dict[int, str] = {
+    1: "guerrier", 2: "paladin", 3: "chasseur", 4: "voleur", 5: "pretre",
+    7: "chaman", 8: "mage", 9: "demoniste", 11: "druide",
+}
+BLIZZARD_RACE_IDS: dict[int, str] = {
+    1: "humain", 2: "orc", 3: "nain", 4: "elfe_nuit", 5: "mort_vivant", 6: "tauren", 7: "gnome", 8: "troll",
+    95: "skyborne",  # Éolide de l'Ordre suprême
+    96: "skyborne",  # Éolide sculpte-vents
+}
+BLIZZARD_PROFESSION_IDS: dict[int, str] = {
+    129: "secourisme", 164: "forge", 165: "travail_cuir", 171: "alchimie", 182: "herboristerie",
+    185: "cuisine", 186: "minage", 197: "couture", 202: "ingenierie", 333: "enchantement",
+    356: "peche", 393: "depecage",
+}

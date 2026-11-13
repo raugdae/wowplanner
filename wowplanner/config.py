@@ -22,6 +22,10 @@ class Config:
     reminder_minutes: int = 30
     voice_channel_minutes: int = 15
     voice_category_id: int | None = None
+    # API Blizzard (armurerie WoW Forever) : facultative, désactivée si vide.
+    blizzard_client_id: str = ""
+    blizzard_client_secret: str = ""
+    blizzard_region: str = "eu"
 
     @property
     def db_path(self) -> Path:
@@ -59,4 +63,7 @@ def load_config() -> Config:
         reminder_minutes=int(os.getenv("REMINDER_MINUTES", "30") or 0),
         voice_channel_minutes=int(os.getenv("VOICE_CHANNEL_MINUTES", "15") or 0),
         voice_category_id=int(category_raw) if category_raw else None,
+        blizzard_client_id=os.getenv("BLIZZARD_CLIENT_ID", "").strip(),
+        blizzard_client_secret=os.getenv("BLIZZARD_CLIENT_SECRET", "").strip(),
+        blizzard_region=(os.getenv("BLIZZARD_REGION", "eu").strip() or "eu").lower(),
     )

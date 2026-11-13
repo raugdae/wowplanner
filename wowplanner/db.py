@@ -1,6 +1,7 @@
 """Persistance SQLite des sorties et des inscriptions (survit aux redémarrages du bot)."""
 from __future__ import annotations
 
+import json
 import sqlite3
 import time
 from dataclasses import dataclass, field
@@ -45,6 +46,22 @@ CREATE TABLE IF NOT EXISTS character_professions (
     profession   TEXT    NOT NULL,
     skill        INTEGER,
     PRIMARY KEY (character_id, profession)
+);
+
+-- Recettes vues dans l'armurerie. Nom français et composants récupérés une seule fois (données statiques).
+CREATE TABLE IF NOT EXISTS recipes (
+    id         INTEGER PRIMARY KEY,
+    profession TEXT    NOT NULL,
+    name_en    TEXT    NOT NULL,
+    name       TEXT,
+    reagents   TEXT,
+    fetched_at INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS character_recipes (
+    character_id INTEGER NOT NULL REFERENCES characters (id) ON DELETE CASCADE,
+    recipe_id    INTEGER NOT NULL REFERENCES recipes (id),
+    PRIMARY KEY (character_id, recipe_id)
 );
 
 CREATE TABLE IF NOT EXISTS players (
@@ -116,6 +133,16 @@ class Character:
     preferred_role: str | None = None
     # métier -> niveau (None si non renseigné)
     professions: dict[str, int | None] = field(default_factory=dict)
+    # Dernière synchro réussie avec l'armurerie (timestamp), None si jamais trouvé.
+    armory_synced_at: int | None = None
+
+
+@dataclass
+class GuildRecipe:
+    id: int
+    name: str
+    reagents: list[tuple[int, str]] | None  # None : composants pas encore récupérés
+    crafters: list[str]  # noms des persos qui la connaissent
 
 
 class Database:
@@ -144,6 +171,10 @@ class Database:
             self.conn.execute("ALTER TABLE events ADD COLUMN reminder_sent INTEGER NOT NULL DEFAULT 0")
         if "voice_channel_id" not in columns:
             self.conn.execute("ALTER TABLE events ADD COLUMN voice_channel_id INTEGER")
+        # v1.3 → v1.4 : synchro des métiers depuis l'armurerie.
+        columns = {row["name"] for row in self.conn.execute("PRAGMA table_info(characters)")}
+        if "armory_synced_at" not in columns:
+            self.conn.execute("ALTER TABLE characters ADD COLUMN armory_synced_at INTEGER")
         # Les joueurs déjà inscrits à des sorties sont membres du serveur de ces sorties.
         self.conn.execute(
             """INSERT OR IGNORE INTO guild_members (guild_id, user_id)
@@ -288,7 +319,11 @@ class Database:
 
     def _load_characters(self, rows: list[sqlite3.Row]) -> list[Character]:
         characters = [
-            Character(r["id"], r["user_id"], r["name"], r["wow_class"], r["race"], r["preferred_role"]) for r in rows
+            Character(
+                r["id"], r["user_id"], r["name"], r["wow_class"], r["race"], r["preferred_role"],
+                armory_synced_at=r["armory_synced_at"],
+            )
+            for r in rows
         ]
         if characters:
             by_id = {c.id: c for c in characters}
@@ -410,3 +445,89 @@ class Database:
             (guild_id,),
         ).fetchall()
         return [(r["user_id"], r["battletag"]) for r in rows]
+
+    # -------------------------------------------------------------- armurerie
+
+    def replace_professions(self, character_id: int, skills: dict[str, int | None]) -> None:
+        """Remplace tous les métiers du perso (ceux de l'armurerie font foi) et note la synchro."""
+        with self.conn:
+            self.conn.execute("DELETE FROM character_professions WHERE character_id = ?", (character_id,))
+            self.conn.executemany(
+                "INSERT INTO character_professions (character_id, profession, skill) VALUES (?, ?, ?)",
+                [(character_id, p, s) for p, s in skills.items()],
+            )
+            self.conn.execute(
+                "UPDATE characters SET armory_synced_at = ? WHERE id = ?", (int(time.time()), character_id)
+            )
+
+    def all_characters(self) -> list[Character]:
+        return self._load_characters(self.conn.execute("SELECT * FROM characters ORDER BY id").fetchall())
+
+    def characters_named(self, name: str) -> list[Character]:
+        """Persos déclarés sous ce nom, tous joueurs confondus (insensible à la casse)."""
+        rows = self.conn.execute(
+            "SELECT * FROM characters WHERE name = ? COLLATE NOCASE ORDER BY id", (name.strip(),)
+        ).fetchall()
+        return self._load_characters(rows)
+
+    def guild_characters(self, guild_id: int) -> list[Character]:
+        rows = self.conn.execute(
+            """SELECT c.* FROM characters c
+               JOIN guild_members m ON m.user_id = c.user_id AND m.guild_id = ?
+               ORDER BY c.name COLLATE NOCASE""",
+            (guild_id,),
+        ).fetchall()
+        return self._load_characters(rows)
+
+    # ---------------------------------------------------------------- recettes
+
+    def replace_character_recipes(self, character_id: int, known: dict[str, list[tuple[int, str]]]) -> None:
+        """Remplace les recettes connues du perso (armurerie) ; crée les recettes encore inconnues."""
+        with self.conn:
+            self.conn.executemany(
+                "INSERT OR IGNORE INTO recipes (id, profession, name_en) VALUES (?, ?, ?)",
+                [(rid, prof, name) for prof, items in known.items() for rid, name in items],
+            )
+            self.conn.execute("DELETE FROM character_recipes WHERE character_id = ?", (character_id,))
+            self.conn.executemany(
+                "INSERT OR IGNORE INTO character_recipes (character_id, recipe_id) VALUES (?, ?)",
+                [(character_id, rid) for items in known.values() for rid, _ in items],
+            )
+
+    def recipes_missing_details(self, profession: str | None = None) -> list[int]:
+        """Recettes dont le nom français et les composants n'ont pas encore été récupérés."""
+        sql = "SELECT id FROM recipes WHERE fetched_at IS NULL"
+        args: tuple = ()
+        if profession:
+            sql += " AND profession = ?"
+            args = (profession,)
+        return [r["id"] for r in self.conn.execute(sql + " ORDER BY id", args)]
+
+    def set_recipe_details(self, recipe_id: int, name: str, reagents: list[tuple[int, str]]) -> None:
+        with self.conn:
+            self.conn.execute(
+                "UPDATE recipes SET name = ?, reagents = ?, fetched_at = ? WHERE id = ?",
+                (name, json.dumps(reagents, ensure_ascii=False), int(time.time()), recipe_id),
+            )
+
+    def guild_recipes(self, guild_id: int, profession: str) -> list[GuildRecipe]:
+        """Recettes de ce métier connues par au moins un perso d'un membre du serveur, avec leurs crafteurs."""
+        rows = self.conn.execute(
+            """SELECT r.id, r.name, r.name_en, r.reagents, c.name AS character_name
+               FROM recipes r
+               JOIN character_recipes cr ON cr.recipe_id = r.id
+               JOIN characters c ON c.id = cr.character_id
+               JOIN guild_members m ON m.user_id = c.user_id AND m.guild_id = ?
+               WHERE r.profession = ?
+               ORDER BY c.name COLLATE NOCASE""",
+            (guild_id, profession),
+        ).fetchall()
+        by_id: dict[int, GuildRecipe] = {}
+        for r in rows:
+            recipe = by_id.get(r["id"])
+            if recipe is None:
+                reagents = [tuple(x) for x in json.loads(r["reagents"])] if r["reagents"] else None
+                recipe = by_id[r["id"]] = GuildRecipe(r["id"], r["name"] or r["name_en"], reagents, [])
+            if r["character_name"] not in recipe.crafters:
+                recipe.crafters.append(r["character_name"])
+        return list(by_id.values())

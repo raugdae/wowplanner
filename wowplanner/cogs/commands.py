@@ -3,10 +3,11 @@
     /ajouter   event | perso | metier | battletag
     /modifier  perso | metier | instances
     /supprimer event | inscrit | perso | metier | battletag
-    /liste     events | persos | metier | battletags | instances
+    /liste     events | persos | metier | recettes | battletags | instances | armurerie
 
 Ce fichier ne fait que déclarer les commandes et leurs options ; la logique est dans
-events.py (sorties), characters.py (persos, métiers), players.py (BattleTag) et instances.py.
+events.py (sorties), characters.py (persos, métiers), players.py (BattleTag), instances.py
+et armory.py (armurerie).
 """
 from __future__ import annotations
 
@@ -23,6 +24,7 @@ from .players import PlayerCommands
 
 if TYPE_CHECKING:
     from ..bot import WowPlannerBot
+    from .armory import ArmoryCog
     from .events import EventsCog
     from .instances import InstancesCog
 
@@ -52,7 +54,7 @@ class CommandsCog(commands.Cog):
         name="supprimer", description="Supprimer : sortie, inscrit, perso, métier, BattleTag", guild_only=True
     )
     liste = app_commands.Group(
-        name="liste", description="Voir : sorties, persos, métier, BattleTags, instances", guild_only=True
+        name="liste", description="Voir : sorties, persos, métiers, recettes, BattleTags, instances, armurerie", guild_only=True
     )
 
     def __init__(self, bot: WowPlannerBot):
@@ -68,6 +70,10 @@ class CommandsCog(commands.Cog):
     @property
     def instances(self) -> InstancesCog:
         return self.bot.get_cog("InstancesCog")  # type: ignore[return-value]
+
+    @property
+    def armory(self) -> ArmoryCog:
+        return self.bot.get_cog("ArmoryCog")  # type: ignore[return-value]
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         # Retient que ce joueur est sur ce serveur (les listes sont limitées aux membres du serveur).
@@ -231,7 +237,27 @@ class CommandsCog(commands.Cog):
     ) -> None:
         await self.instances.list_instances(interaction, type)
 
+    @liste.command(name="armurerie", description="Fiche armurerie d'un perso (stats, équipement, métiers), envoyée en MP")
+    @app_commands.describe(perso="Le perso (prénom et nom), déclaré ou pas")
+    async def liste_armurerie(self, interaction: discord.Interaction, perso: app_commands.Range[str, 2, 32]) -> None:
+        await self.armory.show(interaction, perso)
+
+    @liste.command(name="recettes", description="Recettes d'un métier sur le serveur : composants et qui sait les faire (en MP)")
+    @app_commands.describe(metier="Le métier", recherche="Filtrer : seulement les recettes dont le nom contient ce texte")
+    @app_commands.choices(metier=PROFESSION_CHOICES)
+    async def liste_recettes(
+        self,
+        interaction: discord.Interaction,
+        metier: app_commands.Choice[str],
+        recherche: Optional[app_commands.Range[str, 2, 50]] = None,
+    ) -> None:
+        await self.armory.show_recipes(interaction, metier.value, recherche)
+
     # ========================================================= autocomplétion
+
+    @liste_armurerie.autocomplete("perso")
+    async def _armory_autocomplete(self, interaction: discord.Interaction, current: str):
+        return self.armory.character_choices(interaction, current)
 
     @ajouter_event.autocomplete("instance")
     async def _instance_autocomplete(self, interaction: discord.Interaction, current: str):

@@ -53,7 +53,15 @@ def character_block(c: Character) -> str:
     text = f"• **{c.name}** — {class_label(c.wow_class)} {race_label(c.race)} · {roles_text(c)}"
     if c.professions:
         text += f"\n  ⚒️ {professions_text(c)}"
+    if c.armory_synced_at:
+        text += f"\n  🔎 synchronisé avec l'armurerie <t:{c.armory_synced_at}:R>"
     return text
+
+
+ARMORY_OVERWRITE_NOTE = (
+    "\n💡 Ce perso est synchronisé avec l'armurerie : ses métiers y seront relus "
+    "(et remplacés) à la prochaine synchro."
+)
 
 
 def normalize_name(name: str) -> str | None:
@@ -83,7 +91,23 @@ class CharacterCommands:
         self.db = bot.db
 
     async def _send(self, interaction: discord.Interaction, text: str) -> None:
-        await interaction.response.send_message(text, ephemeral=True)
+        if interaction.response.is_done():  # réponse différée (vérification armurerie en cours)
+            await interaction.followup.send(text, ephemeral=True)
+        else:
+            await interaction.response.send_message(text, ephemeral=True)
+
+    async def _armory_check(self, interaction: discord.Interaction, character: Character) -> tuple[str, bool]:
+        """Cherche le perso dans l'armurerie (si activée). Renvoie (ligne à afficher, métiers synchronisés ?)."""
+        armory = self.bot.get_cog("ArmoryCog")
+        if armory is None or not armory.available:
+            return "", False
+        if not interaction.response.is_done():
+            # L'appel peut dépasser les 3 s que Discord laisse pour répondre.
+            await interaction.response.defer(ephemeral=True, thinking=True)
+        result = await armory.sync(character, max_age=0)
+        if result is None:
+            return "", False
+        return "\n" + result.summary(), result.professions_synced
 
     async def _refresh_events(self, message_ids: list[int]) -> None:
         events = self.bot.get_cog("EventsCog")
@@ -112,14 +136,17 @@ class CharacterCommands:
         except sqlite3.IntegrityError:
             return await self._send(interaction, f"⚠️ Tu as déjà un perso nommé **{name}**.")
 
+        armory_line, professions_synced = await self._armory_check(interaction, character)
+
         tips = []
         if role_prefere is None and len(roles_for(classe)) > 1:
             tips.append("Indique ton rôle préféré avec `/modifier perso`.")
-        tips.append("Ajoute ses métiers avec `/ajouter metier`.")
+        if not professions_synced:
+            tips.append("Ajoute ses métiers avec `/ajouter metier`.")
         await self._send(
             interaction,
             f"✅ **{name}** ({class_label(classe)} {race_label(race)}) ajouté. "
-            f"Rôles possibles : {roles_text(character)}.\n" + "\n".join(f"💡 {t}" for t in tips),
+            f"Rôles possibles : {roles_text(character)}.{armory_line}\n" + "\n".join(f"💡 {t}" for t in tips),
         )
 
     async def modify(
@@ -164,9 +191,14 @@ class CharacterCommands:
         except sqlite3.IntegrityError:
             return await self._send(interaction, f"⚠️ Tu as déjà un perso nommé **{updated.name}**.")
 
+        armory_line = ""
+        if updated.name != character.name:  # nouveau nom : on revérifie dans l'armurerie
+            armory_line, _ = await self._armory_check(interaction, updated)
+            updated = self.db.get_character(updated.id) or updated  # métiers éventuellement synchronisés
+
         await self._send(
             interaction,
-            f"✅ Perso modifié : {character_block(updated)}" + "".join(f"\n💡 {n}" for n in notes),
+            f"✅ Perso modifié : {character_block(updated)}{armory_line}" + "".join(f"\n💡 {n}" for n in notes),
         )
         await self._refresh_events(self.db.character_events(character.id))
 
@@ -218,7 +250,8 @@ class CharacterCommands:
                 )
         self.db.set_profession(character.id, metier, niveau)
         lvl = f" ({niveau})" if niveau is not None else ""
-        await self._send(interaction, f"✅ **{character.name}** : {label}{lvl}.")
+        note = ARMORY_OVERWRITE_NOTE if character.armory_synced_at else ""
+        await self._send(interaction, f"✅ **{character.name}** : {label}{lvl}.{note}")
 
     async def modify_profession(self, interaction: discord.Interaction, perso: str, metier: str, niveau: int) -> None:
         character = await self.own_character(interaction, perso)
@@ -230,7 +263,8 @@ class CharacterCommands:
                 interaction, f"**{character.name}** n'a pas {label}. Pour l'ajouter : `/ajouter metier`."
             )
         self.db.set_profession(character.id, metier, niveau)
-        await self._send(interaction, f"✅ **{character.name}** : {label} ({niveau}).")
+        note = ARMORY_OVERWRITE_NOTE if character.armory_synced_at else ""
+        await self._send(interaction, f"✅ **{character.name}** : {label} ({niveau}).{note}")
 
     async def delete_profession(self, interaction: discord.Interaction, perso: str, metier: str) -> None:
         character = await self.own_character(interaction, perso)

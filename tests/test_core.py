@@ -311,13 +311,14 @@ def test_ephemeral_cleaner():
     deleted = []
     now = discord.utils.utcnow()
 
-    def inter(id_, user, kind="command", ephemeral_msg=False, age_min=0):
+    def inter(id_, user, kind="command", ephemeral_msg=False, age_min=0, in_dm=False):
         async def delete_original_response():
             deleted.append(id_)
 
         message = SimpleNamespace(flags=SimpleNamespace(ephemeral=ephemeral_msg))
         return SimpleNamespace(
             id=id_,
+            guild_id=None if in_dm else 42,
             user=SimpleNamespace(id=user),
             type=discord.InteractionType.application_command if kind == "command" else discord.InteractionType.component,
             message=None if kind == "command" else message,
@@ -332,8 +333,187 @@ def test_ephemeral_cleaner():
         await c.on_interaction(inter(3, user=7, kind="button", ephemeral_msg=True))  # choix du perso : on garde 2
         await c.on_interaction(inter(4, user=8))  # autre joueur : n'efface rien de 7
         await c.on_interaction(inter(5, user=7))  # nouvelle commande → efface 2
+        await c.on_interaction(inter(8, user=7, kind="button", in_dm=True))  # page ▶ en MP : ignoré
+        await c.on_interaction(inter(9, user=7))  # nouvelle commande → efface 5, jamais le MP (8)
         c._last[7] = inter(6, user=7, age_min=15)  # réponse expirée : plus supprimable
         await c.on_interaction(inter(7, user=7))
 
     asyncio.run(scenario())
-    assert deleted == [1, 2]
+    assert deleted == [1, 2, 5]
+
+
+def test_character_slug():
+    from wowplanner.armory import character_slug
+
+    assert character_slug("Grommash Hurlenfer") == "grommash-hurlenfer"
+    assert character_slug("  Élodie  ") == "élodie"
+
+
+def test_armory_client_against_fake_server():
+    """Jeton demandé une fois puis réutilisé, bons paramètres, 404 → ArmoryError."""
+    import asyncio
+
+    import aiohttp
+    from aiohttp import web
+
+    from wowplanner.armory import ArmoryClient, ArmoryError
+
+    calls = {"token": 0, "paths": []}
+
+    async def token(request):
+        calls["token"] += 1
+        assert request.headers["Authorization"].startswith("Basic ")
+        return web.json_response({"access_token": "tok", "expires_in": 86399})
+
+    async def character(request):
+        assert request.headers["Authorization"] == "Bearer tok"
+        calls["paths"].append((request.path, request.query["namespace"], request.query["locale"]))
+        if request.match_info["slug"] == "inconnu-perso":
+            return web.json_response({"code": 404}, status=404)
+        return web.json_response({"name": "Grommash", "surname": "Hurlenfer", "level": 42})
+
+    async def scenario():
+        app = web.Application()
+        app.router.add_post("/token", token)
+        app.router.add_get("/profile/wow/character/{slug}{rest:.*}", character)
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, "127.0.0.1", 0)
+        await site.start()
+        port = site._server.sockets[0].getsockname()[1]
+        base = f"http://127.0.0.1:{port}"
+        try:
+            async with aiohttp.ClientSession() as session:
+                api = ArmoryClient(session, "id", "secret", "EU", base_url=base, token_url=f"{base}/token")
+                data = await api.character("Grommash Hurlenfer")
+                assert data["level"] == 42
+                await api.character("Grommash Hurlenfer", "/professions")
+                try:
+                    await api.character("Inconnu Perso")
+                    raise AssertionError("une 404 doit lever ArmoryError")
+                except ArmoryError as exc:
+                    assert exc.status == 404
+        finally:
+            await runner.cleanup()
+
+    asyncio.run(scenario())
+    assert calls["token"] == 1  # jeton réutilisé
+    assert calls["paths"][0] == ("/profile/wow/character/grommash-hurlenfer", "profile-forever-eu", "fr_FR")
+    assert calls["paths"][1][0] == "/profile/wow/character/grommash-hurlenfer/professions"
+
+
+def test_armory_probe_summaries_do_not_crash():
+    from wowplanner.armory_probe import summarize
+
+    profile = {"name": "Grommash", "surname": "Hurlenfer", "level": 42, "race": {"name": "Orc"},
+               "character_class": {"name": "Guerrier"}, "average_item_level": 40, "equipped_item_level": 41}
+    assert "niveau 42 · Orc Guerrier" in summarize("", profile)
+    stats = {"health": 3200, "strength": {"base": 120, "effective": 150}, "melee_crit": {"value": 7.5}}
+    assert summarize("/statistics", stats)[:3] == ["health : 3200", "strength : 150", "melee_crit : 7.5"]
+    profs = {"primaries": [{"profession": {"name": "Forge"}, "tiers": [{"skill_points": 285, "max_skill_points": 300}]}],
+             "secondaries": [{"profession": {"name": "Cuisine"}, "skill_points": 150, "max_skill_points": 300}]}
+    assert summarize("/professions", profs) == [
+        "primaries : Forge 285/300 (1 palier(s))",
+        "secondaries : Cuisine 150/300 (0 palier(s))",
+    ]
+    assert summarize("/professions", {"_links": {}})[0].startswith("aucun métier")
+    equipment = {"equipped_items": [{"slot": {"name": "Tête"}, "name": "Heaume", "level": {"value": 45}}]}
+    assert summarize("/equipment", equipment) == ["1 pièces", "Tête : Heaume (ilvl 45)"]
+
+
+def _sheet():
+    from wowplanner.armory import ArmorySheet
+
+    return ArmorySheet(
+        profile={"name": "Hollie", "surname": "Tétine", "level": 20, "character_class": {"id": 5, "name": "Prêtre"},
+                 "race": {"id": 95, "name": "Éolide de l'Ordre suprême"}, "faction": {"name": "Alliance"}},
+        professions={
+            "primaries": [{"profession": {"id": 171, "name": "Alchemy"}, "tiers": [{"skill_points": 139, "max_skill_points": 150}]},
+                          {"profession": {"id": 2933, "name": None}, "tiers": [{"skill_points": 5}]}],  # inconnu : ignoré
+            "secondaries": [{"profession": {"id": 185, "name": "Cooking"}, "tiers": [{"skill_points": 54, "max_skill_points": 75}]}],
+        },
+        specializations={"specialization_groups": [
+            {"is_active": False, "specializations": [{"specialization": {"name": "Sacré"}, "spent_points": 30}]},
+            {"is_active": True, "specializations": [
+                {"specialization": {"name": "Discipline"}, "spent_points": 5},
+                {"specialization": {"name": "Magie de l'ombre"}, "spent_points": 11},
+            ]},
+        ]},
+        media={"assets": [{"key": "avatar", "value": "https://render/avatar.jpg"}]},
+    )
+
+
+def test_armory_sheet_parsing():
+    sheet = _sheet()
+    assert sheet.full_name == "Hollie Tétine"
+    assert (sheet.class_key, sheet.race_key) == ("pretre", "skyborne")
+    assert sheet.active_spec == ("Magie de l'ombre", 11)  # groupe actif, arbre le plus investi
+    assert sheet.asset("avatar") == "https://render/avatar.jpg" and sheet.asset("main-raw") is None
+    assert sheet.profession_skills() == {"alchimie": (139, 150), "cuisine": (54, 75)}
+    sheet.professions = None
+    assert sheet.profession_skills() is None  # métiers illisibles : on ne touche à rien
+
+
+def test_armory_apply_replaces_professions_and_warns(tmp_path):
+    from types import SimpleNamespace
+
+    from wowplanner.cogs.armory import ArmoryCog, build_armory_embed
+    from wowplanner.db import Database
+
+    db = Database(tmp_path / "t.db")
+    c = db.add_character(1, "Hollie Tétine", "mage", "skyborne")
+    db.set_profession(c.id, "forge", 10)  # saisie manuelle, remplacée par l'armurerie
+    cog = ArmoryCog(SimpleNamespace(db=db))
+    result = cog.apply(c, _sheet())
+    synced = db.get_character(c.id)
+    assert synced.professions == {"alchimie": 139, "cuisine": 54}
+    assert synced.armory_synced_at is not None
+    assert result.professions_synced and len(result.warnings) == 1  # classe différente, race identique
+    assert "Prêtre" in result.warnings[0]
+    embed = build_armory_embed(_sheet(), [1])
+    assert len(embed) < 6000 and embed.title == "Hollie Tétine"
+    db.close()
+
+
+def test_recipes_db_and_pages(tmp_path):
+    from wowplanner.db import Database
+    from wowplanner.recipes import build_pages, crafters_text, filter_recipes, recipe_lines
+
+    db = Database(tmp_path / "t.db")
+    hollie = db.add_character(1, "Hollie Tétine", "pretre", "humain")
+    grom = db.add_character(2, "Grommash Hurlenfer", "guerrier", "orc")
+    stranger = db.add_character(3, "Autre Serveur", "mage", "gnome")
+    db.touch_member(42, 1)
+    db.touch_member(42, 2)  # 3 n'est pas sur ce serveur
+    db.replace_character_recipes(hollie.id, {"alchimie": [(1379, "Minor Mana Potion"), (54211, "Elixir of Minor Force")]})
+    db.replace_character_recipes(grom.id, {"alchimie": [(1379, "Minor Mana Potion")]})
+    db.replace_character_recipes(stranger.id, {"alchimie": [(9999, "Secret")]})
+
+    assert sorted(db.recipes_missing_details("alchimie")) == [1379, 9999, 54211]
+    db.set_recipe_details(1379, "Potion de mana mineure", [(1, "Mage royal"), (1, "Fiole vide")])
+    recipes = {r.id: r for r in db.guild_recipes(42, "alchimie")}
+    assert set(recipes) == {1379, 54211}  # la recette de l'autre serveur n'apparaît pas
+    assert recipes[1379].crafters == ["Grommash Hurlenfer", "Hollie Tétine"]
+    assert recipes[1379].reagents == [(1, "Mage royal"), (1, "Fiole vide")]
+    assert recipes[54211].name == "Elixir of Minor Force" and recipes[54211].reagents is None  # pas encore récupérée
+
+    assert [r.id for r in filter_recipes(list(recipes.values()), "POTION")] == [1379]
+    assert recipe_lines(recipes[1379]).endswith("└ 1 Mage royal · 1 Fiole vide")
+    assert "composants inconnus" in recipe_lines(recipes[54211])
+    assert crafters_text(["Hollie Tétine", "Grommash Hurlenfer"]) == "Hollie, Grommash"
+    long_list = crafters_text([f"Perso{i} X" for i in range(8)])  # trop long : « +N »
+    assert long_list == "Perso0, Perso1 +6" and len(long_list) <= 24
+
+    # Resynchro : la liste des recettes du perso est remplacée, pas cumulée.
+    db.replace_character_recipes(grom.id, {"alchimie": []})
+    assert db.guild_recipes(42, "alchimie")[0].crafters in (["Hollie Tétine"],)
+    db.close()
+
+    # Pagination : chaque page reste sous la limite Discord, aucune recette perdue.
+    from wowplanner.db import GuildRecipe
+
+    many = [GuildRecipe(i, f"Recette numéro {i:03d}", [(2, "Composant assez long"), (1, "Fiole vide")], ["Hollie"])
+            for i in range(200)]
+    pages = build_pages(filter_recipes(many, None))
+    assert len(pages) > 1 and all(len(p) <= 4096 and p.startswith("```") and p.endswith("```") for p in pages)
+    assert sum(p.count("└") for p in pages) == 200

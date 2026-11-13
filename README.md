@@ -20,7 +20,7 @@ Toutes les commandes suivent la logique **verbe + catégorie** : `/ajouter`, `/m
 | **`/ajouter`** | crée une sortie | ✅ | ✅ | ✅ | |
 | **`/modifier`** | | nom, classe, race, rôle préféré | niveau | | `instances` (modos) |
 | **`/supprimer`** | annule la sortie | ✅ | ✅ | ✅ | `inscrit` |
-| **`/liste`** | `events` | `persos` | `metier` (qui l'a) | `battletags` | `instances` |
+| **`/liste`** | `events` | `persos` | `metier` (qui l'a) · `recettes` | `battletags` | `instances` · `armurerie` |
 
 | Commande | Rôle |
 |---|---|
@@ -41,6 +41,8 @@ Toutes les commandes suivent la logique **verbe + catégorie** : `/ajouter`, `/m
 | `/liste metier metier` | Les persos du serveur qui ont ce métier, du plus haut niveau au plus bas. |
 | `/liste battletags` | Les BattleTag des joueurs du serveur. |
 | `/liste instances [type]` | Les donjons (avec niveaux) et les raids. |
+| `/liste recettes metier [recherche]` | Recettes du métier connues sur le serveur, avec composants et persos qui savent les faire, envoyées en MP (pages ◀ ▶). Si rien ne correspond, réponse privée dans le salon. |
+| `/liste armurerie perso` | Fiche armurerie d'un perso (stats, équipement, métiers), envoyée en MP. Voir « Armurerie WoW Forever ». |
 
 **Date** : `25/12/2026`, `25/12`, `aujourd'hui`, `demain`. **Heure** : `21:00`, `21h30`, `21h`.
 
@@ -78,7 +80,7 @@ Tu peux surcharger n'importe quel rôle. Exemple : `tanks:2` sur Hyjal Summit ga
 | Chaman | | ✅ | ✅ |
 | Chasseur, Voleur, Mage, Démoniste | | | ✅ |
 
-Le Paladin tank est viable dans Forever (Seal of Fury, Consecration de base). Le Chaman n'est pas compté comme tank : l'Amélioration peut dépanner en petit groupe, mais ce n'est pas un rôle prévu. Les combinaisons race/classe suivent le [wiki](https://warcraft.wiki.gg/wiki/World_of_Warcraft:_Forever), Skyborne compris (sans distinction de faction). Tout est dans `wowplanner/gamedata.py`.
+Le Paladin tank est viable dans Forever (Seal of Fury, Consecration de base). Le Chaman n'est pas compté comme tank : l'Amélioration peut dépanner en petit groupe, mais ce n'est pas un rôle prévu. Les combinaisons race/classe suivent le [wiki](https://warcraft.wiki.gg/wiki/World_of_Warcraft:_Forever), Éolides (Skyborne) compris, sans distinction de faction. Tout est dans `wowplanner/gamedata.py`.
 
 ### Métiers et BattleTag
 
@@ -186,6 +188,47 @@ Blizzard ne publie pas d'API pour WoW Forever. Le bot lit donc le tableau « Dun
 
 Le résultat est mis en cache dans `data/instances_cache.json`. Une liste intégrée (`wowplanner/instances_default.json`, à jour au 11/11/2026) sert de secours si le wiki est injoignable. Si la page change de structure et que le bot ne trouve plus qu'une liste suspecte (moins de 10 donjons ou aucun raid), la mise à jour est ignorée et l'ancienne liste est conservée.
 
+## Armurerie WoW Forever
+
+Facultatif : sans clés Blizzard, tout le reste du bot marche normalement.
+
+**Activer** : crée un accès sur <https://develop.battle.net> (*Create Client*, gratuit) et renseigne
+`BLIZZARD_CLIENT_ID`, `BLIZZARD_CLIENT_SECRET` et `BLIZZARD_REGION` dans `.env` (jamais dans `.env.example`, qui est
+versionné).
+
+**Ce que ça apporte**
+
+- `/liste armurerie perso` : fiche d'un perso (déclaré ou pas) **envoyée en MP**, pour la garder sans encombrer le
+  salon : avatar, niveau, guilde, spé active, item level, stats, métiers avec niveau, équipement. Si les MP du joueur
+  sont fermés, la fiche s'affiche en réponse privée.
+- **Métiers synchronisés** : quand un perso est trouvé, ses métiers et leurs niveaux sont repris de l'armurerie (ils
+  remplacent la saisie manuelle). Synchro à `/ajouter perso`, quand le nom change avec `/modifier perso`, à chaque
+  `/liste armurerie`, et une fois par jour pour tous les persos.
+- `/liste recettes metier [recherche]` : toutes les recettes du métier connues par les persos du serveur, avec
+  leurs composants (en français) et les persos qui savent les faire, **en MP** avec des pages ◀ ▶ (environ 45
+  recettes par page). `recherche` filtre sur le nom, sans tenir compte des accents ni des majuscules. Si aucune
+  recette ne correspond, le bot répond seulement dans le salon, sans MP. Les recettes connues sont relues à chaque
+  synchro ; les composants d'une recette sont demandés une seule fois puis gardés en base.
+- **Vérification à l'ajout** : `/ajouter perso` dit si le perso existe dans l'armurerie, et prévient si la classe ou
+  la race déclarée ne correspond pas. Jamais bloquant.
+
+**Limites** (l'API n'est pas documentée officiellement pour Forever) : un perso n'apparaît qu'à partir du **niveau
+10**, après une déconnexion, parfois avec plusieurs heures de retard. Les persos s'y adressent sans serveur, par
+`prénom-nom` (`/profile/wow/character/grommash-hurlenfer?namespace=profile-forever-eu`). Si l'armurerie ne répond
+pas, le bot le signale et continue.
+
+**Tester l'accès** sans lancer le bot :
+
+```bash
+# Sur le VPS, avec Docker
+docker compose run --rm wowplanner python -m wowplanner.armory_probe "Grommash Hurlenfer"
+# En local
+python -m wowplanner.armory_probe "Grommash Hurlenfer"
+```
+
+Le script vérifie le jeton et quelques données de jeu, interroge la fiche, les stats, l'équipement, les métiers, la
+spé et l'image, puis enregistre chaque réponse brute dans `data/armory_probe/*.json`.
+
 ## Structure
 
 ```
@@ -198,12 +241,16 @@ wowplanner/
   instances.py        liste des instances, lecture du wiki
   roles.py            rôles, compositions par défaut, émotes
   gamedata.py         classes, races, rôles et métiers de WoW Forever
+  armory.py           client de l'API Blizzard (armurerie Forever)
+  armory_probe.py     script de test de l'armurerie
   timeparse.py        lecture des dates et heures
   cogs/commands.py    déclaration de toutes les commandes slash (/ajouter, /modifier, /supprimer, /liste)
   cogs/events.py      sorties + boutons d'inscription
   cogs/characters.py  persos et métiers
   cogs/players.py     BattleTag
   cogs/instances.py   instances + mise à jour périodique
+  cogs/armory.py      /liste armurerie et /liste recettes, synchro des métiers et recettes
+  recipes.py          mise en forme des recettes (recherche, pages)
   cogs/schedule.py    rappels en MP et salons vocaux temporaires
 tests/test_core.py
 ```
