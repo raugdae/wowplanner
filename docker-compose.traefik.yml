@@ -1,0 +1,27 @@
+# Site web public (persos, métiers, recettes) derrière Traefik.
+#
+# À activer en ajoutant dans .env :
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.traefik.yml
+#   WEB_DOMAIN=wow.ton-domaine.fr
+# (et TRAEFIK_NETWORK / TRAEFIK_ENTRYPOINT / TRAEFIK_CERTRESOLVER si les tiens diffèrent des valeurs par défaut)
+# puis : docker compose up -d --build
+services:
+  wowplanner:
+    environment:
+      WEB_PORT: "8080"
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=${TRAEFIK_NETWORK:-traefik}
+      - traefik.http.routers.wowplanner.rule=Host(`${WEB_DOMAIN:?renseigne WEB_DOMAIN dans .env}`)
+      - traefik.http.routers.wowplanner.entrypoints=${TRAEFIK_ENTRYPOINT:-websecure}
+      - traefik.http.routers.wowplanner.tls=true
+      - traefik.http.routers.wowplanner.tls.certresolver=${TRAEFIK_CERTRESOLVER:-letsencrypt}
+      - traefik.http.services.wowplanner.loadbalancer.server.port=8080
+    networks:
+      - default
+      - traefik
+
+networks:
+  traefik:
+    external: true
+    name: ${TRAEFIK_NETWORK:-traefik}

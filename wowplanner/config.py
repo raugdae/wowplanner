@@ -26,6 +26,9 @@ class Config:
     blizzard_client_id: str = ""
     blizzard_client_secret: str = ""
     blizzard_region: str = "eu"
+    # Site web public (persos et métiers, sans info perso). 0 = désactivé.
+    web_port: int = 0
+    web_host: str = "0.0.0.0"
 
     @property
     def db_path(self) -> Path:
@@ -66,4 +69,6 @@ def load_config() -> Config:
         blizzard_client_id=os.getenv("BLIZZARD_CLIENT_ID", "").strip(),
         blizzard_client_secret=os.getenv("BLIZZARD_CLIENT_SECRET", "").strip(),
         blizzard_region=(os.getenv("BLIZZARD_REGION", "eu").strip() or "eu").lower(),
+        web_port=int(os.getenv("WEB_PORT", "0") or 0),
+        web_host=os.getenv("WEB_HOST", "0.0.0.0").strip() or "0.0.0.0",
     )

@@ -100,25 +100,38 @@ def crafted_by_map(recipes: list[GuildRecipe]) -> CraftedBy:
     return mapping
 
 
-def reagent_lines(
+def expand_reagents(
     reagents: list[tuple[int, str, int | None]],
     crafted_by: CraftedBy,
     depth: int = 0,
     seen: frozenset[int] = frozenset(),
-) -> list[str]:
-    """Une ligne par composant ; ceux qu'une recette du serveur fabrique sont dépliés en dessous
-    (« ↳ »), avec les quantités recalculées. Ex. : 3× Rouleau d'étoffe de lin ↳ 6× Étoffe de lin."""
-    lines = []
+) -> list[tuple[int, int, str]]:
+    """[(profondeur, quantité, composant)] : les composants qu'une recette du serveur fabrique sont
+    suivis de leurs propres composants (profondeur + 1), quantités recalculées.
+    Ex. : 3× Rouleau d'étoffe de lin → 6× Étoffe de lin. Partagé par Discord et le site web."""
+    rows = []
     for qty, name, item_id in reagents:
-        indent = " " * (2 * depth)  # espace cadratin : les espaces simples sont écrasés par Discord
-        lines.append(f"{indent}{'↳ ' if depth else ''}{qty}× {name}")
+        rows.append((depth, qty, name))
         sub = crafted_by.get(item_id) if item_id is not None else None
         if sub is None or sub.id in seen or depth >= MAX_SUBRECIPE_DEPTH or not sub.reagents:
             continue
         crafts = math.ceil(qty / (sub.crafted_quantity or 1))  # fabrications nécessaires
         scaled = [(sub_qty * crafts, sub_name, sub_id) for sub_qty, sub_name, sub_id in sub.reagents]
-        lines.extend(reagent_lines(scaled, crafted_by, depth + 1, seen | {sub.id}))
-    return lines
+        rows.extend(expand_reagents(scaled, crafted_by, depth + 1, seen | {sub.id}))
+    return rows
+
+
+def reagent_lines(
+    reagents: list[tuple[int, str, int | None]],
+    crafted_by: CraftedBy,
+    seen: frozenset[int] = frozenset(),
+) -> list[str]:
+    """Version texte pour Discord (« ↳ » sous le composant fabriqué)."""
+    return [
+        # Espaces cadratin : Discord écrase les espaces simples en début de ligne.
+        f"{chr(0x2003) * (2 * depth)}{'↳ ' if depth else ''}{qty}× {name}"
+        for depth, qty, name in expand_reagents(reagents, crafted_by, seen=seen)
+    ]
 
 
 def recipe_field(recipe: GuildRecipe, crafted_by: CraftedBy | None = None) -> Field:

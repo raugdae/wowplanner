@@ -11,6 +11,7 @@ from .config import Config
 from .db import Database
 from .ephemeral import EphemeralCleaner
 from .instances import InstanceRegistry
+from .web import WebSite
 from .roles import RoleEmojis
 
 log = logging.getLogger(__name__)
@@ -35,6 +36,7 @@ class WowPlannerBot(commands.Bot):
             {"tank": config.emoji_tank, "heal": config.emoji_heal, "dps": config.emoji_dps}
         )
         self.ephemeral = EphemeralCleaner()
+        self.website = WebSite(self.db, lambda: self.config.guild_id)
 
     async def setup_hook(self) -> None:
         self.http_session = aiohttp.ClientSession(headers={"User-Agent": USER_AGENT})
@@ -45,6 +47,9 @@ class WowPlannerBot(commands.Bot):
         await self.load_extension("wowplanner.cogs.armory")
         await self.load_extension("wowplanner.cogs.commands")  # après events et instances, qu'il appelle
         await self.load_extension("wowplanner.cogs.schedule")
+
+        if self.config.web_port:
+            await self.website.start(self.config.web_host, self.config.web_port)
 
         if self.config.guild_id:
             guild = discord.Object(id=self.config.guild_id)
@@ -66,5 +71,6 @@ class WowPlannerBot(commands.Bot):
     async def close(self) -> None:
         if getattr(self, "http_session", None):
             await self.http_session.close()
+        await self.website.stop()
         await super().close()
         self.db.close()

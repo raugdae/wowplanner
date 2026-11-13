@@ -562,3 +562,12 @@ class Database:
             if r["character_name"] not in recipe.crafters:
                 recipe.crafters.append(r["character_name"])
         return list(by_id.values())
+
+    # ---------------------------------------------------------------- site web
+
+    def character_recipe_ids(self, character_id: int) -> set[int]:
+        rows = self.conn.execute("SELECT recipe_id FROM character_recipes WHERE character_id = ?", (character_id,))
+        return {r["recipe_id"] for r in rows}
+
+    def known_guild_ids(self) -> list[int]:
+        return [r["guild_id"] for r in self.conn.execute("SELECT DISTINCT guild_id FROM guild_members ORDER BY guild_id")]

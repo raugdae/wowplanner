@@ -247,6 +247,31 @@ python -m wowplanner.armory_probe "Grommash Hurlenfer"
 Le script vérifie le jeton et quelques données de jeu, interroge la fiche, les stats, l'équipement, les métiers, la
 spé et l'image, puis enregistre chaque réponse brute dans `data/armory_probe/*.json`.
 
+## Site web (facultatif)
+
+Un petit site public, en lecture seule, pour parcourir les persos et les métiers du serveur :
+
+- **Persos** : tableau de tous les persos (classe, race, rôles, métiers et niveaux), recherche et filtres par classe,
+  rôle ou métier ;
+- **fiche d'un perso** : ses métiers et ses recettes (composants dépliés) ;
+- **Métiers** : qui a chaque métier et à quel niveau, et toutes les recettes connues sur le serveur, avec recherche
+  (nom de recette ou composant) et liens vers les persos qui savent les faire.
+
+**Aucune info personnelle** : ni pseudo Discord, ni identifiant, ni BattleTag, et rien qui relie deux persos au même
+joueur. Le site lit la même base que le bot (dans le même conteneur), donc il est toujours à jour. Il montre les persos
+du serveur `GUILD_ID` (ou du seul serveur connu du bot).
+
+**Avec Traefik** (réseau Docker externe partagé avec Traefik) : dans `.env`,
+
+```
+COMPOSE_FILE=docker-compose.yml:docker-compose.traefik.yml
+WEB_DOMAIN=wow.ton-domaine.fr
+# si besoin : TRAEFIK_NETWORK=…  TRAEFIK_ENTRYPOINT=…  TRAEFIK_CERTRESOLVER=…
+```
+
+puis `docker compose up -d --build`. `docker-compose.traefik.yml` ajoute les labels Traefik (HTTPS) et lance le site
+sur le port interne 8080. Sans Docker : `WEB_PORT=8080` dans `.env`.
+
 ## Structure
 
 ```
@@ -269,6 +294,7 @@ wowplanner/
   cogs/instances.py   instances + mise à jour périodique
   cogs/armory.py      /liste armurerie et /liste recettes, synchro des métiers et recettes
   recipes.py          mise en forme des recettes (recherche, pages)
+  web.py              site web public (persos, métiers, recettes)
   cogs/schedule.py    rappels en MP et salons vocaux temporaires
 tests/test_core.py
 ```

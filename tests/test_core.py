@@ -704,3 +704,51 @@ def test_old_recipe_details_are_refetched_once(tmp_path):
     db.set_recipe_details(1379, "Potion de mana mineure", [(1, "Mage royal", 785)], 2455, 1.0)
     assert db.recipes_missing_details() == []
     db.close()
+
+
+def test_website_pages_and_no_personal_info(tmp_path):
+    """Le site public ne montre ni pseudo, ni id Discord, ni BattleTag, et échappe le HTML."""
+    import asyncio
+
+    import aiohttp
+
+    from wowplanner.db import Database
+    from wowplanner.web import WebSite
+
+    db = Database(tmp_path / "t.db")
+    discord_id, other_id = 123456789012345678, 999999999999999999
+    hollie = db.add_character(discord_id, "Hollie Tétine", "pretre", "humain", "heal")
+    db.add_character(discord_id, "Grommash Hurlenfer", "guerrier", "orc")
+    db.add_character(other_id, "Autre Serveur", "mage", "gnome")  # membre d'un autre serveur : invisible
+    db.touch_member(42, discord_id)
+    db.touch_member(77, other_id)
+    db.set_battletag(discord_id, "Raug#2134")
+    db.replace_professions(hollie.id, {"alchimie": 139, "cuisine": 54})
+    db.replace_character_recipes(hollie.id, {"alchimie": [(1, "Potion"), (2, "Oil")]})
+    db.set_recipe_details(1, "Potion <script>alert(1)</script>", [(2, "Huile de bouche-noire", 500)], 600, 1.0)
+    db.set_recipe_details(2, "Huile de bouche-noire", [(2, "Bouche-noire huileux", 700)], 500, 1.0)
+
+    site = WebSite(db, lambda: 42)
+    pages = {}
+
+    async def scenario():
+        await site.start("127.0.0.1", 0)
+        port = next(iter(site._runner.sites))._server.sockets[0].getsockname()[1]
+        async with aiohttp.ClientSession() as session:
+            for path in ("/", f"/perso/{hollie.id}", "/metiers", "/metier/alchimie", "/perso/99999", "/metier/inconnu"):
+                async with session.get(f"http://127.0.0.1:{port}{path}") as resp:
+                    pages[path] = (resp.status, await resp.text())
+        await site.stop()
+
+    asyncio.run(scenario())
+    db.close()
+
+    assert pages["/"][0] == 200 and "Hollie Tétine" in pages["/"][1] and "Grommash Hurlenfer" in pages["/"][1]
+    assert "Autre Serveur" not in pages["/"][1]
+    assert pages[f"/perso/{hollie.id}"][0] == 200 and "Alchimie" in pages[f"/perso/{hollie.id}"][1]
+    assert pages["/metier/alchimie"][0] == 200
+    assert 'class="d1">4× Bouche-noire huileux' in pages["/metier/alchimie"][1]  # sous-recette dépliée
+    assert pages["/perso/99999"][0] == 404 and pages["/metier/inconnu"][0] == 404
+    for status, text in pages.values():
+        assert str(discord_id) not in text and "Raug" not in text and "2134" not in text  # aucune info perso
+        assert "<script>alert(1)</script>" not in text  # HTML échappé
