@@ -18,18 +18,19 @@ Toutes les commandes suivent la logique **verbe + catégorie** : `/ajouter`, `/m
 | | event | perso | metier | battletag | autre |
 |---|---|---|---|---|---|
 | **`/ajouter`** | crée une sortie | ✅ | ✅ | ✅ | |
-| **`/modifier`** | | nom, classe, race, rôle préféré | niveau | | `instances` (modos) |
+| **`/modifier`** | | nom, classe, race, rôle préféré | niveau | | `armurerie` · `instances` (modos) |
 | **`/supprimer`** | annule la sortie | ✅ | ✅ | ✅ | `inscrit` |
 | **`/liste`** | `events` | `persos` | `metier` (qui l'a) · `recettes` | `battletags` | `instances` · `armurerie` |
 
 | Commande | Rôle |
 |---|---|
 | `/ajouter event instance date heure [joueurs] [tanks] [heals] [dps] [description]` | Crée une sortie. L'instance se cherche par nom ou abréviation (`brd`, `ony`, `sm cath`…). |
-| `/ajouter perso nom classe race [role_prefere]` | Déclare un de tes persos. La combinaison race/classe et le rôle préféré sont vérifiés. |
+| `/ajouter perso nom [classe] [race] [role_prefere]` | Déclare un de tes persos. Seul le nom est obligatoire : classe et race sont lues dans l'armurerie si le perso y est (niveau 10+), sinon le bot les demande. La combinaison race/classe et le rôle préféré sont vérifiés. |
 | `/ajouter metier perso metier [niveau]` | Ajoute un métier à un perso (niveau 1 à 300). 2 métiers principaux maximum. |
 | `/ajouter battletag tag` | Enregistre ton BattleTag (`Nom#1234`), ou remplace l'ancien. |
 | `/modifier perso perso [nom] [classe] [race] [role_prefere]` | Modifie un perso sans perdre ses métiers ni ses inscriptions. Rôle préféré « Aucun » pour le retirer. |
 | `/modifier metier perso metier niveau` | Change le niveau d'un métier. |
+| `/modifier armurerie [perso]` | Relit tout de suite tes persos (ou l'un d'eux) dans l'armurerie : métiers, recettes. Une fois par minute maximum. |
 | `/modifier instances` | Recharge la liste des donjons/raids depuis le wiki (permission « Gérer le serveur »). |
 | `/supprimer event sortie` | Annule la sortie après confirmation, et prévient les inscrits. Réservé à l'organisateur et aux modérateurs. |
 | `/supprimer inscrit sortie joueur` | Désinscrit un joueur d'**une** sortie. Choisis la sortie d'abord : le champ `joueur` ne propose que ses inscrits. Les autres sorties du joueur ne changent pas. Réservé à l'organisateur et aux modérateurs. |
@@ -94,6 +95,21 @@ Le Paladin tank est viable dans Forever (Seal of Fury, Consecration de base). Le
 - **Salon vocal** (`VOICE_CHANNEL_MINUTES`, 15 par défaut) : créé seulement s'il y a au moins un inscrit, dans la catégorie du salon des sorties (ou `VOICE_CATEGORY_ID`), limité au nombre de joueurs de la sortie. Il est ouvert à tous ceux qui peuvent voir la catégorie. Il est supprimé dès qu'il est vide, au plus tôt 30 minutes après le début, ou dès que la sortie est annulée (s'il est vide).
 - Si le bot était éteint au moment prévu, le salon vocal est quand même créé à son retour, tant que la sortie a commencé depuis moins d'une heure. Rien n'est envoyé ni créé en double.
 - Mettre `0` désactive la fonction correspondante.
+
+### Commandes d'administration (`/admin`)
+
+Pour gérer les persos des membres (qui ont la flemme 😄). **Réservé à la permission « Gérer le serveur »** : les
+autres membres ne voient même pas `/admin`. Pour l'ouvrir à un rôle (ex. « Officier ») : *Paramètres du serveur →
+Intégrations → WoW Planner → `/admin`*. Le bot revérifie la permission à chaque utilisation.
+
+| Commande | Rôle |
+|---|---|
+| `/admin ajouter perso joueur nom [classe] [race] [role_prefere]` | Ajoute un perso à un membre, mêmes règles que `/ajouter perso`. Le membre reçoit un MP et peut ensuite le modifier lui-même. |
+| `/admin modifier perso joueur perso [nom] [classe] [race] [role_prefere]` | Modifie un perso d'un membre (choisir le membre d'abord : le champ `perso` propose ses persos). |
+| `/admin supprimer perso joueur perso` | Supprime un perso d'un membre (il reçoit un MP). |
+| `/admin modifier armurerie [joueur]` | Relit dans l'armurerie les persos d'un membre, ou de tout le serveur. Sans limite de fréquence. |
+
+Pour voir les persos d'un membre, `/liste persos joueur:@membre` suffit (ouvert à tous).
 
 ## Installation
 

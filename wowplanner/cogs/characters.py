@@ -10,6 +10,7 @@ import discord
 from discord import app_commands
 
 from ..db import Character
+from .armory import NOT_FOUND_HELP_SHORT, SyncResult
 from ..gamedata import (
     MAX_PRIMARY_PROFESSIONS,
     RACES,
@@ -117,37 +118,109 @@ class CharacterCommands:
 
     # ================================================================== persos
 
+    def _armory(self):
+        armory = self.bot.get_cog("ArmoryCog")
+        return armory if armory is not None and armory.available else None
+
+    async def _notify_owner(self, interaction: discord.Interaction, owner: discord.abc.User, text: str) -> None:
+        """MP au joueur quand un admin touche à ses persos (silencieux si ses MP sont fermés)."""
+        try:
+            await owner.send(f"🛠️ **{interaction.user.display_name}** {text}")
+        except discord.HTTPException:
+            pass
+
     async def add(
-        self, interaction: discord.Interaction, nom: str, classe: str, race: str, role_prefere: str | None
+        self,
+        interaction: discord.Interaction,
+        nom: str,
+        classe: str | None,
+        race: str | None,
+        role_prefere: str | None,
+        owner: discord.abc.User | None = None,
     ) -> None:
+        """Ajoute un perso. Classe et race facultatives : reprises de l'armurerie si absentes.
+
+        `owner` : membre à qui appartient le perso (commandes /admin) ; par défaut, l'auteur.
+        """
+        owner = owner or interaction.user
+        by_admin = owner.id != interaction.user.id
+        has = f"{owner.mention} a" if by_admin else "Tu as"
+
         name = normalize_name(nom)
         if name is None:
             return await self._send(interaction, NAME_ERROR)
-        if not race_allows(race, classe):
+        existing = self.db.get_characters(owner.id)
+        if len(existing) >= MAX_CHARACTERS:
+            return await self._send(interaction, f"⚠️ {has} déjà {MAX_CHARACTERS} persos (maximum).")
+        if any(c.name.lower() == name.lower() for c in existing):
+            return await self._send(interaction, f"⚠️ {has} déjà un perso nommé **{name}**.")
+
+        # Armurerie : une seule recherche, qui sert à compléter classe/race puis à synchroniser.
+        armory = self._armory()
+        sheet, found = None, None
+        if armory is not None:
+            await interaction.response.defer(ephemeral=True, thinking=True)
+            sheet, found = await armory.fetch(name, max_age=0)
+
+        from_armory = []
+        if classe is None or race is None:
+            if sheet is None:
+                if armory is None:
+                    why = "L'armurerie n'est pas activée"
+                elif found is False:
+                    why = f"Je n'ai pas trouvé **{name}** dans l'armurerie ({NOT_FOUND_HELP_SHORT})"
+                else:
+                    why = "L'armurerie ne répond pas pour l'instant"
+                return await self._send(interaction, f"⚠️ {why} : précise la **classe** et la **race**.")
+            if classe is None and sheet.class_key:
+                classe = sheet.class_key
+                from_armory.append("classe")
+            if race is None and sheet.race_key:
+                race = sheet.race_key
+                from_armory.append("race")
+            if classe is None or race is None:
+                return await self._send(
+                    interaction, "⚠️ Classe ou race inconnue dans l'armurerie : précise-les à la main."
+                )
+
+        # Classe ET race lues dans l'armurerie : Blizzard fait foi, même si notre table des
+        # combinaisons (gamedata) est en retard sur le jeu.
+        if len(from_armory) < 2 and not race_allows(race, classe):
             return await self._send(interaction, race_refusal(race, classe))
         if role_prefere and role_prefere not in roles_for(classe):
             return await self._send(interaction, role_refusal(classe, role_prefere))
-        if len(self.db.get_characters(interaction.user.id)) >= MAX_CHARACTERS:
-            return await self._send(
-                interaction, f"⚠️ Tu as déjà {MAX_CHARACTERS} persos. Supprimes-en un avec `/supprimer perso`."
-            )
         try:
-            character = self.db.add_character(interaction.user.id, name, classe, race, role_prefere)
+            character = self.db.add_character(owner.id, name, classe, race, role_prefere)
         except sqlite3.IntegrityError:
-            return await self._send(interaction, f"⚠️ Tu as déjà un perso nommé **{name}**.")
+            return await self._send(interaction, f"⚠️ {has} déjà un perso nommé **{name}**.")
+        if interaction.guild is not None:
+            self.db.touch_member(interaction.guild.id, owner.id)
 
-        armory_line, professions_synced = await self._armory_check(interaction, character)
+        armory_line, professions_synced = "", False
+        if armory is not None:
+            result = armory.apply(character, sheet) if sheet is not None else SyncResult(found=found)
+            armory_line, professions_synced = "\n" + result.summary(), result.professions_synced
+        if from_armory:
+            armory_line += f"\n🔎 {' et '.join(from_armory).capitalize()} reprise(s) de l'armurerie."
 
+        whose = f" pour {owner.mention}" if by_admin else ""
         tips = []
-        if role_prefere is None and len(roles_for(classe)) > 1:
-            tips.append("Indique ton rôle préféré avec `/modifier perso`.")
-        if not professions_synced:
-            tips.append("Ajoute ses métiers avec `/ajouter metier`.")
+        if not by_admin:
+            if role_prefere is None and len(roles_for(classe)) > 1:
+                tips.append("Indique ton rôle préféré avec `/modifier perso`.")
+            if not professions_synced:
+                tips.append("Ajoute ses métiers avec `/ajouter metier`.")
         await self._send(
             interaction,
-            f"✅ **{name}** ({class_label(classe)} {race_label(race)}) ajouté. "
-            f"Rôles possibles : {roles_text(character)}.{armory_line}\n" + "\n".join(f"💡 {t}" for t in tips),
+            f"✅ **{name}** ({class_label(classe)} {race_label(race)}) ajouté{whose}. "
+            f"Rôles possibles : {roles_text(character)}.{armory_line}" + "".join(f"\n💡 {t}" for t in tips),
         )
+        if by_admin:
+            await self._notify_owner(
+                interaction, owner,
+                f"a ajouté ton perso **{name}** ({class_label(classe)} {race_label(race)}) sur le bot. "
+                "Tu peux le voir avec `/liste persos` et le modifier avec `/modifier perso`.",
+            )
 
     async def modify(
         self,
@@ -157,8 +230,11 @@ class CharacterCommands:
         classe: str | None,
         race: str | None,
         role_prefere: str | None,
+        owner: discord.abc.User | None = None,
     ) -> None:
-        character = await self.own_character(interaction, perso)
+        owner = owner or interaction.user
+        has = f"{owner.mention} a" if owner.id != interaction.user.id else "Tu as"
+        character = await self.own_character(interaction, perso, owner.id)
         if character is None:
             return
         if not any((nom, classe, race, role_prefere)):
@@ -189,7 +265,7 @@ class CharacterCommands:
         try:
             self.db.update_character(updated)
         except sqlite3.IntegrityError:
-            return await self._send(interaction, f"⚠️ Tu as déjà un perso nommé **{updated.name}**.")
+            return await self._send(interaction, f"⚠️ {has} déjà un perso nommé **{updated.name}**.")
 
         armory_line = ""
         if updated.name != character.name:  # nouveau nom : on revérifie dans l'armurerie
@@ -202,14 +278,21 @@ class CharacterCommands:
         )
         await self._refresh_events(self.db.character_events(character.id))
 
-    async def delete(self, interaction: discord.Interaction, perso: str) -> None:
-        character = await self.own_character(interaction, perso)
+    async def delete(
+        self, interaction: discord.Interaction, perso: str, owner: discord.abc.User | None = None
+    ) -> None:
+        owner = owner or interaction.user
+        by_admin = owner.id != interaction.user.id
+        character = await self.own_character(interaction, perso, owner.id)
         if character is None:
             return
-        affected = self.db.delete_character(interaction.user.id, character.id)
-        await self._send(interaction, f"🗑️ **{character.name}** supprimé, avec ses métiers.")
+        affected = self.db.delete_character(owner.id, character.id)
+        whose = f" (perso de {owner.mention})" if by_admin else ""
+        await self._send(interaction, f"🗑️ **{character.name}**{whose} supprimé, avec ses métiers.")
         # Les sorties où il était inscrit affichent désormais le pseudo à la place.
         await self._refresh_events(affected)
+        if by_admin:
+            await self._notify_owner(interaction, owner, f"a supprimé ton perso **{character.name}** du bot.")
 
     async def list(self, interaction: discord.Interaction, joueur: discord.abc.User | None) -> None:
         target = joueur or interaction.user
@@ -294,24 +377,32 @@ class CharacterCommands:
 
     # ============================================================== interne
 
-    def character_choices(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
+    def character_choices(
+        self, interaction: discord.Interaction, current: str, owner_id: int | None = None
+    ) -> list[app_commands.Choice[str]]:
+        """Persos du joueur (ou de `owner_id` pour les commandes /admin) contenant le texte tapé."""
         q = current.lower()
         return [
             app_commands.Choice(name=f"{c.name} — {class_label(c.wow_class)} {race_label(c.race)}"[:100], value=str(c.id))
-            for c in self.db.get_characters(interaction.user.id)
+            for c in self.db.get_characters(owner_id or interaction.user.id)
             if q in c.name.lower()
         ][:25]
 
-    async def own_character(self, interaction: discord.Interaction, value: str) -> Character | None:
+    async def own_character(
+        self, interaction: discord.Interaction, value: str, owner_id: int | None = None
+    ) -> Character | None:
         """Retrouve un perso du joueur (ID venant de l'autocomplétion, ou nom tapé à la main)."""
+        owner_id = owner_id or interaction.user.id
         character = self.db.get_character(int(value)) if value.isdigit() else None
-        if character is None or character.user_id != interaction.user.id:
+        if character is None or character.user_id != owner_id:
             character = next(
-                (c for c in self.db.get_characters(interaction.user.id) if c.name.lower() == value.strip().lower()),
+                (c for c in self.db.get_characters(owner_id) if c.name.lower() == value.strip().lower()),
                 None,
             )
         if character is None:
-            await self._send(
-                interaction, "Perso introuvable. Tes persos : `/liste persos`, pour en ajouter : `/ajouter perso`."
-            )
+            if owner_id == interaction.user.id:
+                text = "Perso introuvable. Tes persos : `/liste persos`, pour en ajouter : `/ajouter perso`."
+            else:
+                text = f"Perso introuvable chez <@{owner_id}> (voir `/liste persos joueur:`)."
+            await self._send(interaction, text)
         return character

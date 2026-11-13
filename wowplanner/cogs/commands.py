@@ -1,9 +1,10 @@
 """Toutes les commandes slash, organisées « verbe + catégorie » :
 
     /ajouter   event | perso | metier | battletag
-    /modifier  perso | metier | instances
+    /modifier  perso | metier | armurerie | instances
     /supprimer event | inscrit | perso | metier | battletag
     /liste     events | persos | metier | recettes | battletags | instances | armurerie
+    /admin     ajouter perso | modifier perso | modifier armurerie | supprimer perso   (« Gérer le serveur »)
 
 Ce fichier ne fait que déclarer les commandes et leurs options ; la logique est dans
 events.py (sorties), characters.py (persos, métiers), players.py (BattleTag), instances.py
@@ -37,6 +38,13 @@ PROFESSION_CHOICES = [
     for key, (label, primary) in PROFESSIONS.items()
 ]
 
+PERSO_ADD_HELP = {
+    "nom": "Nom du perso en jeu, prénom et nom séparés par un espace (ex. : Grommash Hurlenfer)",
+    "classe": "Facultatif si le perso est dans l'armurerie (niveau 10+)",
+    "race": "Facultatif si le perso est dans l'armurerie (niveau 10+)",
+    "role_prefere": "Ton rôle préféré avec ce perso (s'il peut en jouer plusieurs)",
+}
+
 Skill = app_commands.Range[int, 1, MAX_PROFESSION_SKILL]
 SKILL_HELP = f"Niveau de compétence (1 à {MAX_PROFESSION_SKILL})"
 
@@ -56,6 +64,17 @@ class CommandsCog(commands.Cog):
     liste = app_commands.Group(
         name="liste", description="Voir : sorties, persos, métiers, recettes, BattleTags, instances, armurerie", guild_only=True
     )
+    # Réservé à « Gérer le serveur » : les autres membres ne voient pas /admin (réglable dans
+    # Paramètres du serveur → Intégrations). Discord ne permet ce réglage que sur un verbe entier.
+    admin = app_commands.Group(
+        name="admin",
+        description="Administration : gérer les persos des membres",
+        guild_only=True,
+        default_permissions=discord.Permissions(manage_guild=True),
+    )
+    admin_ajouter = app_commands.Group(name="ajouter", description="Ajouter pour un membre", parent=admin)
+    admin_modifier = app_commands.Group(name="modifier", description="Modifier pour un membre", parent=admin)
+    admin_supprimer = app_commands.Group(name="supprimer", description="Supprimer pour un membre", parent=admin)
 
     def __init__(self, bot: WowPlannerBot):
         self.bot = bot
@@ -108,23 +127,18 @@ class CommandsCog(commands.Cog):
     ) -> None:
         await self.events.create(interaction, instance, date, heure, joueurs, tanks, heals, dps, description)
 
-    @ajouter.command(name="perso", description="Déclarer un de tes personnages")
-    @app_commands.describe(
-        nom="Nom du perso en jeu, prénom et nom séparés par un espace (ex. : Grommash Hurlenfer)",
-        classe="Classe",
-        race="Race",
-        role_prefere="Ton rôle préféré avec ce perso (s'il peut en jouer plusieurs)",
-    )
+    @ajouter.command(name="perso", description="Déclarer un de tes personnages (classe et race lues dans l'armurerie)")
+    @app_commands.describe(**PERSO_ADD_HELP)
     @app_commands.choices(classe=CLASS_CHOICES, race=RACE_CHOICES, role_prefere=ROLE_CHOICES)
     async def ajouter_perso(
         self,
         interaction: discord.Interaction,
         nom: app_commands.Range[str, 2, 32],
-        classe: app_commands.Choice[str],
-        race: app_commands.Choice[str],
+        classe: Optional[app_commands.Choice[str]] = None,
+        race: Optional[app_commands.Choice[str]] = None,
         role_prefere: Optional[app_commands.Choice[str]] = None,
     ) -> None:
-        await self.chars.add(interaction, nom, classe.value, race.value, _value(role_prefere))
+        await self.chars.add(interaction, nom, _value(classe), _value(race), _value(role_prefere))
 
     @ajouter.command(name="metier", description="Ajouter un métier à un de tes persos")
     @app_commands.describe(perso="Le perso", metier="Le métier", niveau=SKILL_HELP)
@@ -176,6 +190,18 @@ class CommandsCog(commands.Cog):
     @modifier.command(name="instances", description="Recharger la liste des donjons/raids depuis le wiki (modos)")
     async def modifier_instances(self, interaction: discord.Interaction) -> None:
         await self.instances.refresh_now(interaction)
+
+    @modifier.command(name="armurerie", description="Relire tes persos dans l'armurerie (métiers, recettes) maintenant")
+    @app_commands.describe(perso="Un seul de tes persos (par défaut : tous)")
+    async def modifier_armurerie(self, interaction: discord.Interaction, perso: Optional[str] = None) -> None:
+        if perso:
+            character = await self.chars.own_character(interaction, perso)
+            if character is None:
+                return
+            characters = [character]
+        else:
+            characters = self.db.get_characters(interaction.user.id)
+        await self.armory.refresh(interaction, characters, "🔄 Mise à jour depuis l'armurerie", cooldown=True)
 
     # ============================================================== /supprimer
 
@@ -253,7 +279,91 @@ class CommandsCog(commands.Cog):
     ) -> None:
         await self.armory.show_recipes(interaction, metier.value, recherche)
 
+    # ================================================================== /admin
+
+    @staticmethod
+    async def _is_admin(interaction: discord.Interaction) -> bool:
+        """Double vérification : Discord masque déjà /admin, mais un réglage serveur trop large reste possible."""
+        if interaction.permissions.manage_guild:
+            return True
+        await interaction.response.send_message(
+            "Réservé aux membres qui ont la permission « Gérer le serveur ».", ephemeral=True
+        )
+        return False
+
+    @admin_ajouter.command(name="perso", description="Ajouter un perso à un membre")
+    @app_commands.describe(joueur="Le membre à qui appartient le perso", **PERSO_ADD_HELP)
+    @app_commands.choices(classe=CLASS_CHOICES, race=RACE_CHOICES, role_prefere=ROLE_CHOICES)
+    async def admin_ajouter_perso(
+        self,
+        interaction: discord.Interaction,
+        joueur: discord.Member,
+        nom: app_commands.Range[str, 2, 32],
+        classe: Optional[app_commands.Choice[str]] = None,
+        race: Optional[app_commands.Choice[str]] = None,
+        role_prefere: Optional[app_commands.Choice[str]] = None,
+    ) -> None:
+        if await self._is_admin(interaction):
+            await self.chars.add(interaction, nom, _value(classe), _value(race), _value(role_prefere), owner=joueur)
+
+    @admin_modifier.command(name="perso", description="Modifier un perso d'un membre")
+    @app_commands.describe(
+        joueur="Le membre (à choisir en premier)",
+        perso="Son perso",
+        nom="Nouveau nom",
+        classe="Nouvelle classe",
+        race="Nouvelle race",
+        role_prefere="Rôle préféré (« Aucun » pour le retirer)",
+    )
+    @app_commands.choices(classe=CLASS_CHOICES, race=RACE_CHOICES, role_prefere=ROLE_OR_NONE_CHOICES)
+    async def admin_modifier_perso(
+        self,
+        interaction: discord.Interaction,
+        joueur: discord.Member,
+        perso: str,
+        nom: Optional[app_commands.Range[str, 2, 32]] = None,
+        classe: Optional[app_commands.Choice[str]] = None,
+        race: Optional[app_commands.Choice[str]] = None,
+        role_prefere: Optional[app_commands.Choice[str]] = None,
+    ) -> None:
+        if await self._is_admin(interaction):
+            await self.chars.modify(
+                interaction, perso, nom, _value(classe), _value(race), _value(role_prefere), owner=joueur
+            )
+
+    @admin_supprimer.command(name="perso", description="Supprimer un perso d'un membre")
+    @app_commands.describe(joueur="Le membre (à choisir en premier)", perso="Son perso")
+    async def admin_supprimer_perso(self, interaction: discord.Interaction, joueur: discord.Member, perso: str) -> None:
+        if await self._is_admin(interaction):
+            await self.chars.delete(interaction, perso, owner=joueur)
+
+    @admin_modifier.command(name="armurerie", description="Relire dans l'armurerie les persos d'un membre, ou de tout le serveur")
+    @app_commands.describe(joueur="Le membre (par défaut : tous les persos du serveur)")
+    async def admin_modifier_armurerie(
+        self, interaction: discord.Interaction, joueur: Optional[discord.Member] = None
+    ) -> None:
+        if not await self._is_admin(interaction):
+            return
+        assert interaction.guild is not None
+        if joueur:
+            characters = self.db.get_characters(joueur.id)
+            title = f"🔄 Armurerie : persos de {joueur.display_name}"
+        else:
+            characters = self.db.guild_characters(interaction.guild.id)
+            title = "🔄 Armurerie : tous les persos du serveur"
+        await self.armory.refresh(interaction, characters, title, cooldown=False)
+
     # ========================================================= autocomplétion
+
+    @admin_modifier_perso.autocomplete("perso")
+    @admin_supprimer_perso.autocomplete("perso")
+    async def _admin_character_autocomplete(self, interaction: discord.Interaction, current: str):
+        # Persos du membre déjà choisi dans le champ « joueur ».
+        joueur = getattr(interaction.namespace, "joueur", None)
+        owner_id = getattr(joueur, "id", None)
+        if owner_id is None:
+            return []
+        return self.chars.character_choices(interaction, current, owner_id)
 
     @liste_armurerie.autocomplete("perso")
     async def _armory_autocomplete(self, interaction: discord.Interaction, current: str):
@@ -278,6 +388,7 @@ class CommandsCog(commands.Cog):
     @modifier_metier.autocomplete("perso")
     @supprimer_perso.autocomplete("perso")
     @supprimer_metier.autocomplete("perso")
+    @modifier_armurerie.autocomplete("perso")
     async def _character_autocomplete(self, interaction: discord.Interaction, current: str):
         return self.chars.character_choices(interaction, current)
 

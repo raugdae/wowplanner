@@ -558,3 +558,101 @@ def test_recipe_messages_respect_discord_limits():
         assert all(len(e.fields) <= 25 for e in embeds)
         assert embeds[0].title and embeds[-1].footer.text.startswith("Page ")
     assert sum(1 for m in messages for e in m for f in e.fields if f.inline) == 300
+
+
+class _FakeResponse:
+    def __init__(self, sink):
+        self.sink, self.done = sink, False
+
+    def is_done(self):
+        return self.done
+
+    async def defer(self, **kw):
+        self.done = True
+
+    async def send_message(self, text=None, **kw):
+        self.done = True
+        self.sink.append(text)
+
+
+class _FakeFollowup:
+    def __init__(self, sink):
+        self.sink = sink
+
+    async def send(self, text=None, **kw):
+        self.sink.append(text)
+
+
+def _fake_interaction(user_id, sent):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        user=SimpleNamespace(id=user_id, display_name="Raug", mention=f"<@{user_id}>"),
+        guild=SimpleNamespace(id=42), response=_FakeResponse(sent), followup=_FakeFollowup(sent),
+    )
+
+
+def _characters_with_fake_armory(tmp_path, found=True, enabled=True):
+    from types import SimpleNamespace
+
+    from wowplanner.armory import ArmoryError
+    from wowplanner.cogs.armory import ArmoryCog
+    from wowplanner.cogs.characters import CharacterCommands
+    from wowplanner.db import Database
+
+    db = Database(tmp_path / "t.db")
+
+    class FakeClient:
+        async def sheet(self, name, max_age=0):
+            if not found:
+                raise ArmoryError(404, "url")
+            return _sheet()  # Prêtre Éolide avec Alchimie et Cuisine
+
+    armory = ArmoryCog(SimpleNamespace(db=db))
+    armory.client = FakeClient() if enabled else None
+    bot = SimpleNamespace(db=db, get_cog=lambda name: armory if name == "ArmoryCog" else None)
+    return db, CharacterCommands(bot)
+
+
+def test_add_character_name_only_uses_armory_and_admin_owner(tmp_path):
+    import asyncio
+    from types import SimpleNamespace
+
+    db, chars = _characters_with_fake_armory(tmp_path)
+    sent, dms = [], []
+
+    async def owner_send(text):
+        dms.append(text)
+
+    bob = SimpleNamespace(id=2, mention="<@2>", send=owner_send)
+    asyncio.run(chars.add(_fake_interaction(1, sent), "hollie tétine", None, None, None, owner=bob))
+
+    created = db.get_characters(2)  # le perso appartient à Bob, pas à l'admin
+    assert [(c.name, c.wow_class, c.race) for c in created] == [("Hollie Tétine", "pretre", "skyborne")]
+    assert created[0].professions == {"alchimie": 139, "cuisine": 54}
+    assert db.get_characters(1) == []
+    assert "ajouté pour <@2>" in sent[-1] and "reprise(s) de l'armurerie" in sent[-1]
+    assert dms and "a ajouté ton perso **Hollie Tétine**" in dms[0]
+    assert db.battletags(42) == [] and db.guild_characters(42)[0].user_id == 2  # Bob compte comme membre du serveur
+
+    # Doublon chez Bob : refus, sans rien créer.
+    asyncio.run(chars.add(_fake_interaction(1, sent), "Hollie Tétine", None, None, None, owner=bob))
+    assert "a déjà un perso nommé" in sent[-1] and len(db.get_characters(2)) == 1
+    db.close()
+
+
+def test_add_character_name_only_needs_class_race_when_not_found(tmp_path):
+    import asyncio
+
+    for found, enabled, expected in ((False, True, "pas trouvé"), (True, False, "pas activée")):
+        folder = tmp_path / f"{found}{enabled}"
+        folder.mkdir()
+        db, chars = _characters_with_fake_armory(folder, found=found, enabled=enabled)
+        sent = []
+        asyncio.run(chars.add(_fake_interaction(1, sent), "Inconnu Perso", None, None, None))
+        assert expected in sent[-1] and "précise la **classe** et la **race**" in sent[-1]
+        assert db.get_characters(1) == []
+        # Avec classe et race données à la main, ça passe même sans armurerie.
+        asyncio.run(chars.add(_fake_interaction(1, sent), "Inconnu Perso", "mage", "gnome", None))
+        assert db.get_characters(1)[0].wow_class == "mage"
+        db.close()

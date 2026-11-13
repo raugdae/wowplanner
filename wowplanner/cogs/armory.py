@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -30,6 +31,9 @@ log = logging.getLogger(__name__)
 SYNC_PAUSE_SECONDS = 1.0
 # Requêtes simultanées pour récupérer les composants des recettes.
 RECIPE_FETCH_CONCURRENCY = 5
+# /modifier armurerie : une demande par minute et par joueur ; petite pause entre deux persos.
+REFRESH_COOLDOWN_SECONDS = 60
+REFRESH_PAUSE_SECONDS = 0.3
 # Caractères max par message de recettes (limite Discord : 6000 pour toutes les fiches du message).
 RECIPE_MESSAGE_CHARS = 5200
 
@@ -37,6 +41,7 @@ CLASS_COLORS = {
     "guerrier": 0xC79C6E, "paladin": 0xF58CBA, "chasseur": 0xABD473, "voleur": 0xFFF569, "pretre": 0xFFFFFF,
     "chaman": 0x0070DE, "mage": 0x69CCF0, "demoniste": 0x9482C9, "druide": 0xFF7D0A,
 }
+NOT_FOUND_HELP_SHORT = "il faut être niveau 10 et s'être déconnecté depuis"
 NOT_FOUND_HELP = (
     "L'armurerie ne connaît que les persos **niveau 10 ou plus**, et seulement **après une déconnexion** "
     "(parfois avec quelques heures de retard). Vérifie aussi l'orthographe du nom (prénom et nom)."
@@ -262,6 +267,7 @@ class ArmoryCog(commands.Cog):
         self.bot = bot
         self.db = bot.db
         self.client: ArmoryClient | None = None
+        self._last_refresh: dict[int, float] = {}
 
     @property
     def available(self) -> bool:
@@ -304,21 +310,78 @@ class ArmoryCog(commands.Cog):
             )
         return result
 
+    async def fetch(self, name: str, max_age: float = CACHE_SECONDS) -> tuple[ArmorySheet | None, bool | None]:
+        """(fiche, trouvé ?) — trouvé vaut None si l'armurerie est désactivée ou injoignable."""
+        if self.client is None:
+            return None, None
+        try:
+            return await self.client.sheet(name, max_age=max_age), True
+        except ArmoryError as exc:
+            if exc.status == 404:
+                return None, False
+            log.warning("Armurerie : %s", exc)
+        except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+            log.warning("Armurerie injoignable : %s", exc)
+        return None, None
+
     async def sync(self, character: Character, max_age: float = CACHE_SECONDS) -> SyncResult | None:
         """Cherche le perso dans l'armurerie et synchronise ses métiers. None si armurerie désactivée."""
         if self.client is None:
             return None
-        try:
-            sheet = await self.client.sheet(character.name, max_age=max_age)
-        except ArmoryError as exc:
-            if exc.status == 404:
-                return SyncResult(found=False)
-            log.warning("Armurerie : %s", exc)
-            return SyncResult(found=None)
-        except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
-            log.warning("Armurerie injoignable : %s", exc)
-            return SyncResult(found=None)
+        sheet, found = await self.fetch(character.name, max_age=max_age)
+        if sheet is None:
+            return SyncResult(found=found)
         return self.apply(character, sheet)
+
+    async def refresh(
+        self, interaction: discord.Interaction, characters: list[Character], title: str, cooldown: bool
+    ) -> None:
+        """/modifier armurerie et /admin modifier armurerie : resynchronise des persos sans cache."""
+        if self.client is None:
+            await interaction.response.send_message(
+                "L'armurerie n'est pas activée sur ce bot (clés Blizzard non configurées).", ephemeral=True
+            )
+            return
+        if not characters:
+            await interaction.response.send_message("Aucun perso à mettre à jour.", ephemeral=True)
+            return
+        if cooldown:
+            now = time.monotonic()
+            last = self._last_refresh.get(interaction.user.id, 0.0)
+            if now - last < REFRESH_COOLDOWN_SECONDS:
+                wait = int(REFRESH_COOLDOWN_SECONDS - (now - last)) + 1
+                await interaction.response.send_message(
+                    f"⏳ Doucement : réessaie dans {wait} s (une mise à jour par minute).", ephemeral=True
+                )
+                return
+            self._last_refresh[interaction.user.id] = now
+
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        lines = []
+        for character in characters:
+            result = await self.sync(character, max_age=0)
+            if result is None or result.found is None:
+                lines.append(f"⚠️ **{character.name}** : armurerie injoignable, réessaie plus tard")
+            elif not result.found:
+                lines.append(f"🔎 **{character.name}** : pas trouvé (niveau < 10, pas déconnecté depuis, ou faute de nom ?)")
+            else:
+                sheet = result.sheet
+                assert sheet is not None
+                professions = len(sheet.profession_skills() or {})
+                recipes = sum(len(v) for v in (sheet.known_recipes() or {}).values())
+                lines.append(
+                    f"✅ **{character.name}** : niveau {sheet.level} · {professions} métier(s) · {recipes} recette(s)"
+                    + "".join(f"\n  ⚠️ {w}" for w in result.warnings)
+                )
+            await asyncio.sleep(REFRESH_PAUSE_SECONDS)
+        await self.fetch_recipe_details(self.db.recipes_missing_details())
+
+        description = "\n".join(lines)
+        if len(description) > 4000:
+            description = description[:3990] + "\n…"
+        embed = discord.Embed(title=title, description=description, color=0x3498DB)
+        embed.set_footer(text="L'armurerie se met à jour à la déconnexion du perso, parfois avec du retard.")
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
     @tasks.loop(hours=24)
     async def daily_sync(self) -> None:
