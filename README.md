@@ -279,8 +279,9 @@ Un petit site public, en lecture seule, pour parcourir les persos et les métier
   rôle ou métier ;
 - **fiche d'un perso** : façon fiche du jeu, son **équipement** autour de son rendu en pied (icônes, infobulles,
   enchantements) et ses **caractéristiques**, avec les **stats à pousser en priorité** pour sa spé (devinée d'après
-  ses talents et son rôle préféré ; priorités du guide WoW Forever de stillsixty.com, nov. 2026, toucher jusqu'au
-  cap). Puis ses métiers en tableau, et ses recettes par **onglet de métier**, classées par type d'objet
+  ses talents et son rôle préféré, avec un menu pour voir les autres spés de la classe). Les priorités viennent du
+  guide WoW Forever de stillsixty.com, **relu chaque nuit à 4 h** (et au démarrage s'il date de plus d'un jour) :
+  si le guide change, le site suit ; si la page ne répond pas ou change de forme, on garde les dernières connues. Puis ses métiers en tableau, et ses recettes par **onglet de métier**, classées par type d'objet
   (composants d'artisanat, potions, armure : torse…) ;
   le portrait apparaît aussi dans les listes. Images hébergées par Blizzard, mises à jour à chaque synchro ;
   ses **talents** comme dans le jeu (les trois arbres, icônes, rangs, infobulle au survol ou au toucher, double

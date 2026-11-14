@@ -1074,6 +1074,12 @@ def test_gear_stats_priorities_and_categories(tmp_path):
     assert gear.detect_spec(talents(134), "tank", None) == "feral_bear"
     assert gear.detect_spec(talents(256), None, equipment) == "fury_2h"
     assert gear.detect_spec([], None, None) is None
+    # Talents inconnus : spé supposée d'après la classe et le rôle ; toutes les spés de chaque classe ont leurs priorités
+    assert gear.default_spec("guerrier", "tank") == "prot_warrior" and gear.default_spec("mage", None) == "frost"
+    assert gear.default_spec("pretre", "heal") == "holy_priest" and gear.default_spec("chaman", "dps") == "elemental"
+    assert all(x in gear.PRIORITIES for specs in gear.CLASS_SPECS.values() for x in specs)
+    assert set(gear.SPEC_IDS.values()) <= set(gear.PRIORITIES)
+    assert gear.line_tokens("+12 Puissance d’attaque") == ["attack_power"]
     assert gear.priority_ranks("shadow")["spell_hit"] == 1
     assert gear.line_has_priority("+4 Puissance des sorts", gear.stat_matcher("shadow"))
     assert not gear.line_has_priority("+4 Endurance", gear.stat_matcher("shadow"))
@@ -1113,7 +1119,54 @@ def test_gear_stats_priorities_and_categories(tmp_path):
     db.close()
     html = pages[f"/perso/{c.id}"]
     assert 'class="doll"' in html and "/eu/icons/56/9.jpg" in html
-    assert "Stats à pousser en <b>Ombre</b>" in html
+    assert '<option value="shadow" selected>Ombre</option>' in html and 'value="discipline"' in html
     assert 'class="srow capped"' in html and "17 % / 16 %" in html  # toucher au cap : barré, on passe à la suite
-    assert 'class="stat prio">+4 Puissance des sorts' in html and 'class="slot prio"' in html
-    assert 'class="mini"' in pages["/"]
+    assert 'class="stat prio" data-t="spell_power">+4 Puissance des sorts' in html and 'class="slot prio"' in html
+    assert 'id="spec-data"' in html
+    assert '<td class="prof"><small>Alchimie</small><b>139</b></td><td class="prof"><span class="none">—</span></td>' in pages["/"]
+    assert '<td class="sec split"><b>57</b></td>' in pages["/"]  # cuisine, 1re colonne secondaire
+
+
+def test_stat_priorities_from_guide(tmp_path):
+    """Priorités relues dans le guide : lecture de la page, enregistrement, application ; page bizarre ignorée."""
+    import copy
+
+    from wowplanner import gear, statsource
+    from wowplanner.db import Database
+
+    row = '<tr><th scope="row" class="x">{}</th><td class="y">{}</td></tr>'
+    page = "".join(row.format(*r) for r in [
+        ("Shadow Priest", "Spell Power, Hit, Critical Strike"),
+        ("Protection Paladin", "Stamina, Defense, Armor, Block chance and Block Value, Hit"),
+        ("Protection Warrior", "Stamina, Defense, Dodge, Parry and Block, Block Value"),
+        ("Combat Rogue", "Hit, Agility, dodge and parry reduction"),
+        ("Arms Warrior", "Weapon damage per second, Hit, Strength, Weapon Skill"),
+        ("Frost Mage", "Hit, Charisme magique"),  # stat inconnue : ligne ignorée
+        ("Spells", "17%, which is 170 Hit Rating"),
+        ("Melee and ranged attacks", "8%, which is 80 Hit Rating"),
+    ])
+    specs, caps = statsource.parse_page(page)
+    assert specs["shadow"] == ["spell_power", "hit", "crit"]
+    assert specs["prot_paladin"] == ["stamina", "defense", "armor", "avoidance", "block_value", "hit"]
+    assert specs["prot_warrior"] == ["stamina", "defense", "avoidance", "block_value"]
+    assert specs["combat"] == ["hit", "agility", "expertise"]
+    assert specs["arms"] == ["weapon_dps", "hit", "strength", "weapon_skill"]
+    assert "frost" not in specs and caps == {"spell": 17.0, "physical": 8.0}
+
+    db = Database(tmp_path / "t.db")
+    assert db.stat_priorities() == ({}, {}, None)
+    db.set_stat_priorities(specs, caps)
+    saved_specs, saved_caps, when = db.stat_priorities()
+    db.close()
+    assert saved_specs == specs and saved_caps == caps and when
+
+    backup = (copy.deepcopy(gear.PRIORITIES), gear.SPELL_HIT_CAP, gear.PHYSICAL_HIT_CAP, gear.SOURCE_CHECKED_AT)
+    try:
+        gear.apply_overrides(saved_specs, saved_caps, when)
+        assert gear.PRIORITIES["shadow"] == ("Ombre", "spell", ("spell_power", "hit", "crit"))
+        assert gear.hit_cap("spell") == 17.0 and gear.hit_cap("melee") == 8.0
+        assert gear.PRIORITIES["frost"][2][0] == "hit"  # pas relue : on garde l'ancienne
+    finally:
+        gear.PRIORITIES.clear()
+        gear.PRIORITIES.update(backup[0])
+        gear.SPELL_HIT_CAP, gear.PHYSICAL_HIT_CAP, gear.SOURCE_CHECKED_AT = backup[1:]

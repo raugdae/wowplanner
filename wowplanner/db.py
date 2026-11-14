@@ -115,6 +115,13 @@ CREATE TABLE IF NOT EXISTS item_icons (
     url     TEXT
 );
 
+-- Priorités de stats relues chaque nuit dans le guide (clé : spé, ou « hit_caps »), voir statsource.
+CREATE TABLE IF NOT EXISTS stat_priorities (
+    key        TEXT    PRIMARY KEY,
+    value      TEXT    NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
 -- Arbres de talents de Forever (données de jeu, pas de perso), redemandés de temps en temps.
 CREATE TABLE IF NOT EXISTS talent_trees (
     spec_id    INTEGER PRIMARY KEY,
@@ -607,6 +614,31 @@ class Database:
             self.conn.executemany(
                 "INSERT OR REPLACE INTO item_icons (item_id, url) VALUES (?, ?)", list(icons.items())
             )
+
+    # ------------------------------------------------------------ stat priorities
+
+    def set_stat_priorities(self, specs: dict[str, list[str]], caps: dict[str, float]) -> None:
+        now = int(time.time())
+        rows = [(spec, json.dumps(tokens), now) for spec, tokens in specs.items()]
+        if caps:
+            rows.append(("hit_caps", json.dumps(caps), now))
+        with self.conn:
+            self.conn.executemany(
+                "INSERT OR REPLACE INTO stat_priorities (key, value, updated_at) VALUES (?, ?, ?)", rows
+            )
+
+    def stat_priorities(self) -> tuple[dict[str, list[str]], dict[str, float], int | None]:
+        """(priorités par spé, caps de toucher, date de la dernière lecture réussie du guide)."""
+        specs: dict[str, list[str]] = {}
+        caps: dict[str, float] = {}
+        last = None
+        for r in self.conn.execute("SELECT key, value, updated_at FROM stat_priorities"):
+            if r["key"] == "hit_caps":
+                caps = json.loads(r["value"])
+            else:
+                specs[r["key"]] = json.loads(r["value"])
+            last = max(last or 0, r["updated_at"])
+        return specs, caps, last
 
     # ------------------------------------------------------------ talent trees
 

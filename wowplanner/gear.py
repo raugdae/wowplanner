@@ -214,3 +214,69 @@ def stat_matcher(spec: str | None, top: int = 3) -> re.Pattern | None:
 
 def line_has_priority(line: str, matcher: re.Pattern | None) -> bool:
     return bool(matcher and matcher.search(normalize(line)))
+
+
+# Spés de chaque classe, dans l'ordre des arbres du jeu (variantes comprises).
+CLASS_SPECS = {
+    "druide": ("balance", "feral_cat", "feral_bear", "resto_druid"),
+    "paladin": ("holy_paladin", "prot_paladin", "ret"),
+    "voleur": ("assassination", "combat", "subtlety"),
+    "mage": ("arcane", "fire", "frost"),
+    "pretre": ("discipline", "holy_priest", "shadow"),
+    "demoniste": ("affliction", "demonology", "destruction"),
+    "guerrier": ("arms", "fury", "fury_2h", "prot_warrior"),
+    "chasseur": ("beast_mastery", "marksmanship", "survival"),
+    "chaman": ("elemental", "enhancement", "enhancement_tank", "resto_shaman"),
+}
+
+# Spé supposée quand les talents sont inconnus (perso < niveau 10, pas encore synchronisé) : d'après le rôle préféré.
+DEFAULT_SPECS = {
+    "druide": {"tank": "feral_bear", "heal": "resto_druid", None: "feral_cat"},
+    "paladin": {"tank": "prot_paladin", "heal": "holy_paladin", None: "ret"},
+    "voleur": {None: "combat"},
+    "mage": {None: "frost"},
+    "pretre": {"heal": "holy_priest", None: "shadow"},
+    "demoniste": {None: "affliction"},
+    "guerrier": {"tank": "prot_warrior", None: "fury"},
+    "chasseur": {None: "marksmanship"},
+    "chaman": {"tank": "enhancement_tank", "heal": "resto_shaman", None: "elemental"},
+}
+
+
+def default_spec(wow_class: str, preferred_role: str | None) -> str | None:
+    choices = DEFAULT_SPECS.get(wow_class, {})
+    return choices.get(preferred_role) or choices.get(None)
+
+
+def line_tokens(line: str) -> list[str]:
+    """Jetons de priorité qu'une ligne d'infobulle d'objet apporte (« +4 Puissance des sorts » → spell_power)."""
+    text = normalize(line)
+    return [t for t, (_, pattern) in TOKENS.items() if pattern and re.search(r"\b(" + pattern + r")\b", text)]
+
+
+def spec_view(spec: str, stats: dict | None) -> dict[str, Any]:
+    """Ce qu'il faut mettre en avant pour une spé : rangs des lignes de stats, toucher au cap, 3 stats phares."""
+    _, kind, tokens = PRIORITIES[spec]
+    cap = hit_cap(kind)
+    hit_key = f"{kind}_hit" if cap else None
+    capped = hit_key if hit_key and (stats or {}).get(hit_key, 0) >= cap else None
+    return {"ranks": priority_ranks(spec), "capped": capped, "top": list(tokens[:3])}
+
+
+# Date (timestamp) de la dernière lecture réussie du guide, affichée sur le site ; None : priorités de ce fichier.
+SOURCE_CHECKED_AT: float | None = None
+
+
+def apply_overrides(specs: dict[str, list[str]], caps: dict[str, float], checked_at: float | None) -> None:
+    """Remplace les priorités écrites ici par celles relues dans le guide (voir statsource), spé par spé."""
+    global SPELL_HIT_CAP, PHYSICAL_HIT_CAP, SOURCE_CHECKED_AT
+    for spec, tokens in specs.items():
+        tokens = tuple(t for t in tokens if t in TOKENS)
+        if spec in PRIORITIES and tokens:
+            name, kind, _ = PRIORITIES[spec]
+            PRIORITIES[spec] = (name, kind, tokens)
+    if 1 <= caps.get("spell", 0) <= 50:
+        SPELL_HIT_CAP = float(caps["spell"])
+    if 1 <= caps.get("physical", 0) <= 50:
+        PHYSICAL_HIT_CAP = float(caps["physical"])
+    SOURCE_CHECKED_AT = checked_at

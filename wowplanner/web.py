@@ -10,6 +10,7 @@ par WEB_PORT ; derrière Traefik en production (voir docker-compose.traefik.yml)
 from __future__ import annotations
 
 import html
+import json
 import logging
 from datetime import datetime
 from typing import Callable
@@ -21,7 +22,7 @@ from .gamedata import (
     CLASSES, MAX_PROFESSION_SKILL, PROFESSIONS, class_label, is_primary, profession_label, race_label, roles_for,
 )
 from .recipes import crafted_by_map, expand_reagents, filter_recipes, group_by_category, normalize
-from . import gear
+from . import gear, statsource
 from .armory import icon_url
 from .roles import LABELS, ROLES
 
@@ -179,12 +180,13 @@ details.fold.big > .fold-body { padding:6px 0 0; }
 .prof-table .split { border-left:3px double var(--line); }
 .bar { height:5px; margin-top:5px; background:var(--panel2); border-radius:3px; overflow:hidden; }
 .bar span { display:block; height:100%; background:var(--accent); border-radius:3px; }
-/* Liste des persos : métiers en mini-tableau (nom au-dessus, niveau en dessous). */
-table.mini { width:auto; border-collapse:collapse; }
-table.mini th, table.mini td { background:none; border:none; padding:0 10px 0 0; text-align:left; font-size:11px;
-  color:var(--muted); font-weight:400; white-space:nowrap; }
-table.mini td { font-size:14px; font-weight:700; color:var(--accent); padding-top:1px; }
-table.mini .split { border-left:2px solid var(--line); padding-left:10px; }
+/* Liste des persos : 2 colonnes de métiers principaux, puis une colonne fixe par métier secondaire (alignées). */
+td.prof { min-width:112px; white-space:nowrap; line-height:1.15; }
+td.prof small { display:block; font-size:11px; color:var(--muted); }
+td.prof b, td.sec b { color:var(--accent); }
+th.sec, td.sec { text-align:center; min-width:70px; }
+.split { border-left:2px solid var(--line); }
+td .none { color:var(--muted); opacity:.5; }
 /* Onglets (recettes par métier). */
 .tabs { display:flex; flex-wrap:wrap; gap:6px; margin:10px 0 4px; border-bottom:1px solid var(--line); }
 .tabs button { background:var(--panel); color:var(--text); border:1px solid var(--line); border-bottom:none;
@@ -240,8 +242,10 @@ table.mini .split { border-left:2px solid var(--line); padding-left:10px; }
 .srow.p1 i, .srow.p2 i, .srow.p3 i { background:#f2c75c; color:#1a1406; }
 .srow.p1 span, .srow.p2 span, .srow.p3 span { font-weight:700; }
 .srow.capped b::after { content:" ✓"; color:#3ee05a; }
+.prio-box select { font:inherit; font-weight:700; background:var(--panel); color:var(--accent);
+  border:1px solid var(--line); border-radius:6px; padding:1px 4px; }
 .prio-box { background:var(--panel2); border:1px solid var(--line); border-radius:10px; padding:8px 10px; font-size:13px; }
-.prio-box .chips { display:flex; flex-wrap:wrap; gap:4px; margin-top:6px; }
+.prio-box .chips:not([hidden]) { display:flex; flex-wrap:wrap; gap:4px; margin-top:6px; }
 .chip { border:1px solid var(--line); border-radius:999px; padding:1px 8px; font-size:12px; color:var(--muted); }
 .chip.top { border-color:#f2c75c; color:#f2c75c; font-weight:700; }
 .chip.done { text-decoration:line-through; opacity:.6; }
@@ -381,6 +385,32 @@ TABS_SCRIPT = """
   let saved = null;
   try { saved = localStorage.getItem("wowplanner-tab"); } catch (e) {}
   if (buttons.length) show(buttons.some(b => b.dataset.tab === saved) ? saved : buttons[0].dataset.tab);
+})();
+</script>
+"""
+
+# Choix d'une autre spé dans le panneau de caractéristiques : rangs, cap de toucher et stats phares des objets.
+SPEC_SCRIPT = """
+<script>
+(() => {
+  const select = document.getElementById("spec");
+  const raw = document.getElementById("spec-data");
+  if (!select || !raw) return;
+  const views = JSON.parse(raw.textContent);
+  select.addEventListener("change", () => {
+    const v = views[select.value];
+    document.querySelectorAll(".prio-box .chips").forEach(c => c.hidden = c.dataset.spec !== select.value);
+    document.querySelectorAll(".srow[data-k]").forEach(row => {
+      const k = row.dataset.k, rank = v.ranks[k], capped = k === v.capped;
+      row.classList.remove("p1", "p2", "p3", "capped");
+      if (rank && rank <= 3 && !capped) row.classList.add("p" + rank);
+      if (capped) row.classList.add("capped");
+      row.querySelector("i").textContent = rank || "";
+    });
+    const top = t => (t || "").split(" ").some(x => v.top.includes(x));
+    document.querySelectorAll(".slot[data-t]").forEach(el => el.classList.toggle("prio", top(el.dataset.t)));
+    document.querySelectorAll(".tt .stat[data-t]").forEach(el => el.classList.toggle("prio", top(el.dataset.t)));
+  });
 })();
 </script>
 """
@@ -555,31 +585,37 @@ def roles_html(c: Character) -> str:
     )
 
 
-def professions_html(c: Character) -> str:
-    """Métiers d'un perso dans la liste : mini-tableau, nom au-dessus et niveau en dessous."""
-    if not c.professions:
-        return '<span class="muted">—</span>'
-    ordered = sorted(c.professions.items(), key=lambda kv: (not is_primary(kv[0]), kv[0]))
-    heads, cells = [], []
-    for i, (p, skill) in enumerate(ordered):
-        split = ' class="split"' if i and is_primary(ordered[i - 1][0]) and not is_primary(p) else ""
-        heads.append(f"<th{split}>{esc(profession_label(p))}</th>")
-        cells.append(f"<td{split}>{skill if skill is not None else '?'}</td>")
-    return f'<table class="mini"><tr>{"".join(heads)}</tr><tr>{"".join(cells)}</tr></table>'
+SECONDARY_PROFESSIONS = [k for k, (_, primary) in PROFESSIONS.items() if not primary]
 
 
-def _item_tooltip(item: dict, matcher) -> str:
+def professions_cells(c: Character) -> str:
+    """Cellules de métiers d'un perso dans la liste : ses 2 principaux (nom + niveau), puis une colonne fixe par
+    métier secondaire, pour que tout s'aligne d'une ligne à l'autre (case vide si le perso ne l'a pas)."""
+    level = lambda skill: f"<b>{skill if skill is not None else '?'}</b>"  # noqa: E731
+    primaries = sorted((p, s) for p, s in c.professions.items() if is_primary(p))
+    cells = [
+        f'<td class="prof"><small>{esc(profession_label(p))}</small>{level(s)}</td>' for p, s in primaries[:2]
+    ]
+    cells += ['<td class="prof"><span class="none">—</span></td>'] * (2 - len(cells))
+    for i, p in enumerate(SECONDARY_PROFESSIONS):
+        value = level(c.professions[p]) if p in c.professions else '<span class="none">—</span>'
+        cells.append(f'<td class="sec{" split" if i == 0 else ""}">{value}</td>')
+    return "".join(cells)
+
+
+def _item_tooltip(item: dict, top: list[str]) -> str:
     color = QUALITY_COLORS.get(item.get("quality") or "", "#fff")
-    lines = "".join(
-        f'<div class="{esc(kind)}{" prio" if kind == "stat" and gear.line_has_priority(text, matcher) else ""}">'
-        f"{esc(text)}</div>"
-        for kind, text in item.get("lines", [])
-    )
+    lines = []
+    for kind, text in item.get("lines", []):
+        tokens = gear.line_tokens(text) if kind in ("stat", "enchant") else []
+        prio = " prio" if kind == "stat" and set(tokens) & set(top) else ""
+        data = f' data-t="{esc(" ".join(tokens))}"' if tokens else ""
+        lines.append(f'<div class="{esc(kind)}{prio}"{data}>{esc(text)}</div>')
     ilvl = f'<div class="ilvl">Niveau d\'objet {item["ilvl"]}</div>' if item.get("ilvl") else ""
-    return f'<div class="tt"><b style="color:{color}">{esc(item["name"])}</b>{ilvl}{lines}</div>'
+    return f'<div class="tt"><b style="color:{color}">{esc(item["name"])}</b>{ilvl}{"".join(lines)}</div>'
 
 
-def slot_html(slot: str, item: dict | None, icons: dict[int, str], matcher) -> str:
+def slot_html(slot: str, item: dict | None, icons: dict[int, str], top: list[str]) -> str:
     label = gear.SLOT_LABELS.get(slot, slot)
     if not item:
         return f'<div class="slot empty"><span class="ph"></span><div class="txt"><div class="sb">{esc(label)}</div></div></div>'
@@ -590,13 +626,14 @@ def slot_html(slot: str, item: dict | None, icons: dict[int, str], matcher) -> s
         if icon and icon.startswith("https://") else
         f'<span class="ph" style="border-color:{QUALITY_COLORS.get(item.get("quality") or "", "#4a4a4a")}"></span>'
     )
-    prio = any(k == "stat" and gear.line_has_priority(t, matcher) for k, t in item.get("lines", []))
+    tokens = sorted({t for k, text in item.get("lines", []) if k == "stat" for t in gear.line_tokens(text)})
+    prio = " prio" if set(tokens) & set(top) else ""
     color = QUALITY_COLORS.get(item.get("quality") or "", "inherit")
     sub = esc(label) + (f" · {item['ilvl']}" if item.get("ilvl") else "")
     return (
-        f'<div class="slot{" prio" if prio else ""}" tabindex="0">{img}<div class="txt">'
+        f'<div class="slot{prio}" tabindex="0" data-t="{esc(" ".join(tokens))}">{img}<div class="txt">'
         f'<div class="nm" style="color:{color}">{esc(item["name"])}</div><div class="sb">{sub}</div></div>'
-        f"{_item_tooltip(item, matcher)}</div>"
+        f"{_item_tooltip(item, top)}</div>"
     )
 
 
@@ -624,66 +661,81 @@ def _num(value: float, pct: bool) -> str:
     return text.replace(".", ",") + (" %" if pct else "")
 
 
-def stats_html(c: Character, spec: str | None) -> str:
-    stats = c.stats or {}
-    ranks = gear.priority_ranks(spec)
-    kind = gear.PRIORITIES[spec][1] if spec in gear.PRIORITIES else "none"
+def _prio_box(spec: str, view: dict, chosen: bool) -> str:
+    name, kind, tokens = gear.PRIORITIES[spec]
     cap = gear.hit_cap(kind)
-    hit_key = f"{kind}_hit" if kind in ("spell", "melee", "ranged") else None
-    capped = bool(cap and hit_key and stats.get(hit_key, 0) >= cap)
+    chips, top = [], 0
+    for token in tokens:
+        label = gear.TOKENS[token][0] + (f" (cap {cap:.0f} %)" if token == "hit" and cap else "")
+        done = token == "hit" and bool(view["capped"])
+        cls = "done" if done else ("top" if top < 3 else "")
+        top += 0 if done else 1
+        chips.append(f'<span class="chip {cls}">{esc(label)}</span>')
+    return f'<div class="chips" data-spec="{spec}"{"" if chosen else " hidden"}>{"".join(chips)}</div>'
+
+
+def stats_html(c: Character, spec: str | None, guessed: bool = False) -> str:
+    """Caractéristiques, avec les stats à pousser pour la spé ; un menu permet de voir les autres spés de la classe
+    (le changement se fait dans la page, voir SPEC_SCRIPT)."""
+    stats = c.stats or {}
+    specs = [x for x in gear.CLASS_SPECS.get(c.wow_class, ()) if x in gear.PRIORITIES]
+    views = {x: gear.spec_view(x, stats) for x in specs}
+    view = views.get(spec) or {"ranks": {}, "capped": None, "top": []}
+    any_ranked = {k for v in views.values() for k in v["ranks"]}
 
     prio = ""
-    if spec in gear.PRIORITIES:
-        name, _, tokens = gear.PRIORITIES[spec]
-        chips = []
-        top = 0
-        for token in tokens:
-            label = gear.TOKENS[token][0]
-            done = token == "hit" and capped
-            if token == "hit" and cap:
-                label += f" (cap {cap:.0f} %)"
-            cls = "done" if done else ("top" if top < 3 else "")
-            top += 0 if done else 1
-            chips.append(f'<span class="chip {cls}">{esc(label)}</span>')
-        prio = (
-            f'<div class="prio-box">Stats à pousser en <b>{esc(name)}</b>, dans l\'ordre :'
-            f'<div class="chips">{"".join(chips)}</div></div>'
+    if specs and spec in views:
+        options = "".join(
+            f'<option value="{x}"{" selected" if x == spec else ""}>{esc(gear.PRIORITIES[x][0])}</option>' for x in specs
         )
-    elif c.talents is not None:
-        prio = '<div class="prio-box">Pas encore assez de talents pour deviner la spé.</div>'
+        hint = " <span class=\"muted\">(d'après son rôle, talents inconnus)</span>" if guessed else ""
+        prio = (
+            f'<div class="prio-box">Stats à pousser en <select id="spec" aria-label="Spé">{options}</select>{hint}, '
+            "dans l'ordre :" + "".join(_prio_box(x, views[x], x == spec) for x in specs) + "</div>"
+        )
 
     groups = []
     for title, rows in STAT_GROUPS:
         cells = []
         for key, label, pct in rows:
             value = stats.get(key)
-            if value is None or (not value and key not in ALWAYS_SHOWN and key not in ranks):
+            if value is None or (not value and key not in ALWAYS_SHOWN and key not in any_ranked):
                 continue
             label = label or stats.get("power_name") or "Énergie"
-            rank = ranks.get(key)
-            css = f" p{rank}" if rank and rank <= 3 and not (key == hit_key and capped) else ""
-            css += " capped" if key == hit_key and capped else ""
-            badge = f"<i>{rank}</i>" if rank else "<i></i>"
-            shown = _num(value, pct) + (f" / {cap:.0f} %" if key == hit_key and cap else "")
-            cells.append(f'<div class="srow{css}">{badge}<span>{esc(label)}</span><b>{esc(shown)}</b></div>')
+            rank = view["ranks"].get(key)
+            capped = key == view["capped"]
+            css = f" p{rank}" if rank and rank <= 3 and not capped else ""
+            css += " capped" if capped else ""
+            cap = gear.hit_cap(key.split("_")[0]) if key.endswith("_hit") else None
+            shown = _num(value, pct) + (f" / {cap:.0f} %" if cap else "")
+            cells.append(
+                f'<div class="srow{css}" data-k="{key}"><i>{rank or ""}</i><span>{esc(label)}</span>'
+                f"<b>{esc(shown)}</b></div>"
+            )
         if cells:
             groups.append(f"<h4>{esc(title)}</h4>{''.join(cells)}")
     if not groups and not prio:
         return ""
-    source = (
-        '<p class="src">Priorités : guide WoW Forever de stillsixty.com (nov. 2026). Le toucher compte jusqu\'au cap'
-        " contre un boss, ensuite on passe à la suite.</p>" if prio else ""
+    checked = (
+        f", vérifié le {datetime.fromtimestamp(gear.SOURCE_CHECKED_AT).strftime('%d/%m/%Y')}"
+        if gear.SOURCE_CHECKED_AT else ""
     )
-    return f'<aside class="statbox"><h3>Caractéristiques</h3>{prio}{"".join(groups)}{source}</aside>'
+    source = (
+        f'<p class="src">Priorités : <a href="{statsource.SOURCE_URL}" rel="noopener">guide WoW Forever de '
+        f"stillsixty.com</a>{checked}, relu chaque nuit. Le toucher compte jusqu'au cap contre un boss, ensuite "
+        "on passe à la suite.</p>" if prio else ""
+    )
+    data = f'<script type="application/json" id="spec-data">{json.dumps(views)}</script>' if prio else ""
+    return f'<aside class="statbox"><h3>Caractéristiques</h3>{prio}{"".join(groups)}{source}{data}</aside>'
 
 
-def armory_html(c: Character, spec: str | None, icons: dict[int, str], below: str = "") -> str:
+def armory_html(c: Character, spec: str | None, icons: dict[int, str], below: str = "", guessed: bool = False) -> str:
     """Fiche façon jeu : objets autour du rendu, caractéristiques à côté. Vide sans équipement connu."""
     if not c.equipment:
         return ""
     by_slot = {i["slot"]: i for i in c.equipment}
-    matcher = gear.stat_matcher(spec)
-    column = lambda slots: "".join(slot_html(s, by_slot.get(s), icons, matcher) for s in slots)  # noqa: E731
+    top = list(gear.PRIORITIES[spec][2][:3]) if spec in gear.PRIORITIES else []
+    column = lambda slots: "".join(slot_html(s, by_slot.get(s), icons, top) for s in slots)  # noqa: E731
     render = ""
     if c.render_url and c.render_url.startswith("https://"):
         render = (
@@ -692,7 +744,7 @@ def armory_html(c: Character, spec: str | None, icons: dict[int, str], below: st
     return (
         f'<div class="armory"><div class="main"><section class="doll"><div class="slots left">{column(gear.LEFT_SLOTS)}</div>'
         f'<div class="center">{render}</div><div class="slots right">{column(gear.RIGHT_SLOTS)}</div>'
-        f'<div class="weapons">{column(gear.WEAPON_SLOTS)}</div></section>{below}</div>{stats_html(c, spec)}</div>'
+        f'<div class="weapons">{column(gear.WEAPON_SLOTS)}</div></section>{below}</div>{stats_html(c, spec, guessed)}</div>'
     )
 
 
@@ -777,7 +829,7 @@ class WebSite:
                 f'<td><a class="who-cell" href="/perso/{c.id}">{avatar_html(c)}<b>{esc(c.name)}</b></a></td>'
                 f'<td class="num">{c.level or ""}</td>'
                 f"<td>{class_span(c)}</td><td>{esc(race_label(c.race))}</td>"
-                f"<td>{roles_html(c)}</td><td>{professions_html(c)}</td></tr>"
+                f"<td>{roles_html(c)}</td>{professions_cells(c)}</tr>"
             )
         options = lambda items: "".join(f'<option value="{esc(k)}">{esc(v)}</option>' for k, v in items)  # noqa: E731
         body = f"""
@@ -790,8 +842,11 @@ class WebSite:
   <select data-filter="metier"><option value="">Tous les métiers</option>{options((k, v[0]) for k, v in PROFESSIONS.items())}</select>
 </div>
 <div class="table-wrap"><table>
-<thead><tr><th>Perso</th><th class="num">Niv.</th><th>Classe</th><th>Race</th><th>Rôles</th><th>Métiers</th></tr></thead>
-<tbody>{"".join(rows) or '<tr><td colspan="6" class="empty">Aucun perso déclaré.</td></tr>'}</tbody>
+<thead><tr><th>Perso</th><th class="num">Niv.</th><th>Classe</th><th>Race</th><th>Rôles</th>
+<th colspan="2">Métiers principaux</th>{"".join(
+    f'<th class="sec{" split" if i == 0 else ""}">{esc(profession_label(p))}</th>' for i, p in enumerate(SECONDARY_PROFESSIONS)
+)}</tr></thead>
+<tbody>{"".join(rows) or f'<tr><td colspan="{7 + len(SECONDARY_PROFESSIONS)}" class="empty">Aucun perso déclaré.</td></tr>'}</tbody>
 </table></div>"""
         return page("Persos", "persos", body, FILTER_SCRIPT)
 
@@ -845,9 +900,11 @@ class WebSite:
             )
         professions_block = professions_table(character)
         spec_key = gear.detect_spec(character.talents, character.preferred_role, character.equipment)
+        guessed = spec_key is None
+        spec_key = spec_key or gear.default_spec(character.wow_class, character.preferred_role)
         icons = self.db.item_icons({i.get("id") for i in character.equipment or []})
         # Les arbres de talents vont sous l'équipement, dans la même colonne (à côté des caractéristiques).
-        armory = armory_html(character, spec_key, icons, talents_block)
+        armory = armory_html(character, spec_key, icons, talents_block, guessed)
         if armory:
             talents_block = ""
         title = f"""<h1 class="title" style="color:{CLASS_COLORS.get(character.wow_class, "inherit")}">{esc(character.name)}</h1>
@@ -863,7 +920,7 @@ class WebSite:
 <h2>Métiers</h2>
 {professions_block}
 {recipes_html}"""
-        return page(character.name, "persos", body, FILTER_SCRIPT + TABS_SCRIPT)
+        return page(character.name, "persos", body, FILTER_SCRIPT + TABS_SCRIPT + SPEC_SCRIPT)
 
     async def professions(self, request: web.Request) -> web.Response:
         gid = self._scope()
