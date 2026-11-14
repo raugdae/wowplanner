@@ -108,6 +108,15 @@ CREATE TABLE IF NOT EXISTS orders (
     crafter_dm_message_id INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_orders_requester ON orders (requester_id);
+
+-- Arbres de talents de Forever (données de jeu, pas de perso), redemandés de temps en temps.
+CREATE TABLE IF NOT EXISTS talent_trees (
+    spec_id    INTEGER PRIMARY KEY,
+    class      TEXT,
+    position   INTEGER NOT NULL,
+    data       TEXT    NOT NULL,
+    fetched_at INTEGER NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_orders_crafter ON orders (crafter_user_id);
 """
 
@@ -162,6 +171,8 @@ class Character:
     level: int | None = None
     avatar_url: str | None = None
     render_url: str | None = None
+    # Talents choisis, voir ArmorySheet.talents.
+    talents: list | None = None
 
 
 # Version du format des détails de recette ; une recette plus ancienne est redemandée à Blizzard.
@@ -250,7 +261,7 @@ class Database:
         if "armory_synced_at" not in columns:
             self.conn.execute("ALTER TABLE characters ADD COLUMN armory_synced_at INTEGER")
         # v1.5 → v1.6 : niveau et images du perso.
-        for column in ("level INTEGER", "avatar_url TEXT", "render_url TEXT"):
+        for column in ("level INTEGER", "avatar_url TEXT", "render_url TEXT", "talents TEXT"):
             if column.split()[0] not in columns:
                 self.conn.execute(f"ALTER TABLE characters ADD COLUMN {column}")
         # v1.4 → v1.5 : liens entre recettes (composant fabriqué par une autre recette).
@@ -409,6 +420,7 @@ class Database:
                 r["id"], r["user_id"], r["name"], r["wow_class"], r["race"], r["preferred_role"],
                 armory_synced_at=r["armory_synced_at"],
                 level=r["level"], avatar_url=r["avatar_url"], render_url=r["render_url"],
+                talents=json.loads(r["talents"]) if r["talents"] else None,
             )
             for r in rows
         ]
@@ -548,15 +560,44 @@ class Database:
             )
 
     def set_armory_look(
-        self, character_id: int, level: int | None, avatar_url: str | None, render_url: str | None
+        self, character_id: int, level: int | None, avatar_url: str | None, render_url: str | None,
+        talents: list | None = None,
     ) -> None:
-        """Niveau et images lus dans l'armurerie (on garde les anciennes images si l'armurerie n'en donne pas)."""
+        """Niveau, images et talents lus dans l'armurerie (on garde l'ancien si l'armurerie n'en donne pas)."""
         with self.conn:
             self.conn.execute(
                 """UPDATE characters SET level = COALESCE(?, level), avatar_url = COALESCE(?, avatar_url),
-                                         render_url = COALESCE(?, render_url) WHERE id = ?""",
-                (level, avatar_url, render_url, character_id),
+                                         render_url = COALESCE(?, render_url), talents = COALESCE(?, talents)
+                   WHERE id = ?""",
+                (
+                    level, avatar_url, render_url,
+                    json.dumps(talents, ensure_ascii=False) if talents is not None else None, character_id,
+                ),
             )
+
+    # ------------------------------------------------------------ talent trees
+
+    def replace_talent_trees(self, trees: list[dict]) -> None:
+        """Remplace tous les arbres (dans l'ordre du jeu), voir armory.parse_talent_tree."""
+        now = int(time.time())
+        with self.conn:
+            self.conn.execute("DELETE FROM talent_trees")
+            self.conn.executemany(
+                "INSERT OR REPLACE INTO talent_trees (spec_id, class, position, data, fetched_at) VALUES (?, ?, ?, ?, ?)",
+                [(t["spec_id"], t["class"], i, json.dumps(t, ensure_ascii=False), now) for i, t in enumerate(trees)],
+            )
+
+    def talent_trees(self, wow_class: str | None = None) -> list[dict]:
+        rows = self.conn.execute(
+            "SELECT data FROM talent_trees" + (" WHERE class = ?" if wow_class else "") + " ORDER BY position",
+            (wow_class,) if wow_class else (),
+        ).fetchall()
+        return [json.loads(r["data"]) for r in rows]
+
+    def talent_trees_age(self) -> float | None:
+        """Secondes depuis la dernière récupération des arbres, None s'il n'y en a pas."""
+        row = self.conn.execute("SELECT MIN(fetched_at) AS t FROM talent_trees").fetchone()
+        return time.time() - row["t"] if row and row["t"] else None
 
     def all_characters(self) -> list[Character]:
         return self._load_characters(self.conn.execute("SELECT * FROM characters ORDER BY id").fetchall())

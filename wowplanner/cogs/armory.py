@@ -19,7 +19,10 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 
-from ..armory import CACHE_SECONDS, ArmoryClient, ArmoryError, ArmorySheet, parse_item, parse_recipe
+from ..armory import (
+    CACHE_SECONDS, ArmoryClient, ArmoryError, ArmorySheet, parse_item, parse_recipe, parse_talent_index,
+    parse_talent_tree,
+)
 from ..db import Character
 from ..gamedata import class_label, profession_label, race_label
 from ..recipes import Field, build_pages, crafted_by_map, filter_recipes
@@ -36,6 +39,9 @@ RECIPE_FETCH_CONCURRENCY = 5
 # /modifier armurerie : une demande par minute et par joueur ; petite pause entre deux persos.
 REFRESH_COOLDOWN_SECONDS = 60
 REFRESH_PAUSE_SECONDS = 0.3
+# Arbres de talents (données de jeu) : redemandés chaque semaine, au cas où un patch les change.
+TALENT_TREES_MAX_AGE = 7 * 24 * 3600
+TALENT_FETCH_PAUSE = 0.1
 # Caractères max par message de recettes (limite Discord : 6000 pour toutes les fiches du message).
 RECIPE_MESSAGE_CHARS = 5200
 
@@ -276,6 +282,7 @@ class ArmoryCog(commands.Cog):
         self.db = bot.db
         self.client: ArmoryClient | None = None
         self._last_refresh: dict[int, float] = {}
+        self._talents_lock = asyncio.Lock()
 
     @property
     def available(self) -> bool:
@@ -299,7 +306,7 @@ class ArmoryCog(commands.Cog):
     def apply(self, character: Character, sheet: ArmorySheet) -> SyncResult:
         """Enregistre ce que l'armurerie nous apprend sur un perso déclaré."""
         result = SyncResult(found=True, sheet=sheet)
-        self.db.set_armory_look(character.id, sheet.level, sheet.avatar_url, sheet.render_url)
+        self.db.set_armory_look(character.id, sheet.level, sheet.avatar_url, sheet.render_url, sheet.talents)
         skills = sheet.profession_skills()
         if skills is not None:
             self.db.replace_professions(character.id, {k: skill for k, (skill, _) in skills.items()})
@@ -394,6 +401,7 @@ class ArmoryCog(commands.Cog):
 
     @tasks.loop(hours=24)
     async def daily_sync(self) -> None:
+        await self.fetch_talent_trees()
         characters = self.db.all_characters()
         found = 0
         for character in characters:
@@ -439,6 +447,48 @@ class ArmoryCog(commands.Cog):
 
         await asyncio.gather(*(one(rid) for rid in recipe_ids))
         return done
+
+    async def fetch_talent_trees(self, force: bool = False) -> int:
+        """Arbres de talents et leurs icônes, pour le site. Ne refait rien s'ils ont moins d'une semaine."""
+        if self.client is None:
+            return 0
+        age = self.db.talent_trees_age()
+        if not force and age is not None and age < TALENT_TREES_MAX_AGE:
+            return 0
+        async with self._talents_lock:
+            client = self.client
+            semaphore = asyncio.Semaphore(RECIPE_FETCH_CONCURRENCY)
+
+            async def guarded(coro):
+                async with semaphore:
+                    try:
+                        result = await coro
+                        await asyncio.sleep(TALENT_FETCH_PAUSE)  # quelques centaines d'icônes : sans se presser
+                        return result
+                    except (ArmoryError, aiohttp.ClientError, asyncio.TimeoutError) as exc:
+                        log.info("Talents : %s", exc)
+                        return None
+
+            index = await guarded(client.talent_tree_index())
+            if not index:
+                return 0
+            pairs = parse_talent_index(index)
+            raw = await asyncio.gather(*(guarded(client.talent_tree(t, s)) for t, s in pairs))
+            trees = [parse_talent_tree(d) for d in raw if d]
+            spells = {n["spell"] for t in trees for n in t["nodes"] if n["spell"]}
+            spell_ids = sorted(spells)
+            icons = dict(zip(spell_ids, await asyncio.gather(*(guarded(client.icon("spell", s)) for s in spell_ids))))
+            spec_icons = await asyncio.gather(
+                *(guarded(client.icon("playable-specialization", t["spec_id"])) for t in trees)
+            )
+            for tree, spec_icon in zip(trees, spec_icons):
+                tree["icon"] = spec_icon
+                for node in tree["nodes"]:
+                    node["icon"] = icons.get(node["spell"])
+            if trees:
+                self.db.replace_talent_trees(trees)
+                log.info("Talents : %d arbre(s), %d icône(s)", len(trees), sum(1 for v in icons.values() if v))
+            return len(trees)
 
     @daily_sync.before_loop
     async def _before_daily_sync(self) -> None:

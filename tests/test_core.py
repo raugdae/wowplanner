@@ -973,3 +973,70 @@ def test_character_look_on_site(tmp_path):
     assert f'src="{avatar}"' in pages["/"] and 'class="avatar none"' in pages["/"]
     assert f'src="{render}"' in pages[f"/perso/{c.id}"] and "Niveau 43" in pages[f"/perso/{c.id}"]
     assert 'class="render"' not in pages[f"/perso/{plain.id}"]
+
+
+def test_talents_parsing_and_site(tmp_path):
+    """Arbres de talents (données de jeu) + talents du perso : grille, rangs, infobulles, positions aberrantes."""
+    import asyncio
+
+    import aiohttp
+
+    from wowplanner.armory import ArmorySheet, parse_talent_index, parse_talent_tree
+    from wowplanner.db import Database
+    from wowplanner.web import WebSite
+
+    href = "https://eu.api.blizzard.com/data/wow/talent-tree/1114/playable-specialization/78?namespace=x"
+    assert parse_talent_index({"spec_talent_trees": [{"key": {"href": href}}, {"key": {}}]}) == [(1114, 78)]
+
+    def node(nid, talent, name, row, col, ranks):
+        return {"id": nid, "display_row": row, "display_col": col, "ranks": [
+            {"rank": i + 1, "tooltip": {"talent": {"id": talent, "name": name},
+                                        "spell_tooltip": {"spell": {"id": talent + 1}, "description": d,
+                                                          "cast_time": "Passive"}}}
+            for i, d in enumerate(ranks)]}
+
+    tree = parse_talent_tree({
+        "id": 1114, "name": "Magie de l'ombre", "playable_class": {"id": 5}, "playable_specialization": {"id": 78},
+        "spec_talent_nodes": [
+            node(1, 100, "Connexion spirituelle", 1, 14, ["Rang un", "Rang deux"]),
+            node(2, 200, "Fouet mental", 3, 17, ["Fouette"]),
+            node(3, 300, "Doublon perdu", 63, 170, ["?"]),
+        ],
+    })
+    assert tree["class"] == "pretre" and [n["max"] for n in tree["nodes"]] == [2, 1, 1]
+
+    sheet = ArmorySheet(profile={}, specializations={"specialization_groups": [{"is_active": True, "specializations": [
+        {"specialization": {"id": 78, "name": "Magie de l'ombre"}, "spent_points": 2, "talents": [
+            {"talent": {"id": 100, "name": "Connexion spirituelle"}, "talent_rank": 1,
+             "spell_tooltip": {"description": "Rang un"}},
+            {"talent": {"id": 300, "name": "Doublon perdu"}, "talent_rank": 1},
+        ]}]}]})
+    assert sheet.talents[0]["specs"][0]["talents"][0] == [100, "Connexion spirituelle", 1, "Rang un"]
+    assert ArmorySheet(profile={}).talents is None
+
+    db = Database(tmp_path / "t.db")
+    db.replace_talent_trees([tree])
+    c = db.add_character(1, "Hollie Tétine", "pretre", "humain")
+    db.touch_member(42, 1)
+    db.set_armory_look(c.id, 23, None, None, sheet.talents)
+    db.set_armory_look(c.id, 23, None, None, None)  # talents illisibles : on garde les anciens
+    assert db.get_character(c.id).talents == sheet.talents
+    site = WebSite(db, lambda: 42)
+    pages = {}
+
+    async def scenario():
+        await site.start("127.0.0.1", 0)
+        port = next(iter(site._runner.sites))._server.sockets[0].getsockname()[1]
+        async with aiohttp.ClientSession() as session:
+            async with session.get(f"http://127.0.0.1:{port}/perso/{c.id}") as resp:
+                pages["perso"] = await resp.text()
+        await site.stop()
+
+    asyncio.run(scenario())
+    db.close()
+    html = pages["perso"]
+    assert "2 · Magie de l&#x27;ombre" in html
+    assert 'class="tal on"' in html and "grid-row:1;grid-column:1" in html  # colonne 14 → 1re colonne
+    assert 'class="tal off r"' in html and "grid-column:4" in html
+    assert "Rang suivant :<span>Rang deux</span>" in html
+    assert "Aussi : Doublon perdu 1/1" in html  # hors grille mais avec des points

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import re
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -28,6 +29,8 @@ from .gamedata import BLIZZARD_CLASS_IDS, BLIZZARD_PROFESSION_IDS, BLIZZARD_RACE
 TOKEN_URL = "https://oauth.battle.net/token"
 # Les données d'un perso changent à sa déconnexion : inutile de les redemander à chaque commande.
 CACHE_SECONDS = 600
+# Réponses 429 (plus de 100 requêtes/s) : on réessaie après une petite pause.
+RATE_LIMIT_RETRIES = 3
 LOCALES = {"eu": "fr_FR", "us": "en_US", "kr": "ko_KR", "tw": "zh_TW"}
 
 # Sous-ressources d'un perso testées par la communauté (« » = la fiche elle-même).
@@ -99,16 +102,22 @@ class ArmoryClient:
         token = await self.get_token()
         url = f"{self.base_url}{path}"
         params = {"namespace": f"{namespace}-{self.region}", "locale": self.locale}
-        async with self.session.get(
-            url,
-            params=params,
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=aiohttp.ClientTimeout(total=self.timeout),
-        ) as resp:
-            if resp.status != 200:
-                detail = (await resp.text())[:200]
-                raise ArmoryError(resp.status, f"{url}?namespace={params['namespace']}", detail)
-            return await resp.json()
+        for attempt in range(RATE_LIMIT_RETRIES + 1):
+            async with self.session.get(
+                url,
+                params=params,
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=aiohttp.ClientTimeout(total=self.timeout),
+            ) as resp:
+                if resp.status == 429 and attempt < RATE_LIMIT_RETRIES:
+                    pass  # trop de requêtes : on souffle un peu et on réessaie
+                elif resp.status != 200:
+                    detail = (await resp.text())[:200]
+                    raise ArmoryError(resp.status, f"{url}?namespace={params['namespace']}", detail)
+                else:
+                    return await resp.json()
+            await asyncio.sleep(1 + attempt)
+        raise AssertionError("unreachable")
 
     async def character(self, name: str, endpoint: str = "") -> dict[str, Any]:
         """Fiche d'un perso (endpoint vide) ou une sous-ressource : « /statistics », « /professions »…"""
@@ -122,6 +131,18 @@ class ArmoryClient:
     async def item(self, item_id: int) -> dict[str, Any]:
         """Objet (stats, effets…) depuis les données statiques de Forever."""
         return await self.get(f"/data/wow/item/{item_id}", "static-forever")
+
+    async def talent_tree_index(self) -> dict[str, Any]:
+        return await self.get("/data/wow/talent-tree/index", "static-forever")
+
+    async def talent_tree(self, tree_id: int, spec_id: int) -> dict[str, Any]:
+        """Arbre d'une spé : talents, positions dans la grille, rangs et descriptions."""
+        return await self.get(f"/data/wow/talent-tree/{tree_id}/playable-specialization/{spec_id}", "static-forever")
+
+    async def icon(self, kind: str, media_id: int) -> str | None:
+        """Icône d'un sort (« spell ») ou d'une spé (« playable-specialization »), hébergée par Blizzard."""
+        data = await self.get(f"/data/wow/media/{kind}/{media_id}", "static-forever")
+        return next((a.get("value") for a in data.get("assets", []) if a.get("key") == "icon"), None)
 
     # ------------------------------------------------------------ fiche complète
 
@@ -199,6 +220,35 @@ class ArmorySheet:
         return None
 
     @property
+    def talents(self) -> list[dict[str, Any]] | None:
+        """Talents choisis, par groupe (double spé) : [{"active", "specs": [{"spec_id", "name", "points",
+        "talents": [[id talent, nom, rang, description], …]}]}]. None si la ressource n'a pas pu être lue."""
+        if self.specializations is None:
+            return None
+        groups = []
+        for group in self.specializations.get("specialization_groups") or []:
+            specs = []
+            for s in group.get("specializations") or []:
+                spec = s.get("specialization") or {}
+                talents = [
+                    [
+                        (t.get("talent") or {}).get("id"),
+                        (t.get("talent") or {}).get("name") or (t.get("spell_tooltip") or {}).get("spell", {}).get("name"),
+                        t.get("talent_rank") or 0,
+                        (t.get("spell_tooltip") or {}).get("description"),
+                    ]
+                    for t in s.get("talents") or []
+                ]
+                specs.append({
+                    "spec_id": spec.get("id"),
+                    "name": spec.get("name") or s.get("specialization_name"),
+                    "points": s.get("spent_points") or 0,
+                    "talents": [t for t in talents if t[0]],
+                })
+            groups.append({"active": bool(group.get("is_active")), "specs": specs})
+        return groups
+
+    @property
     def avatar_url(self) -> str | None:
         return self.asset("avatar")
 
@@ -268,6 +318,51 @@ def parse_recipe(data: dict[str, Any]) -> RecipeDetails:
     return RecipeDetails(
         data.get("name") or "?", reagents, crafted.get("id"), float(quantity), data.get("description") or None
     )
+
+
+def parse_talent_index(data: dict[str, Any]) -> list[tuple[int, int]]:
+    """(id d'arbre, id de spé) de chaque arbre, dans l'ordre du jeu, depuis /data/wow/talent-tree/index."""
+    result = []
+    for t in data.get("spec_talent_trees") or []:
+        m = re.search(r"/talent-tree/(\d+)/playable-specialization/(\d+)", (t.get("key") or {}).get("href", ""))
+        if m:
+            result.append((int(m.group(1)), int(m.group(2))))
+    return result
+
+
+def parse_talent_tree(data: dict[str, Any]) -> dict[str, Any]:
+    """Arbre d'une spé, réduit à ce qu'affiche le site. Gardé tel quel en base (JSON)."""
+    nodes = []
+    for n in data.get("spec_talent_nodes") or []:
+        ranks = n.get("ranks") or []
+        if not ranks:
+            continue
+        first = ranks[0].get("tooltip") or {}
+        spell = first.get("spell_tooltip") or {}
+        nodes.append({
+            "id": n.get("id"),
+            "talent": (first.get("talent") or {}).get("id"),
+            "spell": (spell.get("spell") or {}).get("id"),
+            "name": (first.get("talent") or {}).get("name") or (spell.get("spell") or {}).get("name") or "?",
+            "row": n.get("display_row") or 1,
+            "col": n.get("display_col") or 0,
+            "max": len(ranks),
+            "ranks": [((r.get("tooltip") or {}).get("spell_tooltip") or {}).get("description") or "" for r in ranks],
+            "cast": spell.get("cast_time"),
+            "cost": spell.get("power_cost"),
+            "range": spell.get("range"),
+            "cooldown": spell.get("cooldown"),
+            "requires": [x for x in n.get("locked_by") or [] if isinstance(x, int)],
+            "icon": None,
+        })
+    return {
+        "tree_id": data.get("id"),
+        "spec_id": (data.get("playable_specialization") or {}).get("id"),
+        "name": data.get("name") or (data.get("playable_specialization") or {}).get("name") or "?",
+        "class": BLIZZARD_CLASS_IDS.get((data.get("playable_class") or {}).get("id")),
+        "icon": None,
+        "nodes": nodes,
+    }
 
 
 def parse_item(data: dict[str, Any]) -> dict[str, Any]:

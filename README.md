@@ -279,6 +279,8 @@ Un petit site public, en lecture seule, pour parcourir les persos et les métier
   rôle ou métier ;
 - **fiche d'un perso** : son rendu en pied et son niveau (armurerie), ses métiers et ses recettes (composants dépliés) ;
   le portrait apparaît aussi dans les listes. Images hébergées par Blizzard, mises à jour à chaque synchro ;
+  ses **talents** comme dans le jeu (les trois arbres, icônes, rangs, infobulle au survol ou au toucher, double
+  spé). Les arbres sont récupérés une fois par semaine auprès de Blizzard, les talents du perso à chaque synchro ;
 - **Métiers** : qui a chaque métier et à quel niveau, et toutes les recettes connues sur le serveur, avec recherche
   (nom de recette, composant ou effet, ex. *agilité*) et liens vers les persos qui savent les faire. Chaque recette
   montre ce que fait l'objet, comme l'infobulle du jeu : emplacement, armure, dégâts, stats, effets « Utiliser » /

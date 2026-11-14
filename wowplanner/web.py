@@ -167,6 +167,39 @@ details.fold.big > .fold-body { padding:6px 0 0; }
   filter:drop-shadow(0 8px 18px rgba(0,0,0,.6)); }
 @media (max-width:700px) { .hero { flex-direction:column-reverse; align-items:stretch; }
   .hero .render { width:min(300px, 100%); margin:0 auto; } }
+/* Arbres de talents façon jeu : grille 4 colonnes, infobulle au survol (ou au toucher sur mobile). */
+.talent-group h3 { margin:14px 0 8px; font-size:15px; color:var(--muted); font-weight:600; }
+.trees { display:flex; flex-wrap:wrap; gap:16px; align-items:flex-start; }
+.tree { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:10px 12px 14px; }
+.tree-head { display:flex; align-items:center; gap:8px; margin-bottom:10px; font-weight:700; }
+.tree-head b { margin-left:auto; padding-left:12px; color:var(--accent); font-size:18px; }
+.tree.zero .tree-head b { color:var(--muted); }
+.ticon { width:26px; height:26px; border-radius:5px; border:1px solid var(--line); }
+.tgrid { --ts:44px; display:grid; grid-template-columns:repeat(4, var(--ts)); grid-auto-rows:var(--ts); gap:10px; }
+.tal { position:relative; width:var(--ts); height:var(--ts); border-radius:7px; border:2px solid #4a4a4a;
+       background:var(--panel2); cursor:help; }
+.tal img { display:block; width:100%; height:100%; border-radius:5px; }
+.tal.off img { filter:grayscale(1) brightness(.5); }
+.tal.on { border-color:#3ee05a; box-shadow:0 0 6px rgba(62,224,90,.35); }
+.tal.max { border-color:#f2c75c; box-shadow:0 0 6px rgba(242,199,92,.4); }
+.tal .rk { position:absolute; right:-7px; bottom:-7px; background:#111; color:#3ee05a; font-size:11px;
+           font-weight:700; line-height:16px; padding:0 4px; border-radius:6px; border:1px solid #444; }
+.tal.max .rk { color:#f2c75c; }
+.tal.off .rk { color:#8a8a8a; }
+.tal .tt { display:none; position:absolute; top:calc(100% + 9px); left:-4px; width:260px; z-index:20;
+           background:rgba(10,13,22,.97); color:#eee; border:1px solid #6a5a32; border-radius:8px; padding:8px 10px;
+           font-size:13px; line-height:1.4; box-shadow:0 6px 22px rgba(0,0,0,.65); cursor:auto; text-align:left; }
+.tal.r .tt { left:auto; right:-4px; }
+.tal:hover .tt, .tal:focus .tt { display:block; }
+.tal:focus { outline:2px solid var(--accent); outline-offset:2px; }
+.tt b { color:#fff; font-size:14px; }
+.tt .lvl { color:#9a9a9a; font-size:12px; }
+.tt .meta { color:#c8c8c8; }
+.tt .desc { color:#f2c75c; margin-top:2px; }
+.tt .next { margin-top:6px; color:#9a9a9a; }
+.tt .next span { display:block; color:#f2c75c; }
+.tree .extra { margin-top:10px; font-size:13px; color:var(--muted); max-width:206px; }
+@media (max-width:420px) { .tgrid { --ts:38px; gap:8px; } .tal .tt { width:220px; } }
 footer { color:var(--muted); font-size:12px; text-align:center; padding:24px; }
 @media (max-width:600px) { header .theme { margin-left:0; width:100%; } header select { width:100%; } }
 """
@@ -198,7 +231,7 @@ FILTER_SCRIPT = """
   const selects = [...document.querySelectorAll("select[data-filter]")];
   const items = [...document.querySelectorAll("[data-search]")];
   const sections = [...document.querySelectorAll("[data-section]")];
-  const folds = [...document.querySelectorAll("details.fold")];
+  const folds = [...document.querySelectorAll("details.fold:not([data-keep])")];
   folds.forEach(d => d.dataset.default = d.open ? "1" : "");
   const count = document.getElementById("count");
   const preset = new URLSearchParams(location.search).get("q");
@@ -270,6 +303,119 @@ def avatar_html(c: Character) -> str:
     if c.avatar_url and c.avatar_url.startswith("https://"):
         return f'<img class="avatar" src="{esc(c.avatar_url)}" alt="" loading="lazy" referrerpolicy="no-referrer">'
     return '<span class="avatar none">👤</span>'
+
+
+TALENT_COLUMNS = 4
+TALENT_MAX_ROWS = 11  # au-delà : position farfelue renvoyée par l'API (doublons), hors grille
+
+
+def _talent_ranks(group: dict) -> dict[int, tuple[int, str | None]]:
+    return {t[0]: (t[2], t[3]) for spec in group.get("specs", []) for t in spec.get("talents", [])}
+
+
+def talent_points(group: dict, trees: list[dict]) -> list[int]:
+    """Points par arbre, dans l'ordre du jeu (ex. [0, 0, 14])."""
+    ranks = _talent_ranks(group)
+    by_spec = {s.get("spec_id"): s.get("points") or 0 for s in group.get("specs", [])}
+    result = []
+    for tree in trees:
+        if tree["spec_id"] in by_spec:
+            result.append(by_spec[tree["spec_id"]])
+        else:
+            result.append(sum(ranks.get(n["talent"], (0, None))[0] for n in tree["nodes"]))
+    return result
+
+
+def _talent_tooltip(node: dict, rank: int, current: str | None) -> str:
+    meta = " · ".join(esc(node[k]) for k in ("cast", "cost", "range", "cooldown") if node.get(k))
+    ranks = node.get("ranks") or []
+    desc = current or (ranks[max(rank, 1) - 1] if ranks else "")
+    nxt = ""
+    if 0 < rank < node["max"] and len(ranks) > rank:
+        nxt = f'<div class="next">Rang suivant :<span>{esc(ranks[rank])}</span></div>'
+    return (
+        f'<div class="tt"><b>{esc(node["name"])}</b><div class="lvl">Rang {rank}/{node["max"]}</div>'
+        + (f'<div class="meta">{meta}</div>' if meta else "")
+        + (f'<div class="desc">{esc(desc)}</div>' if desc else "")
+        + nxt + "</div>"
+    )
+
+
+def talent_tree_html(tree: dict, ranks: dict[int, tuple[int, str | None]], points: int) -> str:
+    nodes = [n for n in tree["nodes"] if 1 <= n["row"] <= TALENT_MAX_ROWS]
+    base = min((n["col"] for n in nodes), default=0)
+    in_grid = [n for n in nodes if 0 <= n["col"] - base < TALENT_COLUMNS]
+    grid_talents = {n["talent"] for n in in_grid}
+    cells = []
+    for n in sorted(in_grid, key=lambda n: (n["row"], n["col"])):
+        rank, current = ranks.get(n["talent"], (0, None))
+        col = n["col"] - base
+        state = "off" if not rank else ("max" if rank >= n["max"] else "on")
+        icon = (
+            f'<img src="{esc(n["icon"])}" alt="" loading="lazy" referrerpolicy="no-referrer">'
+            if (n.get("icon") or "").startswith("https://") else ""
+        )
+        cells.append(
+            f'<div class="tal {state}{" r" if col >= 2 else ""}" style="grid-row:{n["row"]};grid-column:{col + 1}" '
+            f'tabindex="0" aria-label="{esc(n["name"])} {rank}/{n["max"]}">{icon}'
+            f'<span class="rk">{rank}/{n["max"]}</span>{_talent_tooltip(n, rank, current)}</div>'
+        )
+    # Talents hors grille (positions aberrantes de l'API) : listés seulement s'ils ont des points.
+    extra = [
+        f'{esc(n["name"])} {ranks[n["talent"]][0]}/{n["max"]}' for n in tree["nodes"]
+        if n not in in_grid and n["talent"] not in grid_talents and ranks.get(n["talent"], (0,))[0]
+    ]
+    icon = (
+        f'<img class="ticon" src="{esc(tree["icon"])}" alt="" referrerpolicy="no-referrer">'
+        if (tree.get("icon") or "").startswith("https://") else ""
+    )
+    return (
+        f'<div class="tree{" zero" if not points else ""}"><div class="tree-head">{icon}<span>{esc(tree["name"])}</span>'
+        f'<b>{points}</b></div><div class="tgrid">{"".join(cells)}</div>'
+        + (f'<div class="extra">Aussi : {", ".join(extra)}</div>' if extra else "")
+        + "</div>"
+    )
+
+
+def talents_html(c: Character, trees: list[dict]) -> tuple[str, str]:
+    """(résumé « 0 / 0 / 14 · Magie de l'ombre », section HTML) ; vides si on ne connaît pas ses talents."""
+    if c.talents is None:
+        return "", ""
+    groups = sorted(c.talents, key=lambda g: not g.get("active"))
+    if not groups or not any(s.get("points") for g in groups for s in g.get("specs", [])):
+        return "", '<h2>Talents</h2><p class="empty">Pas encore de points de talent.</p>'
+
+    def summary(group: dict) -> str:
+        if trees:
+            points = talent_points(group, trees)
+            main = trees[points.index(max(points))]["name"] if any(points) else ""
+            return " / ".join(map(str, points)) + (f" · {main}" if main else "")
+        specs = [s for s in group.get("specs", []) if s.get("points")]
+        return ", ".join(f'{s.get("name")} {s.get("points")}' for s in specs)
+
+    blocks = []
+    for group in groups:
+        title = ""
+        if len(groups) > 1:
+            title = f'<h3>{"Spé active" if group.get("active") else "Autre spé"} · {esc(summary(group))}</h3>'
+        ranks = _talent_ranks(group)
+        if trees:
+            points = talent_points(group, trees)
+            body = "".join(talent_tree_html(t, ranks, p) for t, p in zip(trees, points))
+        else:  # arbres pas encore récupérés : simple liste
+            body = "".join(
+                f'<div class="tree"><div class="tree-head"><span>{esc(s.get("name"))}</span><b>{s.get("points")}</b></div>'
+                + "".join(f'<div>{esc(t[1])} <span class="muted">{t[2]}</span></div>' for t in s.get("talents", []))
+                + "</div>"
+                for s in group.get("specs", []) if s.get("points")
+            )
+        blocks.append(f'<div class="talent-group">{title}<div class="trees">{body}</div></div>')
+    section = (
+        '<details class="fold big" data-keep open><summary><span>Talents</span>'
+        f'<span class="n">{esc(summary(groups[0]))}</span></summary><div class="fold-body">'
+        + "".join(blocks) + "</div></details>"
+    )
+    return summary(groups[0]), section
 
 
 def roles_html(c: Character) -> str:
@@ -430,6 +576,8 @@ class WebSite:
             recipes_html = '<p class="empty">Pas de recettes connues (perso absent de l\'armurerie, ou sans métier).</p>'
 
         level = f"Niveau {character.level} · " if character.level else ""
+        spec, talents_block = talents_html(character, self.db.talent_trees(character.wow_class))
+        spec = f" · {esc(spec)}" if spec else ""
         render = ""
         if character.render_url and character.render_url.startswith("https://"):
             render = (
@@ -444,10 +592,11 @@ class WebSite:
         body = f"""
 <div class="hero"><div class="info">
 <h1 class="title" style="color:{CLASS_COLORS.get(character.wow_class, "inherit")}">{esc(character.name)}</h1>
-<p class="sub">{level}{esc(class_label(character.wow_class))} {esc(race_label(character.race))} · {roles_html(character)}{synced}</p>
+<p class="sub">{level}{esc(class_label(character.wow_class))} {esc(race_label(character.race))}{spec} · {roles_html(character)}{synced}</p>
 <h2>Métiers</h2>
 {professions_block}
 </div>{render}</div>
+{talents_block}
 {recipes_html}"""
         return page(character.name, "persos", body, FILTER_SCRIPT)
 
