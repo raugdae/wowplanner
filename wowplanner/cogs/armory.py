@@ -17,7 +17,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 
-from ..armory import CACHE_SECONDS, ArmoryClient, ArmoryError, ArmorySheet, parse_recipe
+from ..armory import CACHE_SECONDS, ArmoryClient, ArmoryError, ArmorySheet, parse_item, parse_recipe
 from ..db import Character
 from ..gamedata import class_label, profession_label, race_label
 from ..recipes import Field, build_pages, crafted_by_map, filter_recipes
@@ -400,7 +400,8 @@ class ArmoryCog(commands.Cog):
             log.info("Synchro armurerie : composants de %d nouvelle(s) recette(s) récupérés", fetched)
 
     async def fetch_recipe_details(self, recipe_ids: list[int]) -> int:
-        """Récupère nom français et composants des recettes (une seule fois par recette). Renvoie le nombre obtenu."""
+        """Récupère nom français, composants et objet fabriqué (stats, effets) des recettes, une seule fois par
+        recette. Renvoie le nombre obtenu."""
         if self.client is None or not recipe_ids:
             return 0
         client = self.client
@@ -415,8 +416,15 @@ class ArmoryCog(commands.Cog):
                 except (ArmoryError, aiohttp.ClientError, asyncio.TimeoutError) as exc:
                     log.warning("Recette %s : %s", recipe_id, exc)
                     return
+                item_info = None
+                if details.crafted_item_id:
+                    try:
+                        item_info = parse_item(await client.item(details.crafted_item_id))
+                    except (ArmoryError, aiohttp.ClientError, asyncio.TimeoutError) as exc:
+                        log.info("Objet %s (recette %s) : %s", details.crafted_item_id, recipe_id, exc)
             self.db.set_recipe_details(
-                recipe_id, details.name, details.reagents, details.crafted_item_id, details.crafted_quantity
+                recipe_id, details.name, details.reagents, details.crafted_item_id, details.crafted_quantity,
+                details.description, item_info,
             )
             done += 1
 

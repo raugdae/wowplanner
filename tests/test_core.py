@@ -855,3 +855,65 @@ def test_orders_discord_rendering():
     assert not EphemeralCleaner._creates_new_response(inter(discord.InteractionType.component, "wowplanner:order:new"))
     assert EphemeralCleaner._creates_new_response(inter(discord.InteractionType.component, "wowplanner:order:mine"))
     assert EphemeralCleaner._creates_new_response(inter(discord.InteractionType.modal_submit))
+
+
+def test_item_tooltip_parse_and_site(tmp_path):
+    """Infobulle de l'objet fabriqué (stats, effets) lue dans l'API et affichée sur le site."""
+    import asyncio
+
+    import aiohttp
+
+    from wowplanner.armory import parse_item, parse_recipe
+    from wowplanner.db import Database
+    from wowplanner.web import WebSite
+
+    item = parse_item({"preview_item": {
+        "quality": {"type": "RARE"},
+        "item_subclass": {"name": "Mailles"},
+        "inventory_type": {"type": "CHEST", "name": "Torse"},
+        "binding": {"name": "Lié quand équipé"},
+        "armor": {"display": {"display_string": "Armure : 214"}},
+        "stats": [{"display": {"display_string": "+14 Force"}}, {"display": {"display_string": "+6 Endurance"}}],
+        "spells": [{"description": "Équipé : Augmente un truc <b>."}],
+        "requirements": {"level": {"display_string": "Niveau 24 requis"}},
+    }})
+    assert item["quality"] == "RARE"
+    assert item["lines"][0] == ["type", "Torse · Mailles"]
+    assert ["stat", "+14 Force"] in item["lines"] and ["req", "Niveau 24 requis"] in item["lines"]
+    elixir = parse_item({"preview_item": {"inventory_type": {"type": "NON_EQUIP", "name": "Hors équipement"},
+                                          "item_subclass": {"name": "Élixirs"}}})
+    assert elixir["lines"] == []
+    enchant = parse_recipe({"name": "Enchantement de brassards", "description": "Endurance +2", "reagents": []})
+    assert enchant.description == "Endurance +2" and enchant.crafted_item_id is None
+
+    db = Database(tmp_path / "t.db")
+    c = db.add_character(1, "Forge Ron", "guerrier", "nain")
+    db.touch_member(42, 1)
+    db.replace_professions(c.id, {"forge": 150, "enchantement": 50})
+    db.replace_character_recipes(c.id, {"forge": [(1, "Breastplate")], "enchantement": [(2, "Bracer")]})
+    db.set_recipe_details(1, "Cuirasse en argent lumineux", [(10, "Barre d'argent", 5)], 2870, 1.0, None, item)
+    db.set_recipe_details(2, "Enchantement de brassards", [(1, "Granule", 6)], None, 1.0, "Endurance +2")
+    assert db.recipes_missing_details() == []
+    recipes = {r.id: r for r in db.guild_recipes(42)}
+    assert recipes[1].item["quality"] == "RARE" and recipes[2].description == "Endurance +2"
+
+    site = WebSite(db, lambda: 42)
+    pages = {}
+
+    async def scenario():
+        await site.start("127.0.0.1", 0)
+        port = next(iter(site._runner.sites))._server.sockets[0].getsockname()[1]
+        async with aiohttp.ClientSession() as session:
+            for path in ("/metier/forge", "/metier/enchantement", f"/perso/{c.id}"):
+                async with session.get(f"http://127.0.0.1:{port}{path}") as resp:
+                    pages[path] = await resp.text()
+        await site.stop()
+
+    asyncio.run(scenario())
+    db.close()
+    forge = pages["/metier/forge"]
+    assert '<div class="stat">+14 Force</div>' in forge and "Armure : 214" in forge
+    assert 'style="color:#4a9dff">Cuirasse' in forge  # couleur de qualité rare
+    assert "&lt;b&gt;" in forge  # échappé
+    assert '<div class="effect">Endurance +2</div>' in pages["/metier/enchantement"]
+    assert "+14 Force" in pages[f"/perso/{c.id}"]

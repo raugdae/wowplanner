@@ -119,6 +119,10 @@ class ArmoryClient:
         """Détail d'une recette (nom localisé, composants). Donnée statique : à mettre en cache."""
         return await self.get(f"/data/wow/recipe/{recipe_id}", "static-forever")
 
+    async def item(self, item_id: int) -> dict[str, Any]:
+        """Objet (stats, effets…) depuis les données statiques de Forever."""
+        return await self.get(f"/data/wow/item/{item_id}", "static-forever")
+
     # ------------------------------------------------------------ fiche complète
 
     async def sheet(self, name: str, max_age: float = CACHE_SECONDS) -> ArmorySheet:
@@ -237,6 +241,7 @@ class RecipeDetails:
     reagents: list[tuple[int, str, int | None]]  # (quantité, composant, id de l'objet)
     crafted_item_id: int | None  # objet fabriqué (None : enchantement, etc.)
     crafted_quantity: float  # objets obtenus par fabrication
+    description: str | None = None  # effet de la recette (enchantements, qui ne créent pas d'objet)
 
 
 def parse_recipe(data: dict[str, Any]) -> RecipeDetails:
@@ -251,4 +256,42 @@ def parse_recipe(data: dict[str, Any]) -> RecipeDetails:
     ]
     crafted = data.get("crafted_item") or data.get("alliance_crafted_item") or data.get("horde_crafted_item") or {}
     quantity = (data.get("crafted_quantity") or {}).get("value") or 1
-    return RecipeDetails(data.get("name") or "?", reagents, crafted.get("id"), float(quantity))
+    return RecipeDetails(
+        data.get("name") or "?", reagents, crafted.get("id"), float(quantity), data.get("description") or None
+    )
+
+
+def parse_item(data: dict[str, Any]) -> dict[str, Any]:
+    """Infobulle d'un objet depuis /data/wow/item/{id} : {"quality": "RARE", "lines": [[genre, texte], …]}.
+
+    Genres : type (emplacement · sous-type), bind, armor, weapon, stat, bag, effect (Utiliser / Équipé),
+    flavor (texte d'ambiance), req (niveau requis). Gardé tel quel en base (JSON)."""
+    p = data.get("preview_item") or data
+    lines: list[list[str]] = []
+
+    def add(kind: str, text: Any) -> None:
+        if isinstance(text, str) and text.strip():
+            lines.append([kind, text.strip()])
+
+    slot = p.get("inventory_type") or {}
+    slot_name = slot.get("name") if slot.get("type") not in (None, "NON_EQUIP") else None
+    if slot_name:  # consommables : le type (« Élixirs », « Autre ») n'apprend rien
+        add("type", " · ".join(x for x in (slot_name, (p.get("item_subclass") or {}).get("name")) if x))
+    add("bind", (p.get("binding") or {}).get("name"))
+    add("armor", ((p.get("armor") or {}).get("display") or {}).get("display_string"))
+    weapon = p.get("weapon") or {}
+    if weapon:
+        parts = [
+            (weapon.get("damage") or {}).get("display_string"),
+            (weapon.get("attack_speed") or {}).get("display_string"),
+            (weapon.get("dps") or {}).get("display_string"),
+        ]
+        add("weapon", " · ".join(x for x in parts if x))
+    for stat in p.get("stats") or []:
+        add("stat", (stat.get("display") or {}).get("display_string"))
+    add("bag", (p.get("container_slots") or {}).get("display_string"))
+    for spell in p.get("spells") or []:
+        add("effect", spell.get("description"))
+    add("flavor", p.get("description"))
+    add("req", ((p.get("requirements") or {}).get("level") or {}).get("display_string"))
+    return {"quality": (p.get("quality") or {}).get("type"), "lines": lines}

@@ -162,7 +162,8 @@ class Character:
 
 # Version du format des détails de recette ; une recette plus ancienne est redemandée à Blizzard.
 # 2 : identifiants des composants et de l'objet fabriqué (pour relier les sous-recettes).
-RECIPE_DETAILS_VERSION = 2
+# 3 : effet de la recette et infobulle de l'objet fabriqué (stats, effets), pour le site.
+RECIPE_DETAILS_VERSION = 3
 
 
 @dataclass
@@ -173,6 +174,8 @@ class GuildRecipe:
     crafters: list[str]  # noms des persos qui la connaissent
     crafted_item_id: int | None = None
     crafted_quantity: float = 1.0
+    description: str | None = None  # effet de la recette (enchantements)
+    item: dict | None = None  # infobulle de l'objet fabriqué, voir armory.parse_item
 
 
 @dataclass
@@ -244,7 +247,10 @@ class Database:
             self.conn.execute("ALTER TABLE characters ADD COLUMN armory_synced_at INTEGER")
         # v1.4 → v1.5 : liens entre recettes (composant fabriqué par une autre recette).
         columns = {row["name"] for row in self.conn.execute("PRAGMA table_info(recipes)")}
-        for column in ("crafted_item_id INTEGER", "crafted_qty REAL", "details_version INTEGER"):
+        for column in (
+            "crafted_item_id INTEGER", "crafted_qty REAL", "details_version INTEGER",
+            "description TEXT", "item_info TEXT",  # v1.5 → v1.6 : ce que fait l'objet
+        ):
             if column.split()[0] not in columns:
                 self.conn.execute(f"ALTER TABLE recipes ADD COLUMN {column}")
         # Les joueurs déjà inscrits à des sorties sont membres du serveur de ces sorties.
@@ -583,13 +589,16 @@ class Database:
         reagents: list[tuple[int, str, int | None]],
         crafted_item_id: int | None = None,
         crafted_quantity: float = 1.0,
+        description: str | None = None,
+        item_info: dict | None = None,
     ) -> None:
         with self.conn:
             self.conn.execute(
-                """UPDATE recipes SET name = ?, reagents = ?, crafted_item_id = ?, crafted_qty = ?,
-                                      details_version = ?, fetched_at = ? WHERE id = ?""",
+                """UPDATE recipes SET name = ?, reagents = ?, crafted_item_id = ?, crafted_qty = ?, description = ?,
+                                      item_info = ?, details_version = ?, fetched_at = ? WHERE id = ?""",
                 (
-                    name, json.dumps(reagents, ensure_ascii=False), crafted_item_id, crafted_quantity,
+                    name, json.dumps(reagents, ensure_ascii=False), crafted_item_id, crafted_quantity, description,
+                    json.dumps(item_info, ensure_ascii=False) if item_info else None,
                     RECIPE_DETAILS_VERSION, int(time.time()), recipe_id,
                 ),
             )
@@ -598,7 +607,7 @@ class Database:
         """Recettes (d'un métier, ou de tous) connues par au moins un perso d'un membre du serveur."""
         rows = self.conn.execute(
             """SELECT r.id, r.name, r.name_en, r.reagents, r.crafted_item_id, r.crafted_qty,
-                      c.name AS character_name
+                      r.description, r.item_info, c.name AS character_name
                FROM recipes r
                JOIN character_recipes cr ON cr.recipe_id = r.id
                JOIN characters c ON c.id = cr.character_id
@@ -618,6 +627,7 @@ class Database:
                 recipe = by_id[r["id"]] = GuildRecipe(
                     r["id"], r["name"] or r["name_en"], reagents, [],
                     r["crafted_item_id"], r["crafted_qty"] or 1.0,
+                    r["description"], json.loads(r["item_info"]) if r["item_info"] else None,
                 )
             if r["character_name"] not in recipe.crafters:
                 recipe.crafters.append(r["character_name"])

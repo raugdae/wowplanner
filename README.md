@@ -278,7 +278,9 @@ Un petit site public, en lecture seule, pour parcourir les persos et les métier
   rôle ou métier ;
 - **fiche d'un perso** : ses métiers et ses recettes (composants dépliés) ;
 - **Métiers** : qui a chaque métier et à quel niveau, et toutes les recettes connues sur le serveur, avec recherche
-  (nom de recette ou composant) et liens vers les persos qui savent les faire.
+  (nom de recette, composant ou effet, ex. *agilité*) et liens vers les persos qui savent les faire. Chaque recette
+  montre ce que fait l'objet, comme l'infobulle du jeu : emplacement, armure, dégâts, stats, effets « Utiliser » /
+  « Équipé », niveau requis, nom coloré selon la qualité (et l'effet pour les enchantements).
 
 **Aucune info personnelle** : ni pseudo Discord, ni identifiant, ni BattleTag, et rien qui relie deux persos au même
 joueur. Le site lit la même base que le bot (dans le même conteneur), donc il est toujours à jour. Il montre les persos

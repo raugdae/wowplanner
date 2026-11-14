@@ -29,6 +29,13 @@ CLASS_COLORS = {
 }
 
 
+# Couleurs de qualité des objets (éclaircies quand le bleu/violet du jeu est illisible sur fond sombre).
+QUALITY_COLORS = {
+    "POOR": "#9d9d9d", "UNCOMMON": "#1eff00", "RARE": "#4a9dff", "EPIC": "#b56bff", "LEGENDARY": "#ff8000",
+    "ARTIFACT": "#e6cc80", "HEIRLOOM": "#00ccff",
+}
+
+
 def esc(value: object) -> str:
     return html.escape(str(value), quote=True)
 
@@ -133,6 +140,11 @@ details.fold.big > .fold-body { padding:6px 0 0; }
 .card li.d3 { padding-left:54px; color:var(--muted); }
 .card li.d1::before, .card li.d2::before, .card li.d3::before { content:"↳ "; }
 .card .who { margin-top:6px; font-size:13px; color:var(--muted); }
+.tip { font-size:13px; line-height:1.4; margin:0 0 8px; padding:0 0 8px; border-bottom:1px dashed var(--line); }
+.tip .type, .tip .bind, .tip .req { color:var(--muted); }
+.tip .effect { color:#3ee05a; }
+.tip .flavor { color:#e6c35c; font-style:italic; }
+.tip .req { font-size:12px; }
 .card .who a { color:var(--text); }
 .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:10px; }
 .tile { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px; display:block;
@@ -263,6 +275,15 @@ def recipe_card(recipe: GuildRecipe, crafted_by: dict, crafter_links: dict[str, 
             f'<li class="d{depth}">{qty}× {esc(name)}</li>'
             for depth, qty, name in expand_reagents(recipe.reagents, crafted_by, seen=frozenset({recipe.id}))
         )
+    lines = []
+    if recipe.description:
+        lines.append(("effect", recipe.description))
+    item = recipe.item or {}
+    lines.extend((kind, text) for kind, text in item.get("lines", []))
+    tip = "".join(f'<div class="{esc(kind)}">{esc(text)}</div>' for kind, text in lines)
+    tip = f'<div class="tip">{tip}</div>' if tip else ""
+    color = QUALITY_COLORS.get(item.get("quality") or "")
+    title_style = f' style="color:{color}"' if color else ""
     who = ""
     if crafter_links is not None:
         links = ", ".join(
@@ -270,10 +291,10 @@ def recipe_card(recipe: GuildRecipe, crafted_by: dict, crafter_links: dict[str, 
             for n in recipe.crafters
         )
         who = f'<div class="who">👥 {links}</div>'
-    search = normalize(" ".join([recipe.name, *(r[1] for r in recipe.reagents or [])]))
+    search = normalize(" ".join([recipe.name, *(r[1] for r in recipe.reagents or []), *(t for _, t in lines)]))
     return (
-        f'<div class="card" data-search="{esc(search)}"><h4>{esc(recipe.name)}</h4>'
-        f"<ul>{reagents}</ul>{who}</div>"
+        f'<div class="card" data-search="{esc(search)}"><h4{title_style}>{esc(recipe.name)}</h4>'
+        f"{tip}<ul>{reagents}</ul>{who}</div>"
     )
 
 
@@ -378,7 +399,7 @@ class WebSite:
         if recipes_html:
             recipes_html = (
                 '<div class="filters"><input id="q" type="search" '
-                f'placeholder="Chercher une recette ou un composant…" autocomplete="off">{FOLD_BUTTONS}</div>'
+                f'placeholder="Chercher une recette, un composant, un effet (ex. agilité)…" autocomplete="off">{FOLD_BUTTONS}</div>'
                 + recipes_html
             )
         else:
@@ -429,7 +450,7 @@ class WebSite:
         crafted_by = crafted_by_map(self.db.guild_recipes(gid))
         links = {c.name: c.id for c in self.db.guild_characters(gid)}
         recipes_html = (
-            '<div class="filters"><input id="q" type="search" placeholder="Chercher une recette ou un composant…" '
+            '<div class="filters"><input id="q" type="search" placeholder="Chercher une recette, un composant, un effet (ex. agilité)…" '
             f'autocomplete="off">{FOLD_BUTTONS}</div><p class="sub"><span id="count">{len(recipes)}</span> recette(s)</p>'
             + recipes_by_family_html(recipes, crafted_by, links)
             if recipes else '<p class="empty">Aucune recette connue (seuls les persos trouvés dans l\'armurerie en ont).</p>'
