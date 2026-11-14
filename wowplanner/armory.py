@@ -198,6 +198,15 @@ class ArmorySheet:
                 return max(specs, key=lambda s: s[1])
         return None
 
+    @property
+    def avatar_url(self) -> str | None:
+        return self.asset("avatar")
+
+    @property
+    def render_url(self) -> str | None:
+        """Rendu du perso en pied, fond transparent."""
+        return self.asset("main-raw") or self.asset("main")
+
     def asset(self, key: str) -> str | None:
         """URL d'une image : « avatar », « main-raw »…"""
         return next((a.get("value") for a in (self.media or {}).get("assets", []) if a.get("key") == key), None)

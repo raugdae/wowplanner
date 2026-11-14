@@ -152,6 +152,21 @@ details.fold.big > .fold-body { padding:6px 0 0; }
 .tile:hover { border-color:var(--accent); text-decoration:none; transform:translateY(-2px); }
 .tile .big { font-size:20px; font-weight:700; color:var(--accent); }
 .empty { color:var(--muted); font-style:italic; }
+.who-cell { display:flex; align-items:center; gap:10px; }
+.avatar { width:34px; height:34px; border-radius:50%; object-fit:cover; border:2px solid var(--line); flex:none;
+          background:var(--panel2); }
+.avatar.none { display:inline-flex; align-items:center; justify-content:center; font-size:16px; }
+.hero { display:flex; gap:24px; align-items:flex-end; justify-content:space-between; flex-wrap:wrap; }
+.hero .info { flex:1 1 320px; min-width:0; }
+.hero .render { flex:0 1 360px; max-width:100%; text-align:center; position:relative; }
+.hero .render::before { content:""; position:absolute; inset:15% 5% 0; border-radius:50%;
+  background:radial-gradient(closest-side, var(--glow), transparent); z-index:-1; }
+/* Le rendu Blizzard fait 1600×1200 avec le perso au centre-bas : on garde la zone x 25–75 %, y 25–87 %. */
+.hero .render .frame { width:100%; aspect-ratio:1 / .93; overflow:hidden; }
+.hero .render img { display:block; width:200%; max-width:none; margin:-37.5% 0 0 -50%;
+  filter:drop-shadow(0 8px 18px rgba(0,0,0,.6)); }
+@media (max-width:700px) { .hero { flex-direction:column-reverse; align-items:stretch; }
+  .hero .render { width:min(300px, 100%); margin:0 auto; } }
 footer { color:var(--muted); font-size:12px; text-align:center; padding:24px; }
 @media (max-width:600px) { header .theme { margin-left:0; width:100%; } header select { width:100%; } }
 """
@@ -186,6 +201,8 @@ FILTER_SCRIPT = """
   const folds = [...document.querySelectorAll("details.fold")];
   folds.forEach(d => d.dataset.default = d.open ? "1" : "");
   const count = document.getElementById("count");
+  const preset = new URLSearchParams(location.search).get("q");
+  if (q && preset) q.value = preset;
   let searching = false;
   function apply() {
     const text = q ? norm(q.value.trim()) : "";
@@ -247,6 +264,12 @@ def page(title: str, active: str, body: str, scripts: str = "") -> web.Response:
 
 def class_span(c: Character) -> str:
     return f'<span style="color:{CLASS_COLORS.get(c.wow_class, "inherit")}">{esc(class_label(c.wow_class))}</span>'
+
+
+def avatar_html(c: Character) -> str:
+    if c.avatar_url and c.avatar_url.startswith("https://"):
+        return f'<img class="avatar" src="{esc(c.avatar_url)}" alt="" loading="lazy" referrerpolicy="no-referrer">'
+    return '<span class="avatar none">👤</span>'
 
 
 def roles_html(c: Character) -> str:
@@ -343,7 +366,8 @@ class WebSite:
             rows.append(
                 f'<tr data-search="{esc(search)}" data-classe="{esc(c.wow_class)}" '
                 f'data-role="{" ".join(roles_for(c.wow_class))}" data-metier="{" ".join(c.professions)}">'
-                f'<td><a href="/perso/{c.id}"><b>{esc(c.name)}</b></a></td>'
+                f'<td><a class="who-cell" href="/perso/{c.id}">{avatar_html(c)}<b>{esc(c.name)}</b></a></td>'
+                f'<td class="num">{c.level or ""}</td>'
                 f"<td>{class_span(c)}</td><td>{esc(race_label(c.race))}</td>"
                 f"<td>{roles_html(c)}</td><td>{professions_html(c)}</td></tr>"
             )
@@ -358,8 +382,8 @@ class WebSite:
   <select data-filter="metier"><option value="">Tous les métiers</option>{options((k, v[0]) for k, v in PROFESSIONS.items())}</select>
 </div>
 <div class="table-wrap"><table>
-<thead><tr><th>Perso</th><th>Classe</th><th>Race</th><th>Rôles</th><th>Métiers</th></tr></thead>
-<tbody>{"".join(rows) or '<tr><td colspan="5" class="empty">Aucun perso déclaré.</td></tr>'}</tbody>
+<thead><tr><th>Perso</th><th class="num">Niv.</th><th>Classe</th><th>Race</th><th>Rôles</th><th>Métiers</th></tr></thead>
+<tbody>{"".join(rows) or '<tr><td colspan="6" class="empty">Aucun perso déclaré.</td></tr>'}</tbody>
 </table></div>"""
         return page("Persos", "persos", body, FILTER_SCRIPT)
 
@@ -405,11 +429,25 @@ class WebSite:
         else:
             recipes_html = '<p class="empty">Pas de recettes connues (perso absent de l\'armurerie, ou sans métier).</p>'
 
+        level = f"Niveau {character.level} · " if character.level else ""
+        render = ""
+        if character.render_url and character.render_url.startswith("https://"):
+            render = (
+                f'<div class="render"><div class="frame"><img src="{esc(character.render_url)}" '
+                f'alt="{esc(character.name)}" referrerpolicy="no-referrer"></div></div>'
+            )
+        professions_block = (
+            f'<div class="table-wrap" style="max-width:420px"><table><thead><tr><th>Métier</th>'
+            f'<th class="num">Niveau</th></tr></thead><tbody>{prof_rows}</tbody></table></div>'
+            if prof_rows else '<p class="empty">Aucun métier déclaré.</p>'
+        )
         body = f"""
+<div class="hero"><div class="info">
 <h1 class="title" style="color:{CLASS_COLORS.get(character.wow_class, "inherit")}">{esc(character.name)}</h1>
-<p class="sub">{esc(class_label(character.wow_class))} {esc(race_label(character.race))} · {roles_html(character)}{synced}</p>
+<p class="sub">{level}{esc(class_label(character.wow_class))} {esc(race_label(character.race))} · {roles_html(character)}{synced}</p>
 <h2>Métiers</h2>
-{f'<div class="table-wrap" style="max-width:420px"><table><thead><tr><th>Métier</th><th class="num">Niveau</th></tr></thead><tbody>{prof_rows}</tbody></table></div>' if prof_rows else '<p class="empty">Aucun métier déclaré.</p>'}
+{professions_block}
+</div>{render}</div>
 {recipes_html}"""
         return page(character.name, "persos", body, FILTER_SCRIPT)
 
@@ -436,7 +474,8 @@ class WebSite:
 
         holders = self.db.characters_with_profession(gid, key)
         who_rows = "".join(
-            f'<tr><td><a href="/perso/{c.id}"><b>{esc(c.name)}</b></a></td><td>{class_span(c)}</td>'
+            f'<tr><td><a class="who-cell" href="/perso/{c.id}">{avatar_html(c)}<b>{esc(c.name)}</b></a></td>'
+            f'<td>{class_span(c)}</td>'
             f'<td class="num">{skill if skill is not None else "?"}</td></tr>'
             for c, skill in holders
         )

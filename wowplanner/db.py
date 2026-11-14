@@ -158,6 +158,10 @@ class Character:
     professions: dict[str, int | None] = field(default_factory=dict)
     # Dernière synchro réussie avec l'armurerie (timestamp), None si jamais trouvé.
     armory_synced_at: int | None = None
+    # Lus dans l'armurerie : niveau, portrait et rendu en pied (images hébergées par Blizzard).
+    level: int | None = None
+    avatar_url: str | None = None
+    render_url: str | None = None
 
 
 # Version du format des détails de recette ; une recette plus ancienne est redemandée à Blizzard.
@@ -245,6 +249,10 @@ class Database:
         columns = {row["name"] for row in self.conn.execute("PRAGMA table_info(characters)")}
         if "armory_synced_at" not in columns:
             self.conn.execute("ALTER TABLE characters ADD COLUMN armory_synced_at INTEGER")
+        # v1.5 → v1.6 : niveau et images du perso.
+        for column in ("level INTEGER", "avatar_url TEXT", "render_url TEXT"):
+            if column.split()[0] not in columns:
+                self.conn.execute(f"ALTER TABLE characters ADD COLUMN {column}")
         # v1.4 → v1.5 : liens entre recettes (composant fabriqué par une autre recette).
         columns = {row["name"] for row in self.conn.execute("PRAGMA table_info(recipes)")}
         for column in (
@@ -400,6 +408,7 @@ class Database:
             Character(
                 r["id"], r["user_id"], r["name"], r["wow_class"], r["race"], r["preferred_role"],
                 armory_synced_at=r["armory_synced_at"],
+                level=r["level"], avatar_url=r["avatar_url"], render_url=r["render_url"],
             )
             for r in rows
         ]
@@ -536,6 +545,17 @@ class Database:
             )
             self.conn.execute(
                 "UPDATE characters SET armory_synced_at = ? WHERE id = ?", (int(time.time()), character_id)
+            )
+
+    def set_armory_look(
+        self, character_id: int, level: int | None, avatar_url: str | None, render_url: str | None
+    ) -> None:
+        """Niveau et images lus dans l'armurerie (on garde les anciennes images si l'armurerie n'en donne pas)."""
+        with self.conn:
+            self.conn.execute(
+                """UPDATE characters SET level = COALESCE(?, level), avatar_url = COALESCE(?, avatar_url),
+                                         render_url = COALESCE(?, render_url) WHERE id = ?""",
+                (level, avatar_url, render_url, character_id),
             )
 
     def all_characters(self) -> list[Character]:

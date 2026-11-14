@@ -42,7 +42,7 @@ Toutes les commandes suivent la logique **verbe + catégorie** : `/ajouter`, `/m
 | `/liste metier metier` | Les persos du serveur qui ont ce métier, du plus haut niveau au plus bas. |
 | `/liste battletags` | Les BattleTag des joueurs du serveur. |
 | `/liste instances [type]` | Les donjons (avec niveaux) et les raids. |
-| `/liste recettes metier [recherche]` | Recettes du métier connues sur le serveur, avec composants et persos qui savent les faire, envoyées en MP (pages ◀ ▶). Si rien ne correspond, réponse privée dans le salon. |
+| `/liste recettes metier [recherche]` | Recettes du métier connues sur le serveur. Avec le site web : un lien vers la page du métier, recherche pré-remplie. Sans site : envoyées en MP (pages ◀ ▶). Si rien ne correspond, réponse privée dans le salon. |
 | `/liste armurerie perso` | Fiche armurerie d'un perso (stats, équipement, métiers), envoyée en MP. Voir « Armurerie WoW Forever ». |
 
 **Date** : `25/12/2026`, `25/12`, `aujourd'hui`, `demain`. **Heure** : `21:00`, `21h30`, `21h`.
@@ -244,7 +244,8 @@ versionné).
   remplacent la saisie manuelle). Synchro à `/ajouter perso`, quand le nom change avec `/modifier perso`, à chaque
   `/liste armurerie`, et une fois par jour pour tous les persos.
 - `/liste recettes metier [recherche]` : toutes les recettes du métier connues par les persos du serveur, avec
-  leurs composants (en français) et les persos qui savent les faire, **en MP**. Une carte par recette (nom complet,
+  leurs composants (en français) et les persos qui savent les faire. **Si le site web est en ligne**, le bot répond
+  juste par un bouton-lien vers la page du métier (recherche pré-remplie) ; sinon, **en MP** : Une carte par recette (nom complet,
   un composant par ligne, 👥 les persos), regroupées par famille (Élixirs, Potions…), 3 par ligne sur PC ; environ
   45 recettes par page, pages ◀ ▶ au-delà. Un composant lui-même fabriqué par une recette connue sur le serveur est
   déplié en dessous, quantités recalculées (ex. : 3× Rouleau d'étoffe de lin ↳ 6× Étoffe de lin). `recherche` filtre sur le nom, sans tenir compte des accents ni des majuscules. Si aucune
@@ -276,7 +277,8 @@ Un petit site public, en lecture seule, pour parcourir les persos et les métier
 
 - **Persos** : tableau de tous les persos (classe, race, rôles, métiers et niveaux), recherche et filtres par classe,
   rôle ou métier ;
-- **fiche d'un perso** : ses métiers et ses recettes (composants dépliés) ;
+- **fiche d'un perso** : son rendu en pied et son niveau (armurerie), ses métiers et ses recettes (composants dépliés) ;
+  le portrait apparaît aussi dans les listes. Images hébergées par Blizzard, mises à jour à chaque synchro ;
 - **Métiers** : qui a chaque métier et à quel niveau, et toutes les recettes connues sur le serveur, avec recherche
   (nom de recette, composant ou effet, ex. *agilité*) et liens vers les persos qui savent les faire. Chaque recette
   montre ce que fait l'objet, comme l'infobulle du jeu : emplacement, armure, dégâts, stats, effets « Utiliser » /
@@ -295,7 +297,8 @@ WEB_DOMAIN=wow.ton-domaine.fr
 ```
 
 puis `docker compose up -d --build`. `docker-compose.traefik.yml` ajoute les labels Traefik (HTTPS) et lance le site
-sur le port interne 8080. Sans Docker : `WEB_PORT=8080` dans `.env`.
+sur le port interne 8080. Sans Docker : `WEB_PORT=8080` dans `.env`, et `WEB_URL=https://…` (adresse publique) pour
+que `/liste recettes` renvoie vers le site ; avec Traefik, `WEB_DOMAIN` suffit.
 
 ## Structure
 

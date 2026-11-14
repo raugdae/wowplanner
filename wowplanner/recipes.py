@@ -58,7 +58,19 @@ def _family_label(words: list[str]) -> str:
     counts = Counter(words)
     word = max(counts, key=lambda w: (w.casefold() != normalize(w), counts[w]))
     word = word[:1].upper() + word[1:]
-    return word if word[-1:] in ("s", "x") else word + "s"
+    return plural(word)
+
+
+def plural(word: str) -> str:
+    """Pluriel français d'un nom de famille de recettes : Rouleau → Rouleaux, Cristal → Cristaux."""
+    lower = word.casefold()
+    if lower[-1:] in ("s", "x", "z"):
+        return word
+    if lower.endswith(("eau", "au", "eu")) and lower not in ("landau", "sarrau", "bleu", "pneu", "émeu"):
+        return word + "x"
+    if lower.endswith("al") and lower not in ("bal", "carnaval", "chacal", "festival", "récital", "régal"):
+        return word[:-1] + "ux"
+    return word + "s"
 
 
 def group_by_family(recipes: list[GuildRecipe]) -> list[tuple[str, list[GuildRecipe]]]:

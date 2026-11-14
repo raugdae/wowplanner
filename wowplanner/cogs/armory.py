@@ -12,6 +12,8 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from urllib.parse import quote
+
 import aiohttp
 import discord
 from discord import app_commands
@@ -223,6 +225,12 @@ def recipe_messages(field_pages: list[list[Field]], title: str) -> list[list[dis
     return messages
 
 
+def profession_url(site: str, profession: str, search: str | None = None) -> str:
+    """Page d'un métier sur le site, avec la recherche pré-remplie."""
+    url = f"{site}/metier/{profession}"
+    return url + (f"?q={quote(search.strip())}" if search and search.strip() else "")
+
+
 class RecipePagesView(discord.ui.View):
     """Boutons ◀ ▶ pour feuilleter les pages de recettes (actifs une heure).
 
@@ -291,6 +299,7 @@ class ArmoryCog(commands.Cog):
     def apply(self, character: Character, sheet: ArmorySheet) -> SyncResult:
         """Enregistre ce que l'armurerie nous apprend sur un perso déclaré."""
         result = SyncResult(found=True, sheet=sheet)
+        self.db.set_armory_look(character.id, sheet.level, sheet.avatar_url, sheet.render_url)
         skills = sheet.profession_skills()
         if skills is not None:
             self.db.replace_professions(character.id, {k: skill for k, (skill, _) in skills.items()})
@@ -512,6 +521,16 @@ class ArmoryCog(commands.Cog):
                 f"({len(known)} recette(s) connue(s) sur le serveur).",
                 ephemeral=True,
             )
+            return
+
+        site = getattr(self.bot.config, "web_url", "")
+        if site:
+            # Le site montre tout (composants, infobulles, artisans) : un lien plutôt qu'un pavé en MP.
+            url = profession_url(site, profession, search)
+            what = f"{len(matched)} recette(s) de **{label}**" + (f" contenant « {search} »" if search else "")
+            view = discord.ui.View()
+            view.add_item(discord.ui.Button(label=f"Voir les recettes de {label}", emoji="🌐", url=url))
+            await interaction.followup.send(f"⚒️ {what} : composants, effets et artisans sur le site.", view=view, ephemeral=True)
             return
 
         title = f"⚒️ {label} — {len(matched)} recette(s)" + (f" · « {search} »" if search else "")

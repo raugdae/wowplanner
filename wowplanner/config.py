@@ -29,6 +29,8 @@ class Config:
     # Site web public (persos et métiers, sans info perso). 0 = désactivé.
     web_port: int = 0
     web_host: str = "0.0.0.0"
+    # Adresse publique du site (ex. https://wow.exemple.fr) : /liste recettes y renvoie au lieu d'un MP.
+    web_url: str = ""
 
     @property
     def db_path(self) -> Path:
@@ -71,4 +73,15 @@ def load_config() -> Config:
         blizzard_region=(os.getenv("BLIZZARD_REGION", "eu").strip() or "eu").lower(),
         web_port=int(os.getenv("WEB_PORT", "0") or 0),
         web_host=os.getenv("WEB_HOST", "0.0.0.0").strip() or "0.0.0.0",
+        web_url=public_url(os.getenv("WEB_URL", ""), os.getenv("WEB_DOMAIN", "")),
     )
+
+
+def public_url(url: str, domain: str) -> str:
+    """WEB_URL, sinon https://WEB_DOMAIN (déjà renseigné pour Traefik), sans / final."""
+    url, domain = url.strip(), domain.strip()
+    if not url and domain:
+        url = f"https://{domain}"
+    if url and "://" not in url:
+        url = f"https://{url}"
+    return url.rstrip("/")

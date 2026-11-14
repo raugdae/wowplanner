@@ -373,7 +373,13 @@ class CharacterCommands:
             title=f"⚒️ {label} — {len(found)} perso(s)", description="\n".join(lines)[:4096], color=0x3498DB
         )
         embed.set_footer(text="Classés par niveau de compétence · ? = niveau non renseigné")
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        extra = {}
+        site = getattr(self.bot.config, "web_url", "")
+        if site:
+            view = discord.ui.View()
+            view.add_item(discord.ui.Button(label="Recettes sur le site", emoji="🌐", url=f"{site}/metier/{metier}"))
+            extra["view"] = view
+        await interaction.response.send_message(embed=embed, ephemeral=True, **extra)
 
     # ============================================================== interne
 

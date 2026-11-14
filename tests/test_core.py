@@ -917,3 +917,59 @@ def test_item_tooltip_parse_and_site(tmp_path):
     assert "&lt;b&gt;" in forge  # échappé
     assert '<div class="effect">Endurance +2</div>' in pages["/metier/enchantement"]
     assert "+14 Force" in pages[f"/perso/{c.id}"]
+
+
+def test_family_plural_and_site_links():
+    from wowplanner.cogs.armory import profession_url
+    from wowplanner.config import public_url
+    from wowplanner.recipes import plural
+
+    assert plural("Rouleau") == "Rouleaux" and plural("Cristal") == "Cristaux" and plural("Feu") == "Feux"
+    assert plural("Potion") == "Potions" and plural("Élixirs") == "Élixirs" and plural("Pneu") == "Pneus"
+    assert plural("Bracelet") == "Bracelets" and plural("Festival") == "Festivals"
+
+    assert public_url("", "wow.exemple.fr") == "https://wow.exemple.fr"
+    assert public_url("https://wow.exemple.fr/", "autre.fr") == "https://wow.exemple.fr"
+    assert public_url("wow.exemple.fr", "") == "https://wow.exemple.fr"
+    assert public_url("", "") == ""
+    assert profession_url("https://w.fr", "couture") == "https://w.fr/metier/couture"
+    assert profession_url("https://w.fr", "couture", " sac en lin ") == "https://w.fr/metier/couture?q=sac%20en%20lin"
+
+
+def test_character_look_on_site(tmp_path):
+    """Niveau et images de l'armurerie : enregistrés à la synchro, affichés sur le site."""
+    import asyncio
+
+    import aiohttp
+
+    from wowplanner.db import Database
+    from wowplanner.web import WebSite
+
+    db = Database(tmp_path / "t.db")
+    c = db.add_character(1, "Hollie Tétine", "pretre", "humain")
+    plain = db.add_character(1, "Sans Image", "mage", "gnome")
+    db.touch_member(42, 1)
+    render = "https://render.worldofwarcraft.com/forever-eu/character/98/1-main-raw.png"
+    avatar = "https://render.worldofwarcraft.com/forever-eu/character/98/1-avatar.jpg"
+    db.set_armory_look(c.id, 42, avatar, render)
+    db.set_armory_look(c.id, 43, None, None)  # images absentes : on garde les anciennes
+    c = db.get_character(c.id)
+    assert (c.level, c.avatar_url, c.render_url) == (43, avatar, render)
+
+    site = WebSite(db, lambda: 42)
+    pages = {}
+
+    async def scenario():
+        await site.start("127.0.0.1", 0)
+        port = next(iter(site._runner.sites))._server.sockets[0].getsockname()[1]
+        async with aiohttp.ClientSession() as session:
+            for path in ("/", f"/perso/{c.id}", f"/perso/{plain.id}"):
+                async with session.get(f"http://127.0.0.1:{port}{path}") as resp:
+                    pages[path] = await resp.text()
+        await site.stop()
+
+    asyncio.run(scenario())
+    db.close()
+    assert f'src="{avatar}"' in pages["/"] and 'class="avatar none"' in pages["/"]
+    assert f'src="{render}"' in pages[f"/perso/{c.id}"] and "Niveau 43" in pages[f"/perso/{c.id}"]
+    assert 'class="render"' not in pages[f"/perso/{plain.id}"]
