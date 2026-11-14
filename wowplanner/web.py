@@ -22,7 +22,7 @@ from .gamedata import (
     CLASSES, MAX_PROFESSION_SKILL, PROFESSIONS, class_label, is_primary, profession_label, race_label, roles_for,
 )
 from .recipes import crafted_by_map, expand_reagents, filter_recipes, group_by_category, normalize
-from . import dungeons, gear, statsource
+from . import dungeon_guides, dungeons, gear, statsource
 from .armory import icon_url
 from .roles import LABELS, ROLES
 
@@ -331,6 +331,59 @@ tr.d-out { opacity:.55; }
 .who-avatars .more { color:var(--muted); font-size:12px; }
 .status-open { color:#5fd38d; font-weight:600; }
 p.src { color:var(--muted); font-size:12px; margin-top:10px; }
+tr[data-href] { cursor:pointer; }
+.dname a { color:inherit; }
+.crumb { margin:0 0 10px; color:var(--muted); }
+.dhero { display:flex; gap:18px; align-items:center; margin-bottom:18px; }
+.dtile { width:180px; height:96px; object-fit:cover; border-radius:10px; border:1px solid var(--line); flex:none;
+  box-shadow:0 4px 16px rgba(0,0,0,.4); }
+.dtile.none { display:flex; align-items:center; justify-content:center; font-size:40px; background:var(--panel2); }
+.dhero h1 .badge-new { font-family:system-ui,sans-serif; font-size:12px; vertical-align:6px; }
+.dhero .sub { margin-bottom:8px; }
+.facts { display:flex; gap:8px; flex-wrap:wrap; }
+.fact { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:4px 12px; text-align:center; }
+.fact small { display:block; color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.05em; }
+.fact b { color:var(--accent); font-variant-numeric:tabular-nums; }
+.dgrid { display:grid; grid-template-columns:minmax(0,3fr) minmax(0,2fr); gap:14px; }
+.card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:4px 16px 16px; }
+.card h2 { margin:14px 0 8px; font-size:16px; }
+.coords { display:flex; align-items:center; gap:10px; flex-wrap:wrap; background:var(--panel2); border:1px solid var(--line);
+  border-radius:8px; padding:8px 10px; margin:10px 0; }
+.coords .pin { font-size:20px; }
+.coords > div { flex:1 1 140px; }
+.copy { display:flex; align-items:center; gap:8px; background:var(--bg); color:var(--text); border:1px solid var(--line);
+  border-radius:6px; padding:5px 8px; cursor:pointer; font:inherit; font-size:13px; max-width:100%; }
+.copy code { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.copy span { color:var(--accent); font-weight:600; flex:none; }
+.copy:hover { border-color:var(--accent); }
+.btn { display:inline-block; margin-top:6px; padding:7px 12px; border-radius:8px; border:1px solid var(--accent);
+  color:var(--accent); font-weight:600; }
+.btn:hover { background:var(--accent); color:var(--bg); text-decoration:none; }
+.who-list { display:flex; flex-direction:column; gap:8px; }
+.who-list small { display:block; }
+.route { list-style:none; margin:8px 0 0; padding:0; position:relative; max-width:760px; }
+.route::before { content:""; position:absolute; left:17px; top:18px; bottom:18px; width:3px; border-radius:2px;
+  background:linear-gradient(var(--accent), color-mix(in srgb, var(--accent) 30%, transparent)); }
+.step { position:relative; display:flex; gap:14px; align-items:flex-start; padding:6px 0; }
+.step .dot { position:relative; z-index:1; width:37px; height:37px; flex:none; border-radius:50%; display:flex;
+  align-items:center; justify-content:center; font-weight:800; color:var(--bg); background:var(--accent);
+  box-shadow:0 0 0 4px var(--bg), 0 0 14px color-mix(in srgb, var(--accent) 45%, transparent); }
+.step.start .dot { background:var(--panel2); color:var(--text); border:2px solid var(--accent); font-size:16px; }
+.step.opt .dot { background:var(--bg); color:var(--accent); border:2px dashed var(--accent); box-shadow:0 0 0 4px var(--bg); }
+.step .sbody { flex:1; background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:7px 12px; }
+.step.start .sbody { background:transparent; border:none; padding-top:8px; }
+.step.opt .sbody { border-style:dashed; opacity:.85; }
+.step .en { display:block; color:var(--muted); font-size:12px; }
+.step .where { color:var(--muted); font-size:13px; margin-top:2px; }
+.otag { margin-left:8px; font-size:11px; color:var(--muted); border:1px solid var(--line); border-radius:999px; padding:0 7px; }
+.dnav { display:flex; justify-content:space-between; gap:10px; margin-top:24px; padding-top:12px; border-top:1px solid var(--line); }
+.dnav a { color:var(--accent); }
+@media (max-width:700px) {
+  .dgrid { grid-template-columns:1fr; }
+  .dhero { flex-direction:column; align-items:flex-start; }
+  .dtile { width:100%; height:120px; }
+  .dtile.none { display:none; }
+}
 footer { color:var(--muted); font-size:12px; text-align:center; padding:24px; }
 @media (max-width:600px) { header .theme { margin-left:0; width:100%; } header select { width:100%; } }
 """
@@ -481,6 +534,27 @@ DUNGEON_SCRIPT = """
   try { const saved = localStorage.getItem("wp-dungeon-level"); if (saved && !input.value) input.value = saved; } catch (e) {}
   apply();
 })();
+</script>
+"""
+
+# Lignes de tableau cliquables (data-href), sans gêner les liens qu'elles contiennent.
+ROW_LINK_SCRIPT = """
+<script>
+document.querySelectorAll("tr[data-href]").forEach(tr => tr.addEventListener("click", e => {
+  if (!e.target.closest("a, button, input, select") && !getSelection().toString()) location.href = tr.dataset.href;
+}));
+</script>
+"""
+
+# Bouton « Copier » de la commande /way.
+COPY_SCRIPT = """
+<script>
+document.querySelectorAll("button[data-copy]").forEach(b => b.addEventListener("click", async () => {
+  const label = b.querySelector("span");
+  try { await navigator.clipboard.writeText(b.dataset.copy); label.textContent = "Copié !"; }
+  catch (e) { label.textContent = "Sélectionne et copie"; }
+  setTimeout(() => label.textContent = "Copier", 1800);
+}));
 </script>
 """
 
@@ -1056,11 +1130,11 @@ class WebSite:
             more = f'<span class="more">+{len(inside) - 8}</span>' if len(inside) > 8 else ""
             return f'<div class="who-avatars">{shown}{more}</div>'
 
-        def name_cell(name: str, english: str, new: bool, zone: str) -> str:
+        def name_cell(name: str, english: str, new: bool, zone: str, slug: str) -> str:
             badge = '<span class="badge-new">Nouveau</span>' if new else ""
             return (
-                f'<td class="dname"><b>{esc(name)}{badge}</b><span class="en">{esc(english)}</span>'
-                f'<span class="zm">📍 {esc(zone)}</span></td>'
+                f'<td class="dname"><a href="/donjon/{slug}"><b>{esc(name)}{badge}</b></a>'
+                f'<span class="en">{esc(english)}</span><span class="zm">📍 {esc(zone)}</span></td>'
             )
 
         rows = []
@@ -1071,8 +1145,8 @@ class WebSite:
             side = f'<div class="side {d.side}">Côté {d.side.capitalize()}</div>' if d.side else ""
             search = normalize(" ".join([d.name, d.english, d.zone]))
             rows.append(
-                f'<tr data-search="{esc(search)}" data-low="{d.low}" data-high="{d.high}">'
-                f'{name_cell(d.name, d.english, d.new, d.zone)}<td class="zc">{esc(d.zone)}{side}</td>'
+                f'<tr data-search="{esc(search)}" data-low="{d.low}" data-high="{d.high}" data-href="/donjon/{d.slug}">'
+                f'{name_cell(d.name, d.english, d.new, d.zone, d.slug)}<td class="zc">{esc(d.zone)}{side}</td>'
                 f'<td class="lv"><b>{d.low}–{d.high}</b><div class="lbar">'
                 f'<span style="left:{left:.1f}%;width:{width:.1f}%"></span><i></i></div></td>'
                 f'<td class="num pc">{d.players}</td><td>{players_in(d.low, d.high)}</td></tr>'
@@ -1082,7 +1156,7 @@ class WebSite:
             status = dungeons.raid_status(r)
             note = f'<div class="side">{esc(r.note)}</div>' if r.note else ""
             raid_rows.append(
-                f'<tr>{name_cell(r.name, r.english, r.new, r.zone)}<td class="zc">{esc(r.zone)}{note}</td>'
+                f'<tr data-href="/donjon/{r.slug}">{name_cell(r.name, r.english, r.new, r.zone, r.slug)}<td class="zc">{esc(r.zone)}{note}</td>'
                 f'<td class="num">{r.players}</td><td class="num">{r.bosses or "?"}</td>'
                 f'<td class="{"status-open" if status == "Ouvert" else "muted"}">{esc(status)}</td>'
                 f"<td>{players_in(dungeons.RAID_LEVEL, dungeons.RAID_LEVEL)}</td></tr>"
@@ -1091,7 +1165,8 @@ class WebSite:
         body = f"""
 <h1 class="title">Donjons</h1>
 <p class="sub">{len(dungeons.DUNGEONS)} donjons de WoW Forever, du plus bas au plus haut niveau, avec les persos du
-serveur qui sont dans la tranche. Choisis un niveau pour voir ce qui est à faire.</p>
+serveur qui sont dans la tranche. Choisis un niveau pour voir ce qui est à faire, et clique sur un donjon pour
+voir son entrée et ses boss.</p>
 <div class="filters">
   <input id="q" type="search" placeholder="Chercher un donjon, une zone…" autocomplete="off">
   <div class="lvl-pick">
@@ -1111,7 +1186,112 @@ serveur qui sont dans la tranche. Choisis un niveau pour voir ce qui est à fair
 <tbody>{"".join(raid_rows)}</tbody></table></div>
 <p class="src">Niveaux conseillés, pas des verrous d'entrée. D'après Blizzard et les récapitulatifs de PC Games et
 Warcraft Tavern ({dungeons.SOURCES_CHECKED}) : l'API Blizzard ne fournit pas le journal des donjons de Forever.</p>"""
-        return page("Donjons", "donjons", body, FILTER_SCRIPT + DUNGEON_SCRIPT)
+        return page("Donjons", "donjons", body, FILTER_SCRIPT + DUNGEON_SCRIPT + ROW_LINK_SCRIPT)
+
+    async def dungeon(self, request: web.Request) -> web.Response:
+        """Fiche d'un donjon ou d'un raid : entrée, coordonnées, parcours des boss, persos du bon niveau."""
+        gid = self._scope()
+        slug = request.match_info["slug"]
+        everything = [*dungeons.DUNGEONS, *dungeons.RAIDS]
+        found = next((x for x in everything if x.slug == slug), None)
+        if found is None:
+            raise web.HTTPNotFound(text="Donjon inconnu.")
+        guide = dungeon_guides.GUIDES.get(slug) or dungeon_guides.Guide("")
+        is_raid = isinstance(found, dungeons.Raid)
+        low, high = (dungeons.RAID_LEVEL, dungeons.RAID_LEVEL) if is_raid else (found.low, found.high)
+
+        facts = [f'<span class="fact"><small>Niveaux</small><b>{low}–{high}</b></span>' if not is_raid else
+                 f'<span class="fact"><small>Niveau</small><b>{low}</b></span>',
+                 f'<span class="fact"><small>Joueurs</small><b>{found.players}</b></span>',
+                 f'<span class="fact"><small>Boss</small><b>{len(guide.bosses) or "?"}</b></span>']
+        if is_raid:
+            facts.append(f'<span class="fact"><small>Ouverture</small><b>{esc(dungeons.raid_status(found))}</b></span>')
+        side = getattr(found, "side", None)
+        sub = esc(found.zone) + (f' · <span class="side {side}">Côté {side.capitalize()}</span>' if side else "")
+        badge = '<span class="badge-new">Nouveau</span>' if found.new else ""
+        tile = (
+            f'<img class="dtile" src="{esc(guide.tile_url)}" alt="" referrerpolicy="no-referrer">'
+            if guide.tile_url else '<div class="dtile none">🏰</div>'
+        )
+
+        # Entrée
+        entry = [f"<p>{esc(guide.how)}</p>" if guide.how else ""]
+        way = guide.way()
+        if way:
+            x, y = guide.coords
+            entry.append(
+                f'<div class="coords"><span class="pin">📍</span><div><b>{esc(guide.map_name)}</b>'
+                f'<span class="muted"> · {x:g}, {y:g}</span></div>'
+                f'<button type="button" class="copy" data-copy="{esc(way)}" title="Copier pour TomTom">'
+                f"<code>{esc(way)}</code><span>Copier</span></button></div>"
+            )
+        else:
+            entry.append('<p class="muted">Coordonnées exactes pas encore relevées.</p>')
+
+        # Parcours des boss, façon tracé de donjon : étapes numérotées, les optionnels en pointillé.
+        steps, n = [], 0
+        for boss in guide.bosses:
+            if boss.optional:
+                mark, cls = "◇", " opt"
+            else:
+                n += 1
+                mark, cls = str(n), ""
+            name = dungeon_guides.boss_name(boss)
+            same = name.replace("’", "'").casefold() == boss.name.replace("’", "'").casefold()
+            en = f'<span class="en">{esc(boss.name)}</span>' if not same else ""
+            tag = '<span class="otag">optionnel</span>' if boss.optional else ""
+            where = f'<div class="where">{esc(boss.where)}</div>' if boss.where else ""
+            steps.append(
+                f'<li class="step{cls}"><span class="dot">{mark}</span><div class="sbody">'
+                f"<b>{esc(name)}</b>{tag}{en}{where}</div></li>"
+            )
+        route = (
+            '<ol class="route"><li class="step start"><span class="dot">⛩</span><div class="sbody"><b>Entrée</b></div></li>'
+            + "".join(steps) + "</ol>"
+            if steps else '<p class="empty">Boss pas encore documentés.</p>'
+        )
+        notes = "".join(f'<p class="muted">ℹ️ {esc(t)}</p>' for t in guide.notes)
+
+        inside = [
+            c for c in sorted(self.db.guild_characters(gid), key=lambda c: (-(c.level or 0), normalize(c.name)))
+            if c.level and low <= c.level <= high
+        ]
+        who = "".join(
+            f'<a class="who-cell" href="/perso/{c.id}">{avatar_html(c)}<span><b>{esc(c.name)}</b>'
+            f'<small class="muted"> {class_span(c)} · {c.level}</small></span></a>'
+            for c in inside
+        ) or '<p class="empty">Aucun perso du serveur dans la tranche.</p>'
+
+        link = (
+            f'<a class="btn" href="{esc(guide.guide_url)}" target="_blank" rel="noopener noreferrer">'
+            "🗺️ Carte détaillée et stratégies (Warcraft Tavern) ↗</a>"
+            if guide.guide_url else ""
+        )
+        index = everything.index(found)
+        prev_ = everything[index - 1] if index > 0 else None
+        next_ = everything[index + 1] if index + 1 < len(everything) else None
+        nav = '<nav class="dnav">' + (
+            f'<a href="/donjon/{prev_.slug}">← {esc(prev_.name)}</a>' if prev_ else "<span></span>"
+        ) + (f'<a href="/donjon/{next_.slug}">{esc(next_.name)} →</a>' if next_ else "<span></span>") + "</nav>"
+
+        body = f"""
+<p class="crumb"><a href="/donjons">← Tous les donjons</a></p>
+<div class="dhero">{tile}<div>
+<h1 class="title">{esc(found.name)}{badge}</h1>
+<p class="sub">{esc(found.english)} · {sub}</p>
+<div class="facts">{"".join(facts)}</div></div></div>
+<div class="dgrid">
+<section class="card"><h2>Entrée</h2>{"".join(entry)}{link}</section>
+<section class="card"><h2>Persos dans la tranche</h2><div class="who-list">{who}</div></section>
+</div>
+<h2>Parcours des boss</h2>
+<p class="sub">Dans l'ordre habituel ; ◇ = optionnel (rare, invoqué ou pas nécessaire pour finir).</p>
+{route}{notes}
+<p class="src">Entrée et boss d'après les guides de Warcraft Tavern ({dungeons.SOURCES_CHECKED}) ; noms français du
+Journal de Blizzard quand il les donne. Vignette : Blizzard. L'API Blizzard ne fournit ni carte ni coordonnées pour
+Forever : la carte détaillée est sur le guide.</p>
+{nav}"""
+        return page(found.name, "donjons", body, COPY_SCRIPT)
 
     # ------------------------------------------------------------ serveur
 
@@ -1122,6 +1302,7 @@ Warcraft Tavern ({dungeons.SOURCES_CHECKED}) : l'API Blizzard ne fournit pas le 
         app.router.add_get("/metiers", self.professions)
         app.router.add_get("/metier/{key}", self.profession)
         app.router.add_get("/donjons", self.dungeons)
+        app.router.add_get("/donjon/{slug}", self.dungeon)
         return app
 
     async def start(self, host: str, port: int) -> None:

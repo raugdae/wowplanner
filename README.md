@@ -293,7 +293,11 @@ Un petit site public, en lecture seule, pour parcourir les persos et les métier
 - **Donjons** : les 35 donjons de WoW Forever (dont les 9 nouveaux) avec zone et tranche de niveau conseillée, les
   persos du serveur qui sont dans chaque tranche, et un choix de niveau (ou d'un perso) qui met en avant ce qui est à
   faire. Plus les raids (joueurs, boss, date d'ouverture). L'API Blizzard n'a pas le journal des donjons de Forever :
-  la liste est dans `wowplanner/dungeons.py`, à retoucher si Blizzard change des tranches.
+  la liste est dans `wowplanner/dungeons.py`, à retoucher si Blizzard change des tranches ;
+- **fiche d'un donjon ou d'un raid** (clic dans la liste) : comment trouver l'entrée, ses coordonnées avec une
+  commande `/way` à copier (TomTom), le **parcours des boss** numéroté (optionnels à part, avec où les trouver), les
+  persos du serveur du bon niveau, la vignette Blizzard et un lien vers la carte détaillée du guide Warcraft Tavern.
+  Les fiches sont dans `wowplanner/dungeon_guides.py` (noms français officiels des boss quand Blizzard les donne).
 
 **Aucune info personnelle** : ni pseudo Discord, ni identifiant, ni BattleTag, et rien qui relie deux persos au même
 joueur. Le site lit la même base que le bot (dans le même conteneur), donc il est toujours à jour. Il montre les persos

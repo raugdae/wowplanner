@@ -8,10 +8,16 @@ Les tranches sont des niveaux conseillés, pas des verrous d'entrée.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import date
 
 SOURCES_CHECKED = "nov. 2026"
+
+
+def slugify(text: str) -> str:
+    """« Krol'dok Stronghold » → « kroldok-stronghold » (adresse de la fiche sur le site)."""
+    return re.sub(r"[^a-z0-9]+", "-", text.lower().replace("'", "")).strip("-")
 
 
 @dataclass(frozen=True)
@@ -25,6 +31,10 @@ class Dungeon:
     new: bool = False  # nouveau dans Forever
     side: str | None = None  # « alliance » / « horde » : entrée dans une capitale ou un territoire d'une faction
 
+    @property
+    def slug(self) -> str:
+        return slugify(self.english)
+
 
 @dataclass(frozen=True)
 class Raid:
@@ -36,6 +46,10 @@ class Raid:
     opens: date | None  # None : pas encore de date
     new: bool = False
     note: str = ""
+
+    @property
+    def slug(self) -> str:
+        return slugify(self.english)
 
 
 DUNGEONS: tuple[Dungeon, ...] = (

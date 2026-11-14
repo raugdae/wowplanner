@@ -1169,8 +1169,11 @@ def test_dungeons_data_and_page(tmp_path):
         await site.start("127.0.0.1", 0)
         port = next(iter(site._runner.sites))._server.sockets[0].getsockname()[1]
         async with aiohttp.ClientSession() as session:
-            async with session.get(f"http://127.0.0.1:{port}/donjons") as resp:
-                pages["d"] = (resp.status, await resp.text())
+            for key, path in (("d", "/donjons"), ("dm", "/donjon/the-deadmines"), ("hot", "/donjon/hall-of-thanes"),
+                              ("ony", "/donjon/onyxias-lair"), ("brd", "/donjon/blackrock-depths"),
+                              ("nope", "/donjon/inconnu")):
+                async with session.get(f"http://127.0.0.1:{port}{path}") as resp:
+                    pages[key] = (resp.status, await resp.text())
         await site.stop()
 
     asyncio.run(scenario())
@@ -1178,13 +1181,34 @@ def test_dungeons_data_and_page(tmp_path):
     status, html = pages["d"]
     assert status == 200 and 'href="/donjons" class="active"' in html
     from html import unescape
-    rows = {unescape(r.split("<")[0]): r.split("</tr>")[0] for r in html.split('<td class="dname"><b>')[1:]}
+    rows = {
+        unescape(r.split("<b>")[1].split("<")[0]): r.split("</tr>")[0] for r in html.split('<td class="dname">')[1:]
+    }
+    assert 'href="/donjon/the-deadmines"' in html and 'data-href="/donjon/molten-core"' in html
     assert "Petit Gnome" in rows["Profondeurs de Brassenoire"] and "Grand Nain" not in rows["Profondeurs de Brassenoire"]
     assert "Grand Nain" in rows["Scholomance"] and "Petit Gnome" not in rows["Scholomance"]
     assert "Grand Nain" in rows["Repaire d'Onyxia"]  # raids : persos niveau 60
     assert "Sans Niveau" not in html
     assert '<option value="60">Grand Nain (60)</option>' in html
     assert 'data-low="40" data-high="45"' in html
+
+    # Fiches : entrée et /way, parcours numéroté (optionnels à part), noms français de Blizzard, persos du bon niveau.
+    status, dm = pages["dm"]
+    assert status == 200 and "/way Marche de l&#x27;Ouest 42 72" in dm
+    assert '<span class="dot">1</span><div class="sbody"><b>Rhahk’Zor</b>' in dm
+    assert '<li class="step opt"><span class="dot">◇</span><div class="sbody"><b>Mineur' not in dm  # pas traduit au hasard
+    assert "<b>Capitaine Vertepeau</b>" in dm and '<span class="en">Captain Greenskin</span>' in dm
+    assert "deadmines-small.jpg" in dm and "warcrafttavern.com/forever/guides/the-deadmines/" in dm
+    assert "Petit Gnome" in dm and "Grand Nain" not in dm
+    hot = pages["hot"][1]
+    assert "/way Forgefer 43.5 52" in hot and "Durgen Dirgehammer" in hot and "🏰" in hot  # pas de vignette Blizzard
+    ony = pages["ony"][1]
+    assert "Grand Nain" in ony and "onyxias-lair-small.jpg" in ony
+    assert "Coordonnées exactes pas encore relevées" in pages["brd"][1]
+    assert pages["nope"][0] == 404
+    for slug in [d.slug for d in dungeons.DUNGEONS + dungeons.RAIDS]:
+        from wowplanner.dungeon_guides import GUIDES
+        assert slug in GUIDES and GUIDES[slug].bosses, slug  # chaque instance a sa fiche
 
 
 def test_stat_priorities_from_guide(tmp_path):
