@@ -22,7 +22,7 @@ from .gamedata import (
     CLASSES, MAX_PROFESSION_SKILL, PROFESSIONS, class_label, is_primary, profession_label, race_label, roles_for,
 )
 from .recipes import crafted_by_map, expand_reagents, filter_recipes, group_by_category, normalize
-from . import gear, statsource
+from . import dungeons, gear, statsource
 from .armory import icon_url
 from .roles import LABELS, ROLES
 
@@ -293,6 +293,44 @@ td .none { color:var(--muted); opacity:.5; }
 .tree .extra { margin-top:10px; font-size:13px; color:var(--muted); max-width:206px; }
 @media (max-width:640px) { .trees { justify-content:center; } }
 @media (max-width:420px) { .tgrid { --ts:38px; gap:8px; } .tal .tt { width:220px; } }
+/* Donjons */
+.lvl-pick { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+.filters .lvl-pick input[type=number] { width:96px; flex:none; }
+.lvl-pick label { display:flex; gap:6px; align-items:center; color:var(--muted); cursor:pointer; white-space:nowrap; }
+.filters .lvl-pick input[type=checkbox] { flex:none; width:16px; height:16px; padding:0; margin:0; accent-color:var(--accent); }
+.dname .zm { display:none; font-size:12px; color:var(--muted); }
+@media (max-width:600px) {
+  .dtable .zc, .dtable .pc { display:none; }
+  .dname .zm { display:block; }
+  .dtable td.lv { min-width:96px; }
+}
+.dname b { display:block; }
+.dname .en { font-size:12px; color:var(--muted); }
+.badge-new { display:inline-block; margin-left:6px; font-size:11px; font-weight:700; color:var(--bg);
+  background:var(--accent); border-radius:999px; padding:0 7px; vertical-align:2px; }
+.side { font-size:12px; color:var(--muted); }
+.side.alliance::before { content:"🛡️ "; } .side.horde::before { content:"🪓 "; }
+td.lv { white-space:nowrap; min-width:150px; }
+td.lv b { font-variant-numeric:tabular-nums; }
+.lbar { position:relative; height:6px; margin-top:6px; border-radius:3px; background:var(--panel2); }
+.lbar span { position:absolute; top:0; bottom:0; border-radius:3px; background:var(--muted); opacity:.7; }
+.lbar i { position:absolute; top:-3px; bottom:-3px; width:2px; background:var(--text); display:none;
+  left:var(--lvpos, 0); }
+.has-level .lbar i { display:block; }
+tr.d-in td { background:color-mix(in srgb, var(--accent) 10%, transparent); }
+tr.d-in .lbar span { background:var(--accent); opacity:1; }
+tr.d-in td:first-child { box-shadow:inset 3px 0 0 var(--accent); }
+tr.d-near .lbar span { background:var(--accent); opacity:.45; }
+tr.d-near .lv b::after { content:" · bientôt"; color:var(--muted); font-weight:400; font-size:12px; }
+tr.d-out { opacity:.55; }
+.only-in tr.d-out { display:none; }
+.who-avatars { display:flex; flex-wrap:wrap; gap:4px; align-items:center; }
+.who-avatars .avatar { width:28px; height:28px; }
+.who-avatars a:hover { text-decoration:none; }
+.who-avatars a:hover .avatar { border-color:var(--accent); }
+.who-avatars .more { color:var(--muted); font-size:12px; }
+.status-open { color:#5fd38d; font-weight:600; }
+p.src { color:var(--muted); font-size:12px; margin-top:10px; }
 footer { color:var(--muted); font-size:12px; text-align:center; padding:24px; }
 @media (max-width:600px) { header .theme { margin-left:0; width:100%; } header select { width:100%; } }
 """
@@ -415,6 +453,37 @@ SPEC_SCRIPT = """
 </script>
 """
 
+# Page Donjons : on choisit un niveau (ou un perso) et on voit les donjons de sa tranche.
+DUNGEON_SCRIPT = """
+<script>
+(() => {
+  const input = document.getElementById("lvl"), who = document.getElementById("lvl-who");
+  const only = document.getElementById("lvl-only"), table = document.getElementById("dungeons");
+  if (!input || !table) return;
+  const rows = [...table.querySelectorAll("tr[data-low]")];
+  const min = +table.dataset.min, max = +table.dataset.max;
+  function apply() {
+    const lv = parseInt(input.value, 10), ok = lv >= 1 && lv <= 60;
+    table.classList.toggle("has-level", ok);
+    table.classList.toggle("only-in", ok && only.checked);
+    table.style.setProperty("--lvpos", ok ? (Math.min(Math.max(lv, min), max) - min) / (max - min) * 100 + "%" : "0");
+    for (const r of rows) {
+      const low = +r.dataset.low, high = +r.dataset.high;
+      const state = !ok ? "" : lv >= low && lv <= high ? "in" : lv < low && low - lv <= 2 ? "near" : "out";
+      r.classList.remove("d-in", "d-near", "d-out");
+      if (state) r.classList.add("d-" + state);
+    }
+    try { localStorage.setItem("wp-dungeon-level", ok ? String(lv) : ""); } catch (e) {}
+  }
+  who.addEventListener("change", () => { if (who.value) input.value = who.value; apply(); });
+  input.addEventListener("input", () => { who.value = ""; apply(); });
+  only.addEventListener("change", apply);
+  try { const saved = localStorage.getItem("wp-dungeon-level"); if (saved && !input.value) input.value = saved; } catch (e) {}
+  apply();
+})();
+</script>
+"""
+
 FOLD_BUTTONS = (
     '<button type="button" data-fold="open">Tout déplier</button>'
     '<button type="button" data-fold="close">Tout replier</button>'
@@ -424,7 +493,7 @@ FOLD_BUTTONS = (
 def page(title: str, active: str, body: str, scripts: str = "") -> web.Response:
     nav = "".join(
         f'<a href="{href}" class="{"active" if key == active else ""}">{label}</a>'
-        for key, href, label in (("persos", "/", "Persos"), ("metiers", "/metiers", "Métiers"))
+        for key, href, label in (("persos", "/", "Persos"), ("metiers", "/metiers", "Métiers"), ("donjons", "/donjons", "Donjons"))
     )
     themes = "".join(f'<option value="{k}">{esc(v)}</option>' for k, v in THEMES.items())
     document = f"""<!doctype html>
@@ -968,6 +1037,82 @@ class WebSite:
         body = f"<h1 class=\"title\">{esc(label)}</h1><h2>Qui l'a</h2>{who}<h2>Recettes</h2>{recipes_html}"
         return page(label, "metiers", body, FILTER_SCRIPT)
 
+    async def dungeons(self, request: web.Request) -> web.Response:
+        gid = self._scope()
+        characters = sorted(
+            (c for c in self.db.guild_characters(gid) if c.level),
+            key=lambda c: (-(c.level or 0), normalize(c.name)),
+        )
+        lo, hi = dungeons.LEVEL_MIN, dungeons.LEVEL_MAX
+        span = hi - lo
+
+        def players_in(low: int, high: int) -> str:
+            inside = [c for c in characters if low <= (c.level or 0) <= high]
+            if not inside:
+                return '<span class="muted">—</span>'
+            shown = "".join(
+                f'<a href="/perso/{c.id}" title="{esc(c.name)} · niv. {c.level}">{avatar_html(c)}</a>' for c in inside[:8]
+            )
+            more = f'<span class="more">+{len(inside) - 8}</span>' if len(inside) > 8 else ""
+            return f'<div class="who-avatars">{shown}{more}</div>'
+
+        def name_cell(name: str, english: str, new: bool, zone: str) -> str:
+            badge = '<span class="badge-new">Nouveau</span>' if new else ""
+            return (
+                f'<td class="dname"><b>{esc(name)}{badge}</b><span class="en">{esc(english)}</span>'
+                f'<span class="zm">📍 {esc(zone)}</span></td>'
+            )
+
+        rows = []
+        for d in dungeons.DUNGEONS:
+            start = max(d.low, lo)
+            left = (start - lo) / span * 100
+            width = max((d.high - start) / span * 100, 2)
+            side = f'<div class="side {d.side}">Côté {d.side.capitalize()}</div>' if d.side else ""
+            search = normalize(" ".join([d.name, d.english, d.zone]))
+            rows.append(
+                f'<tr data-search="{esc(search)}" data-low="{d.low}" data-high="{d.high}">'
+                f'{name_cell(d.name, d.english, d.new, d.zone)}<td class="zc">{esc(d.zone)}{side}</td>'
+                f'<td class="lv"><b>{d.low}–{d.high}</b><div class="lbar">'
+                f'<span style="left:{left:.1f}%;width:{width:.1f}%"></span><i></i></div></td>'
+                f'<td class="num pc">{d.players}</td><td>{players_in(d.low, d.high)}</td></tr>'
+            )
+        raid_rows = []
+        for r in dungeons.RAIDS:
+            status = dungeons.raid_status(r)
+            note = f'<div class="side">{esc(r.note)}</div>' if r.note else ""
+            raid_rows.append(
+                f'<tr>{name_cell(r.name, r.english, r.new, r.zone)}<td class="zc">{esc(r.zone)}{note}</td>'
+                f'<td class="num">{r.players}</td><td class="num">{r.bosses or "?"}</td>'
+                f'<td class="{"status-open" if status == "Ouvert" else "muted"}">{esc(status)}</td>'
+                f"<td>{players_in(dungeons.RAID_LEVEL, dungeons.RAID_LEVEL)}</td></tr>"
+            )
+        options = "".join(f'<option value="{c.level}">{esc(c.name)} ({c.level})</option>' for c in characters)
+        body = f"""
+<h1 class="title">Donjons</h1>
+<p class="sub">{len(dungeons.DUNGEONS)} donjons de WoW Forever, du plus bas au plus haut niveau, avec les persos du
+serveur qui sont dans la tranche. Choisis un niveau pour voir ce qui est à faire.</p>
+<div class="filters">
+  <input id="q" type="search" placeholder="Chercher un donjon, une zone…" autocomplete="off">
+  <div class="lvl-pick">
+    <select id="lvl-who" aria-label="Perso"><option value="">Niveau d'un perso…</option>{options}</select>
+    <input id="lvl" type="number" min="1" max="60" placeholder="Niveau" aria-label="Niveau">
+    <label><input id="lvl-only" type="checkbox"> Seulement sa tranche</label>
+  </div>
+</div>
+<div class="table-wrap"><table id="dungeons" class="dtable" data-min="{lo}" data-max="{hi}">
+<thead><tr><th>Donjon</th><th class="zc">Zone</th><th>Niveaux</th><th class="num pc">Joueurs</th>
+<th>Persos dans la tranche</th></tr></thead>
+<tbody>{"".join(rows)}</tbody></table></div>
+<h2>Raids</h2>
+<div class="table-wrap"><table class="dtable">
+<thead><tr><th>Raid</th><th class="zc">Accès</th><th class="num">Joueurs</th><th class="num">Boss</th><th>Ouverture</th>
+<th>Persos {dungeons.RAID_LEVEL}</th></tr></thead>
+<tbody>{"".join(raid_rows)}</tbody></table></div>
+<p class="src">Niveaux conseillés, pas des verrous d'entrée. D'après Blizzard et les récapitulatifs de PC Games et
+Warcraft Tavern ({dungeons.SOURCES_CHECKED}) : l'API Blizzard ne fournit pas le journal des donjons de Forever.</p>"""
+        return page("Donjons", "donjons", body, FILTER_SCRIPT + DUNGEON_SCRIPT)
+
     # ------------------------------------------------------------ serveur
 
     def app(self) -> web.Application:
@@ -976,6 +1121,7 @@ class WebSite:
         app.router.add_get("/perso/{id}", self.character)
         app.router.add_get("/metiers", self.professions)
         app.router.add_get("/metier/{key}", self.profession)
+        app.router.add_get("/donjons", self.dungeons)
         return app
 
     async def start(self, host: str, port: int) -> None:

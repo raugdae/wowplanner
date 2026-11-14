@@ -735,7 +735,8 @@ def test_website_pages_and_no_personal_info(tmp_path):
         await site.start("127.0.0.1", 0)
         port = next(iter(site._runner.sites))._server.sockets[0].getsockname()[1]
         async with aiohttp.ClientSession() as session:
-            for path in ("/", f"/perso/{hollie.id}", "/metiers", "/metier/alchimie", "/perso/99999", "/metier/inconnu"):
+            for path in ("/", f"/perso/{hollie.id}", "/metiers", "/metier/alchimie", "/donjons", "/perso/99999",
+                         "/metier/inconnu"):
                 async with session.get(f"http://127.0.0.1:{port}{path}") as resp:
                     pages[path] = (resp.status, await resp.text())
         await site.stop()
@@ -1125,6 +1126,65 @@ def test_gear_stats_priorities_and_categories(tmp_path):
     assert 'id="spec-data"' in html
     assert '<td class="prof"><small>Alchimie</small><b>139</b></td><td class="prof"><span class="none">—</span></td>' in pages["/"]
     assert '<td class="sec split"><b>57</b></td>' in pages["/"]  # cuisine, 1re colonne secondaire
+
+
+def test_dungeons_data_and_page(tmp_path):
+    """Liste des donjons cohérente, et page qui place les persos du serveur dans les bonnes tranches."""
+    import asyncio
+    from datetime import date
+
+    import aiohttp
+
+    from wowplanner import dungeons
+    from wowplanner.db import Database
+    from wowplanner.web import WebSite
+
+    names = [d.name for d in dungeons.DUNGEONS]
+    assert len(names) == len(set(names)) == 35
+    assert sum(d.new for d in dungeons.DUNGEONS) == 9
+    for d in dungeons.DUNGEONS:
+        assert dungeons.LEVEL_MIN <= d.low <= d.high <= dungeons.LEVEL_MAX
+    lows = [d.low for d in dungeons.DUNGEONS]
+    assert lows == sorted(lows)  # du plus bas au plus haut niveau
+    krol = next(d for d in dungeons.DUNGEONS if d.english == "Krol'dok Stronghold")
+    assert (krol.low, krol.high) == (40, 45)  # tranche corrigée par Blizzard
+    assert dungeons.in_range(krol, 42) and not dungeons.in_range(krol, 46) and not dungeons.in_range(krol, None)
+    ony = next(r for r in dungeons.RAIDS if r.english == "Onyxia's Lair")
+    assert dungeons.raid_status(ony, date(2026, 12, 1)) == "Ouvre le 09/12/2026"
+    assert dungeons.raid_status(ony, date(2026, 12, 9)) == "Ouvert"
+    assert dungeons.raid_status(dungeons.RAIDS[-1]) == "À venir"
+
+    db = Database(tmp_path / "t.db")
+    low = db.add_character(1, "Petit Gnome", "mage", "gnome")
+    top = db.add_character(2, "Grand Nain", "guerrier", "nain")
+    db.add_character(3, "Sans Niveau", "pretre", "humain")
+    for user in (1, 2, 3):
+        db.touch_member(42, user)
+    db.set_armory_look(low.id, 25, None, None)
+    db.set_armory_look(top.id, 60, None, None)
+    site = WebSite(db, lambda: 42)
+    pages = {}
+
+    async def scenario():
+        await site.start("127.0.0.1", 0)
+        port = next(iter(site._runner.sites))._server.sockets[0].getsockname()[1]
+        async with aiohttp.ClientSession() as session:
+            async with session.get(f"http://127.0.0.1:{port}/donjons") as resp:
+                pages["d"] = (resp.status, await resp.text())
+        await site.stop()
+
+    asyncio.run(scenario())
+    db.close()
+    status, html = pages["d"]
+    assert status == 200 and 'href="/donjons" class="active"' in html
+    from html import unescape
+    rows = {unescape(r.split("<")[0]): r.split("</tr>")[0] for r in html.split('<td class="dname"><b>')[1:]}
+    assert "Petit Gnome" in rows["Profondeurs de Brassenoire"] and "Grand Nain" not in rows["Profondeurs de Brassenoire"]
+    assert "Grand Nain" in rows["Scholomance"] and "Petit Gnome" not in rows["Scholomance"]
+    assert "Grand Nain" in rows["Repaire d'Onyxia"]  # raids : persos niveau 60
+    assert "Sans Niveau" not in html
+    assert '<option value="60">Grand Nain (60)</option>' in html
+    assert 'data-low="40" data-high="45"' in html
 
 
 def test_stat_priorities_from_guide(tmp_path):

@@ -289,7 +289,11 @@ Un petit site public, en lecture seule, pour parcourir les persos et les métier
 - **Métiers** : qui a chaque métier et à quel niveau, et toutes les recettes connues sur le serveur, avec recherche
   (nom de recette, composant ou effet, ex. *agilité*) et liens vers les persos qui savent les faire. Chaque recette
   montre ce que fait l'objet, comme l'infobulle du jeu : emplacement, armure, dégâts, stats, effets « Utiliser » /
-  « Équipé », niveau requis, nom coloré selon la qualité (et l'effet pour les enchantements).
+  « Équipé », niveau requis, nom coloré selon la qualité (et l'effet pour les enchantements) ;
+- **Donjons** : les 35 donjons de WoW Forever (dont les 9 nouveaux) avec zone et tranche de niveau conseillée, les
+  persos du serveur qui sont dans chaque tranche, et un choix de niveau (ou d'un perso) qui met en avant ce qui est à
+  faire. Plus les raids (joueurs, boss, date d'ouverture). L'API Blizzard n'a pas le journal des donjons de Forever :
+  la liste est dans `wowplanner/dungeons.py`, à retoucher si Blizzard change des tranches.
 
 **Aucune info personnelle** : ni pseudo Discord, ni identifiant, ni BattleTag, et rien qui relie deux persos au même
 joueur. Le site lit la même base que le bot (dans le même conteneur), donc il est toujours à jour. Il montre les persos
