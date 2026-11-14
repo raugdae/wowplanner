@@ -92,6 +92,67 @@ def group_by_family(recipes: list[GuildRecipe]) -> list[tuple[str, list[GuildRec
     return grouped
 
 
+# Emplacements d'armure, dans l'ordre de la fiche du jeu.
+_ARMOR_SLOT_ORDER = (
+    "HEAD", "NECK", "SHOULDER", "CLOAK", "CHEST", "ROBE", "BODY", "TABARD", "WRIST", "HAND", "WAIST", "LEGS", "FEET",
+    "FINGER", "TRINKET", "SHIELD", "HOLDABLE",
+)
+
+
+def recipe_category(recipe: GuildRecipe) -> tuple[tuple, str] | None:
+    """(clé de tri, libellé) d'après l'objet fabriqué ; None si l'objet n'est pas encore connu."""
+    item = recipe.item or {}
+    if recipe.crafted_item_id is None:
+        # Enchantements (pas d'objet) : « Enchantement de bracelets - Endurance » → « Enchantement de bracelets ».
+        head = recipe.name.split(" - ")[0].strip() if " - " in recipe.name else "Enchantements"
+        return (8, normalize(head)), head
+    cls = item.get("class")
+    if cls is None:
+        return None
+    if cls == 7:
+        return (0,), "Composants d'artisanat"
+    if cls == 5:
+        return (1,), "Réactifs"
+    if cls == 0:
+        sub = item.get("subclass_name") or "Consommables"
+        sub = "Consommables divers" if normalize(sub) in ("autre", "consommable", "divers") else sub
+        return (2, normalize(sub)), sub
+    if cls == 4:
+        slot = item.get("slot") or ""
+        order = _ARMOR_SLOT_ORDER.index(slot) if slot in _ARMOR_SLOT_ORDER else len(_ARMOR_SLOT_ORDER)
+        return (3, order), f"Armure : {item.get('slot_name') or 'divers'}"
+    if cls == 2:
+        return (4,), "Armes"
+    if cls == 6:
+        return (5,), "Projectiles"
+    if cls in (1, 11):
+        return (6,), "Sacs et carquois"
+    return (7, normalize(item.get("class_name") or "")), item.get("class_name") or OTHER_FAMILY
+
+
+def group_by_category(recipes: list[GuildRecipe]) -> list[tuple[str, list[GuildRecipe]]]:
+    """[(catégorie, recettes)] selon le type d'objet fabriqué (composants d'artisanat, potions, armure : torse…).
+    Repli sur les familles de noms tant que les objets ne sont pas connus (avant la récupération des détails)."""
+    categories: dict[str, tuple[tuple, list[GuildRecipe]]] = {}
+    unknown: list[GuildRecipe] = []
+    for recipe in recipes:
+        found = recipe_category(recipe)
+        if found is None:
+            unknown.append(recipe)
+            continue
+        key, label = found
+        categories.setdefault(label, (key, []))[1].append(recipe)
+    if not any(r.crafted_item_id is not None for rs in (v[1] for v in categories.values()) for r in rs) and unknown:
+        return group_by_family(recipes)  # rien de classé par objet : l'ancien regroupement par nom
+    grouped = [
+        (label, sorted(members, key=lambda r: (normalize(r.name), r.id)))
+        for label, (_, members) in sorted(categories.items(), key=lambda kv: (kv[1][0], kv[0]))
+    ]
+    if unknown:
+        grouped.append((OTHER_FAMILY, sorted(unknown, key=lambda r: (normalize(r.name), r.id))))
+    return grouped
+
+
 def crafters_text(names: list[str]) -> str:
     """Prénoms des persos (le prénom suffit et prend moins de place), « +N » au-delà de 6."""
     first_names = [n.split()[0] if n.split() else n for n in names]

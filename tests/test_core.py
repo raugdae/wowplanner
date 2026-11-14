@@ -1040,3 +1040,80 @@ def test_talents_parsing_and_site(tmp_path):
     assert 'class="tal off r"' in html and "grid-column:4" in html
     assert "Rang suivant :<span>Rang deux</span>" in html
     assert "Aussi : Doublon perdu 1/1" in html  # hors grille mais avec des points
+
+
+def test_gear_stats_priorities_and_categories(tmp_path):
+    """Équipement + stats de l'armurerie, spé devinée, stats prioritaires mises en avant, recettes par type."""
+    import asyncio
+
+    import aiohttp
+
+    from wowplanner import gear
+    from wowplanner.armory import icon_url, parse_item
+    from wowplanner.db import Database, GuildRecipe
+    from wowplanner.recipes import group_by_category
+    from wowplanner.web import WebSite
+
+    assert icon_url("https://render.worldofwarcraft.com/forever-eu/icons/56/1.jpg") == \
+        "https://render.worldofwarcraft.com/eu/icons/56/1.jpg"
+    equipment = gear.parse_equipment({"equipped_items": [
+        {"slot": {"type": "SHOULDER"}, "item": {"id": 4314}, "name": "Épaulières", "quality": {"type": "UNCOMMON"},
+         "level": {"value": 22}, "inventory_type": {"type": "SHOULDER", "name": "Epaule"},
+         "stats": [{"display": {"display_string": "+4 Endurance"}},
+                   {"display": {"display_string": "+4 Puissance des sorts"}}],
+         "enchantments": [{"display_string": "+3 Intelligence"}]},
+        {"slot": {"type": "MAIN_HAND"}, "item": {"id": 1}, "name": "Grosse hache", "inventory_type": {"type": "TWOHWEAPON"}},
+    ]})
+    assert equipment[0]["lines"][-1] == ["enchant", "+3 Intelligence"] and equipment[1]["two_hand"]
+    stats = gear.parse_stats({"health": 515, "spell_hit": {"value": 17.0}, "intellect": {"base": 46, "effective": 52},
+                              "power_type": {"name": "Mana"}, "power": 1174})
+    assert stats["intellect"] == 52 and stats["power_name"] == "Mana"
+
+    talents = lambda spec_id: [{"active": True, "specs": [{"spec_id": spec_id, "points": 11, "talents": []}]}]  # noqa: E731
+    assert gear.detect_spec(talents(78), "heal", None) == "shadow"
+    assert gear.detect_spec(talents(134), "tank", None) == "feral_bear"
+    assert gear.detect_spec(talents(256), None, equipment) == "fury_2h"
+    assert gear.detect_spec([], None, None) is None
+    assert gear.priority_ranks("shadow")["spell_hit"] == 1
+    assert gear.line_has_priority("+4 Puissance des sorts", gear.stat_matcher("shadow"))
+    assert not gear.line_has_priority("+4 Endurance", gear.stat_matcher("shadow"))
+
+    # Recettes classées d'après l'objet fabriqué
+    def recipe(rid, name, item_class=None, slot=None, crafted=True, sub=None):
+        info = {"class": item_class, "slot": slot, "slot_name": slot and slot.title(), "subclass_name": sub, "lines": []}
+        return GuildRecipe(rid, name, [], [], crafted_item_id=rid if crafted else None,
+                           item=info if item_class is not None else None)
+    groups = dict(group_by_category([
+        recipe(1, "Rouleau d'étoffe en lin", 7), recipe(2, "Potion de soins", 0, sub="Potions"),
+        recipe(3, "Pantalon en lin", 4, "LEGS"), recipe(4, "Enchantement de bracelets - Endurance", crafted=False),
+        recipe(5, "Truc inconnu"),
+    ]))
+    assert list(groups) == ["Composants d'artisanat", "Potions", "Armure : Legs", "Enchantement de bracelets", "Autres"]
+    assert parse_item({"item_class": {"id": 7, "name": "Artisanat"}, "inventory_type": {"type": "NON_EQUIP"}})["class"] == 7
+
+    db = Database(tmp_path / "t.db")
+    c = db.add_character(1, "Hollie Tétine", "pretre", "humain", "heal")
+    db.touch_member(42, 1)
+    db.set_armory_look(c.id, 23, None, None, talents(78), stats, equipment)
+    db.replace_professions(c.id, {"alchimie": 139, "cuisine": 57})
+    db.set_item_icons({4314: "https://render.worldofwarcraft.com/forever-eu/icons/56/9.jpg"})
+    site = WebSite(db, lambda: 42)
+    pages = {}
+
+    async def scenario():
+        await site.start("127.0.0.1", 0)
+        port = next(iter(site._runner.sites))._server.sockets[0].getsockname()[1]
+        async with aiohttp.ClientSession() as session:
+            for path in ("/", f"/perso/{c.id}"):
+                async with session.get(f"http://127.0.0.1:{port}{path}") as resp:
+                    pages[path] = await resp.text()
+        await site.stop()
+
+    asyncio.run(scenario())
+    db.close()
+    html = pages[f"/perso/{c.id}"]
+    assert 'class="doll"' in html and "/eu/icons/56/9.jpg" in html
+    assert "Stats à pousser en <b>Ombre</b>" in html
+    assert 'class="srow capped"' in html and "17 % / 16 %" in html  # toucher au cap : barré, on passe à la suite
+    assert 'class="stat prio">+4 Puissance des sorts' in html and 'class="slot prio"' in html
+    assert 'class="mini"' in pages["/"]

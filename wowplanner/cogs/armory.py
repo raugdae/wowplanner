@@ -24,6 +24,7 @@ from ..armory import (
     parse_talent_tree,
 )
 from ..db import Character
+from ..gear import parse_equipment, parse_stats
 from ..gamedata import class_label, profession_label, race_label
 from ..recipes import Field, build_pages, crafted_by_map, filter_recipes
 
@@ -306,7 +307,10 @@ class ArmoryCog(commands.Cog):
     def apply(self, character: Character, sheet: ArmorySheet) -> SyncResult:
         """Enregistre ce que l'armurerie nous apprend sur un perso déclaré."""
         result = SyncResult(found=True, sheet=sheet)
-        self.db.set_armory_look(character.id, sheet.level, sheet.avatar_url, sheet.render_url, sheet.talents)
+        self.db.set_armory_look(
+            character.id, sheet.level, sheet.avatar_url, sheet.render_url, sheet.talents,
+            parse_stats(sheet.statistics), parse_equipment(sheet.equipment),
+        )
         skills = sheet.profession_skills()
         if skills is not None:
             self.db.replace_professions(character.id, {k: skill for k, (skill, _) in skills.items()})
@@ -347,7 +351,31 @@ class ArmoryCog(commands.Cog):
         sheet, found = await self.fetch(character.name, max_age=max_age)
         if sheet is None:
             return SyncResult(found=found)
-        return self.apply(character, sheet)
+        result = self.apply(character, sheet)
+        await self.fetch_item_icons({i["id"] for i in parse_equipment(sheet.equipment) or []})
+        return result
+
+    async def fetch_item_icons(self, item_ids: set[int]) -> None:
+        """Icônes des objets portés pas encore connues (une seule demande par objet, jamais redemandée)."""
+        if self.client is None:
+            return
+        missing = sorted(i for i in item_ids if isinstance(i, int) and i not in self.db.item_icons(item_ids))
+        if not missing:
+            return
+        client = self.client
+        semaphore = asyncio.Semaphore(RECIPE_FETCH_CONCURRENCY)
+
+        async def one(item_id: int) -> tuple[int, str | None] | None:
+            async with semaphore:
+                try:
+                    return item_id, await client.icon("item", item_id)
+                except (ArmoryError, aiohttp.ClientError, asyncio.TimeoutError) as exc:
+                    log.info("Icône de l'objet %s : %s", item_id, exc)
+                    return None
+
+        found = [r for r in await asyncio.gather(*(one(i) for i in missing)) if r]
+        if found:
+            self.db.set_item_icons(dict(found))
 
     async def refresh(
         self, interaction: discord.Interaction, characters: list[Character], title: str, cooldown: bool

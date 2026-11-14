@@ -1,6 +1,6 @@
 [project]
 name = "wowplanner"
-version = "1.7.0"
+version = "1.8.0"
 description = "Bot Discord d'organisation de sorties donjon/raid pour WoW Forever"
 requires-python = ">=3.11"
 dependencies = ["discord.py>=2.4,<3", "python-dotenv>=1.0", "tzdata>=2024.1"]

@@ -17,8 +17,12 @@ from typing import Callable
 from aiohttp import web
 
 from .db import Character, Database, GuildRecipe
-from .gamedata import CLASSES, PROFESSIONS, class_label, is_primary, profession_label, race_label, roles_for
-from .recipes import crafted_by_map, expand_reagents, filter_recipes, group_by_family, normalize
+from .gamedata import (
+    CLASSES, MAX_PROFESSION_SKILL, PROFESSIONS, class_label, is_primary, profession_label, race_label, roles_for,
+)
+from .recipes import crafted_by_map, expand_reagents, filter_recipes, group_by_category, normalize
+from . import gear
+from .armory import icon_url
 from .roles import LABELS, ROLES
 
 log = logging.getLogger(__name__)
@@ -167,7 +171,93 @@ details.fold.big > .fold-body { padding:6px 0 0; }
   filter:drop-shadow(0 8px 18px rgba(0,0,0,.6)); }
 @media (max-width:700px) { .hero { flex-direction:column-reverse; align-items:stretch; }
   .hero .render { width:min(300px, 100%); margin:0 auto; } }
+/* Métiers de la fiche perso : une colonne par métier. */
+.prof-wrap { display:inline-block; max-width:100%; }
+.prof-table th, .prof-table td { text-align:center; min-width:92px; padding:8px 12px; }
+.prof-table th { white-space:nowrap; }
+.prof-table td b { font-size:20px; color:var(--accent); }
+.prof-table .split { border-left:3px double var(--line); }
+.bar { height:5px; margin-top:5px; background:var(--panel2); border-radius:3px; overflow:hidden; }
+.bar span { display:block; height:100%; background:var(--accent); border-radius:3px; }
+/* Liste des persos : métiers en mini-tableau (nom au-dessus, niveau en dessous). */
+table.mini { width:auto; border-collapse:collapse; }
+table.mini th, table.mini td { background:none; border:none; padding:0 10px 0 0; text-align:left; font-size:11px;
+  color:var(--muted); font-weight:400; white-space:nowrap; }
+table.mini td { font-size:14px; font-weight:700; color:var(--accent); padding-top:1px; }
+table.mini .split { border-left:2px solid var(--line); padding-left:10px; }
+/* Onglets (recettes par métier). */
+.tabs { display:flex; flex-wrap:wrap; gap:6px; margin:10px 0 4px; border-bottom:1px solid var(--line); }
+.tabs button { background:var(--panel); color:var(--text); border:1px solid var(--line); border-bottom:none;
+  border-radius:8px 8px 0 0; padding:8px 14px; font:inherit; cursor:pointer; margin-bottom:-1px; }
+.tabs button .n { color:var(--muted); font-size:12px; margin-left:6px; }
+.tabs button.active { background:var(--panel2); color:var(--accent); border-color:var(--accent); font-weight:700; }
+.tabs button:disabled { opacity:.45; cursor:default; }
+/* Armurerie : équipement façon fiche du jeu + caractéristiques. */
+.armory { display:grid; grid-template-columns:minmax(0, 1fr) 300px; gap:18px; align-items:start; margin:10px 0 6px; }
+.armory .main { min-width:0; }
+.armory .main .talents { margin:14px 0 0; }
+.doll { display:grid; grid-template-columns:minmax(0, 1fr) minmax(170px, 250px) minmax(0, 1fr);
+  grid-template-areas:"left center right" "weapons weapons weapons"; gap:8px 12px; background:var(--panel);
+  border:1px solid var(--line); border-radius:12px; padding:12px; }
+.doll .left { grid-area:left; } .doll .right { grid-area:right; } .doll .center { grid-area:center; align-self:center; }
+.doll .weapons { grid-area:weapons; display:flex; justify-content:center; gap:12px; flex-wrap:wrap; }
+.doll .center .frame { width:100%; aspect-ratio:1 / 1.25; overflow:hidden; position:relative; }
+.doll .center .frame::before { content:""; position:absolute; inset:10% 0 0; border-radius:50%;
+  background:radial-gradient(closest-side, var(--glow), transparent); }
+.doll .center img { position:relative; display:block; width:320%; max-width:none; margin:-72% 0 0 -110%;
+  filter:drop-shadow(0 8px 18px rgba(0,0,0,.6)); }
+.slots { display:flex; flex-direction:column; gap:6px; min-width:0; }
+.slot { position:relative; display:flex; align-items:center; gap:8px; min-width:0; cursor:help; border-radius:8px; }
+.left .slot { flex-direction:row-reverse; text-align:right; }
+.weapons .slot { width:200px; }
+.slot img, .slot .ph { flex:none; width:38px; height:38px; border-radius:6px; border:2px solid #4a4a4a;
+  background:var(--panel2); display:block; }
+.slot .txt { min-width:0; line-height:1.2; }
+.slot .nm { font-size:13px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.slot .sb { font-size:11px; color:var(--muted); }
+.slot.empty { cursor:default; opacity:.55; }
+.slot.prio img { box-shadow:0 0 0 2px var(--accent); }
+.slot:focus { outline:2px solid var(--accent); outline-offset:2px; }
+.slot .tt, .tal .tt { display:none; position:absolute; top:calc(100% + 6px); left:0; width:270px; z-index:30;
+  background:rgba(10,13,22,.97); color:#eee; border:1px solid #6a5a32; border-radius:8px; padding:8px 10px;
+  font-size:13px; line-height:1.4; box-shadow:0 6px 22px rgba(0,0,0,.65); cursor:auto; text-align:left;
+  font-weight:400; white-space:normal; }
+.left .slot .tt { left:auto; right:0; }
+.slot:hover .tt, .slot:focus .tt { display:block; }
+.tt .type, .tt .bind, .tt .req, .tt .ilvl { color:#9a9a9a; }
+.tt .stat.prio { color:#fff; font-weight:700; }
+.tt .stat.prio::after { content:" ★"; color:#f2c75c; }
+.tt .effect { color:#3ee05a; } .tt .enchant { color:#3ee05a; } .tt .set { color:#f2c75c; }
+.tt .flavor { color:#e6c35c; font-style:italic; }
+.statbox { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:12px 14px; }
+.statbox h3 { margin:0 0 8px; font-size:16px; }
+.statbox h4 { margin:12px 0 4px; font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); }
+.srow { display:flex; align-items:center; gap:8px; padding:3px 6px; border-radius:6px; font-size:14px; }
+.srow span { flex:1; } .srow b { font-variant-numeric:tabular-nums; }
+.srow i { font-style:normal; font-size:11px; font-weight:700; min-width:18px; height:18px; line-height:18px;
+  text-align:center; border-radius:9px; background:var(--panel2); color:var(--muted); }
+.srow.p1, .srow.p2, .srow.p3 { background:linear-gradient(90deg, rgba(242,199,92,.22), transparent); }
+.srow.p1 i, .srow.p2 i, .srow.p3 i { background:#f2c75c; color:#1a1406; }
+.srow.p1 span, .srow.p2 span, .srow.p3 span { font-weight:700; }
+.srow.capped b::after { content:" ✓"; color:#3ee05a; }
+.prio-box { background:var(--panel2); border:1px solid var(--line); border-radius:10px; padding:8px 10px; font-size:13px; }
+.prio-box .chips { display:flex; flex-wrap:wrap; gap:4px; margin-top:6px; }
+.chip { border:1px solid var(--line); border-radius:999px; padding:1px 8px; font-size:12px; color:var(--muted); }
+.chip.top { border-color:#f2c75c; color:#f2c75c; font-weight:700; }
+.chip.done { text-decoration:line-through; opacity:.6; }
+.statbox .src { font-size:11px; color:var(--muted); margin:10px 0 0; }
+@media (max-width:900px) { .armory { grid-template-columns:minmax(0, 1fr); } }
+@media (max-width:640px) {
+  .doll { grid-template-columns:minmax(0, 1fr) minmax(0, 1fr); grid-template-areas:"center center" "left right" "weapons weapons";
+    padding:10px; gap:8px; }
+  .slot img, .slot .ph { width:34px; height:34px; }
+  .doll .center { width:min(240px, 100%); margin:0 auto; }
+  .left .slot { flex-direction:row; text-align:left; } .left .slot .tt { left:0; right:auto; }
+  .right .slot .tt { left:auto; right:0; }
+  .weapons .slot { width:100%; }
+}
 /* Arbres de talents façon jeu : grille 4 colonnes, infobulle au survol (ou au toucher sur mobile). */
+.talents { margin:14px 0 6px; }
 .talent-group h3 { margin:14px 0 8px; font-size:15px; color:var(--muted); font-weight:600; }
 .trees { display:flex; flex-wrap:wrap; gap:16px; align-items:flex-start; }
 .tree { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:10px 12px 14px; }
@@ -186,9 +276,7 @@ details.fold.big > .fold-body { padding:6px 0 0; }
            font-weight:700; line-height:16px; padding:0 4px; border-radius:6px; border:1px solid #444; }
 .tal.max .rk { color:#f2c75c; }
 .tal.off .rk { color:#8a8a8a; }
-.tal .tt { display:none; position:absolute; top:calc(100% + 9px); left:-4px; width:260px; z-index:20;
-           background:rgba(10,13,22,.97); color:#eee; border:1px solid #6a5a32; border-radius:8px; padding:8px 10px;
-           font-size:13px; line-height:1.4; box-shadow:0 6px 22px rgba(0,0,0,.65); cursor:auto; text-align:left; }
+.tal .tt { top:calc(100% + 9px); left:-4px; width:260px; }
 .tal.r .tt { left:auto; right:-4px; }
 .tal:hover .tt, .tal:focus .tt { display:block; }
 .tal:focus { outline:2px solid var(--accent); outline-offset:2px; }
@@ -199,6 +287,7 @@ details.fold.big > .fold-body { padding:6px 0 0; }
 .tt .next { margin-top:6px; color:#9a9a9a; }
 .tt .next span { display:block; color:#f2c75c; }
 .tree .extra { margin-top:10px; font-size:13px; color:var(--muted); max-width:206px; }
+@media (max-width:640px) { .trees { justify-content:center; } }
 @media (max-width:420px) { .tgrid { --ts:38px; gap:8px; } .tal .tt { width:220px; } }
 footer { color:var(--muted); font-size:12px; text-align:center; padding:24px; }
 @media (max-width:600px) { header .theme { margin-left:0; width:100%; } header select { width:100%; } }
@@ -259,6 +348,13 @@ FILTER_SCRIPT = """
     else if (searching) folds.forEach(d => d.open = !!d.dataset.default);
     searching = !!text;
     if (count) count.textContent = shown;
+    document.querySelectorAll(".tabs button[data-tab]").forEach(b => {
+      const panel = document.querySelector(`[data-panel="${b.dataset.tab}"]`);
+      const n = panel ? panel.querySelectorAll("[data-search]:not([hidden])").length : 0;
+      const badge = b.querySelector(".n");
+      if (badge) badge.textContent = n;
+      b.disabled = !!text && !n;
+    });
   }
   if (q) q.addEventListener("input", apply);
   selects.forEach(s => s.addEventListener("change", apply));
@@ -267,6 +363,24 @@ FILTER_SCRIPT = """
     folds.forEach(d => { if (!d.hidden) d.open = open; });
   }));
   apply();
+})();
+</script>
+"""
+
+TABS_SCRIPT = """
+<script>
+(() => {
+  const buttons = [...document.querySelectorAll(".tabs button[data-tab]")];
+  const panels = [...document.querySelectorAll("[data-panel]")];
+  function show(key) {
+    buttons.forEach(b => b.classList.toggle("active", b.dataset.tab === key));
+    panels.forEach(p => p.hidden = p.dataset.panel !== key);
+    try { localStorage.setItem("wowplanner-tab", key); } catch (e) {}
+  }
+  buttons.forEach(b => b.addEventListener("click", () => show(b.dataset.tab)));
+  let saved = null;
+  try { saved = localStorage.getItem("wowplanner-tab"); } catch (e) {}
+  if (buttons.length) show(buttons.some(b => b.dataset.tab === saved) ? saved : buttons[0].dataset.tab);
 })();
 </script>
 """
@@ -352,7 +466,7 @@ def talent_tree_html(tree: dict, ranks: dict[int, tuple[int, str | None]], point
         col = n["col"] - base
         state = "off" if not rank else ("max" if rank >= n["max"] else "on")
         icon = (
-            f'<img src="{esc(n["icon"])}" alt="" loading="lazy" referrerpolicy="no-referrer">'
+            f'<img src="{esc(icon_url(n["icon"]))}" alt="" loading="lazy" referrerpolicy="no-referrer">'
             if (n.get("icon") or "").startswith("https://") else ""
         )
         cells.append(
@@ -366,7 +480,7 @@ def talent_tree_html(tree: dict, ranks: dict[int, tuple[int, str | None]], point
         if n not in in_grid and n["talent"] not in grid_talents and ranks.get(n["talent"], (0,))[0]
     ]
     icon = (
-        f'<img class="ticon" src="{esc(tree["icon"])}" alt="" referrerpolicy="no-referrer">'
+        f'<img class="ticon" src="{esc(icon_url(tree["icon"]))}" alt="" referrerpolicy="no-referrer">'
         if (tree.get("icon") or "").startswith("https://") else ""
     )
     return (
@@ -383,7 +497,7 @@ def talents_html(c: Character, trees: list[dict]) -> tuple[str, str]:
         return "", ""
     groups = sorted(c.talents, key=lambda g: not g.get("active"))
     if not groups or not any(s.get("points") for g in groups for s in g.get("specs", [])):
-        return "", '<h2>Talents</h2><p class="empty">Pas encore de points de talent.</p>'
+        return "", '<p class="empty talents">Pas encore de points de talent.</p>'
 
     def summary(group: dict) -> str:
         if trees:
@@ -410,12 +524,29 @@ def talents_html(c: Character, trees: list[dict]) -> tuple[str, str]:
                 for s in group.get("specs", []) if s.get("points")
             )
         blocks.append(f'<div class="talent-group">{title}<div class="trees">{body}</div></div>')
-    section = (
-        '<details class="fold big" data-keep open><summary><span>Talents</span>'
-        f'<span class="n">{esc(summary(groups[0]))}</span></summary><div class="fold-body">'
-        + "".join(blocks) + "</div></details>"
+    # Directement sous le perso, sans titre de section : les trois arbres font partie de la fiche.
+    return summary(groups[0]), f'<div class="talents">{"".join(blocks)}</div>'
+
+
+def professions_table(c: Character) -> str:
+    """Métiers en tableau horizontal : un en-tête par métier, le niveau et une barre en dessous.
+    Principaux d'abord, séparés des secondaires par un trait plus marqué."""
+    if not c.professions:
+        return '<p class="empty">Aucun métier déclaré.</p>'
+    ordered = sorted(c.professions.items(), key=lambda kv: (not is_primary(kv[0]), kv[0]))
+    heads, cells = [], []
+    for i, (p, skill) in enumerate(ordered):
+        split = ' class="split"' if i and is_primary(ordered[i - 1][0]) and not is_primary(p) else ""
+        heads.append(f'<th{split}><a href="/metier/{esc(p)}">{esc(profession_label(p))}</a></th>')
+        pct = min(100, round(100 * skill / MAX_PROFESSION_SKILL)) if skill else 0
+        cells.append(
+            f'<td{split}><b>{skill if skill is not None else "?"}</b>'
+            f'<div class="bar"><span style="width:{pct}%"></span></div></td>'
+        )
+    return (
+        '<div class="table-wrap prof-wrap"><table class="prof-table">'
+        f'<thead><tr>{"".join(heads)}</tr></thead><tbody><tr>{"".join(cells)}</tr></tbody></table></div>'
     )
-    return summary(groups[0]), section
 
 
 def roles_html(c: Character) -> str:
@@ -425,12 +556,143 @@ def roles_html(c: Character) -> str:
 
 
 def professions_html(c: Character) -> str:
+    """Métiers d'un perso dans la liste : mini-tableau, nom au-dessus et niveau en dessous."""
     if not c.professions:
         return '<span class="muted">—</span>'
     ordered = sorted(c.professions.items(), key=lambda kv: (not is_primary(kv[0]), kv[0]))
-    return "".join(
-        f'<span class="tag">{esc(profession_label(p))}' + (f" <b>{skill}</b>" if skill is not None else "") + "</span>"
-        for p, skill in ordered
+    heads, cells = [], []
+    for i, (p, skill) in enumerate(ordered):
+        split = ' class="split"' if i and is_primary(ordered[i - 1][0]) and not is_primary(p) else ""
+        heads.append(f"<th{split}>{esc(profession_label(p))}</th>")
+        cells.append(f"<td{split}>{skill if skill is not None else '?'}</td>")
+    return f'<table class="mini"><tr>{"".join(heads)}</tr><tr>{"".join(cells)}</tr></table>'
+
+
+def _item_tooltip(item: dict, matcher) -> str:
+    color = QUALITY_COLORS.get(item.get("quality") or "", "#fff")
+    lines = "".join(
+        f'<div class="{esc(kind)}{" prio" if kind == "stat" and gear.line_has_priority(text, matcher) else ""}">'
+        f"{esc(text)}</div>"
+        for kind, text in item.get("lines", [])
+    )
+    ilvl = f'<div class="ilvl">Niveau d\'objet {item["ilvl"]}</div>' if item.get("ilvl") else ""
+    return f'<div class="tt"><b style="color:{color}">{esc(item["name"])}</b>{ilvl}{lines}</div>'
+
+
+def slot_html(slot: str, item: dict | None, icons: dict[int, str], matcher) -> str:
+    label = gear.SLOT_LABELS.get(slot, slot)
+    if not item:
+        return f'<div class="slot empty"><span class="ph"></span><div class="txt"><div class="sb">{esc(label)}</div></div></div>'
+    icon = icons.get(item.get("id"))
+    img = (
+        f'<img src="{esc(icon_url(icon))}" alt="" loading="lazy" referrerpolicy="no-referrer"'
+        f' style="border-color:{QUALITY_COLORS.get(item.get("quality") or "", "#4a4a4a")}">'
+        if icon and icon.startswith("https://") else
+        f'<span class="ph" style="border-color:{QUALITY_COLORS.get(item.get("quality") or "", "#4a4a4a")}"></span>'
+    )
+    prio = any(k == "stat" and gear.line_has_priority(t, matcher) for k, t in item.get("lines", []))
+    color = QUALITY_COLORS.get(item.get("quality") or "", "inherit")
+    sub = esc(label) + (f" · {item['ilvl']}" if item.get("ilvl") else "")
+    return (
+        f'<div class="slot{" prio" if prio else ""}" tabindex="0">{img}<div class="txt">'
+        f'<div class="nm" style="color:{color}">{esc(item["name"])}</div><div class="sb">{sub}</div></div>'
+        f"{_item_tooltip(item, matcher)}</div>"
+    )
+
+
+# (titre, [(clé, libellé, pourcentage ?)]) du panneau de caractéristiques.
+STAT_GROUPS = (
+    ("Général", (("health", "Santé", False), ("power", None, False), ("armor", "Armure", False))),
+    ("Attributs", (("strength", "Force", False), ("agility", "Agilité", False), ("stamina", "Endurance", False),
+                   ("intellect", "Intelligence", False), ("spirit", "Esprit", False))),
+    ("Mêlée", (("attack_power", "Puissance d'attaque", False), ("melee_hit", "Toucher", True),
+               ("melee_crit", "Critique", True), ("melee_haste", "Hâte", True), ("expertise", "Expertise", False),
+               ("main_hand_dps", "DPS de l'arme", False))),
+    ("Distance", (("ranged_attack_power", "Puissance d'attaque", False), ("ranged_hit", "Toucher", True),
+                  ("ranged_crit", "Critique", True), ("ranged_haste", "Hâte", True))),
+    ("Sorts", (("spell_power", "Puissance des sorts", False), ("spell_healing", "Puissance des soins", False),
+               ("spell_hit", "Toucher", True), ("spell_crit", "Critique", True), ("spell_haste", "Hâte", True),
+               ("mana_regen_combat", "Mana / 5 s en combat", False))),
+    ("Défense", (("defense", "Défense", False), ("dodge", "Esquive", True), ("parry", "Parade", True),
+                 ("block", "Blocage", True))),
+)
+ALWAYS_SHOWN = {"health", "power", "armor", "strength", "agility", "stamina", "intellect", "spirit"}
+
+
+def _num(value: float, pct: bool) -> str:
+    text = f"{value:.2f}".rstrip("0").rstrip(".") if pct else f"{value:.0f}" if value == int(value) else f"{value:.1f}"
+    return text.replace(".", ",") + (" %" if pct else "")
+
+
+def stats_html(c: Character, spec: str | None) -> str:
+    stats = c.stats or {}
+    ranks = gear.priority_ranks(spec)
+    kind = gear.PRIORITIES[spec][1] if spec in gear.PRIORITIES else "none"
+    cap = gear.hit_cap(kind)
+    hit_key = f"{kind}_hit" if kind in ("spell", "melee", "ranged") else None
+    capped = bool(cap and hit_key and stats.get(hit_key, 0) >= cap)
+
+    prio = ""
+    if spec in gear.PRIORITIES:
+        name, _, tokens = gear.PRIORITIES[spec]
+        chips = []
+        top = 0
+        for token in tokens:
+            label = gear.TOKENS[token][0]
+            done = token == "hit" and capped
+            if token == "hit" and cap:
+                label += f" (cap {cap:.0f} %)"
+            cls = "done" if done else ("top" if top < 3 else "")
+            top += 0 if done else 1
+            chips.append(f'<span class="chip {cls}">{esc(label)}</span>')
+        prio = (
+            f'<div class="prio-box">Stats à pousser en <b>{esc(name)}</b>, dans l\'ordre :'
+            f'<div class="chips">{"".join(chips)}</div></div>'
+        )
+    elif c.talents is not None:
+        prio = '<div class="prio-box">Pas encore assez de talents pour deviner la spé.</div>'
+
+    groups = []
+    for title, rows in STAT_GROUPS:
+        cells = []
+        for key, label, pct in rows:
+            value = stats.get(key)
+            if value is None or (not value and key not in ALWAYS_SHOWN and key not in ranks):
+                continue
+            label = label or stats.get("power_name") or "Énergie"
+            rank = ranks.get(key)
+            css = f" p{rank}" if rank and rank <= 3 and not (key == hit_key and capped) else ""
+            css += " capped" if key == hit_key and capped else ""
+            badge = f"<i>{rank}</i>" if rank else "<i></i>"
+            shown = _num(value, pct) + (f" / {cap:.0f} %" if key == hit_key and cap else "")
+            cells.append(f'<div class="srow{css}">{badge}<span>{esc(label)}</span><b>{esc(shown)}</b></div>')
+        if cells:
+            groups.append(f"<h4>{esc(title)}</h4>{''.join(cells)}")
+    if not groups and not prio:
+        return ""
+    source = (
+        '<p class="src">Priorités : guide WoW Forever de stillsixty.com (nov. 2026). Le toucher compte jusqu\'au cap'
+        " contre un boss, ensuite on passe à la suite.</p>" if prio else ""
+    )
+    return f'<aside class="statbox"><h3>Caractéristiques</h3>{prio}{"".join(groups)}{source}</aside>'
+
+
+def armory_html(c: Character, spec: str | None, icons: dict[int, str], below: str = "") -> str:
+    """Fiche façon jeu : objets autour du rendu, caractéristiques à côté. Vide sans équipement connu."""
+    if not c.equipment:
+        return ""
+    by_slot = {i["slot"]: i for i in c.equipment}
+    matcher = gear.stat_matcher(spec)
+    column = lambda slots: "".join(slot_html(s, by_slot.get(s), icons, matcher) for s in slots)  # noqa: E731
+    render = ""
+    if c.render_url and c.render_url.startswith("https://"):
+        render = (
+            f'<div class="frame"><img src="{esc(c.render_url)}" alt="{esc(c.name)}" referrerpolicy="no-referrer"></div>'
+        )
+    return (
+        f'<div class="armory"><div class="main"><section class="doll"><div class="slots left">{column(gear.LEFT_SLOTS)}</div>'
+        f'<div class="center">{render}</div><div class="slots right">{column(gear.RIGHT_SLOTS)}</div>'
+        f'<div class="weapons">{column(gear.WEAPON_SLOTS)}</div></section>{below}</div>{stats_html(c, spec)}</div>'
     )
 
 
@@ -469,7 +731,7 @@ def recipe_card(recipe: GuildRecipe, crafted_by: dict, crafter_links: dict[str, 
 
 def recipes_by_family_html(recipes: list[GuildRecipe], crafted_by: dict, crafter_links: dict[str, int] | None) -> str:
     sections = []
-    for family, members in group_by_family(filter_recipes(recipes, None)):
+    for family, members in group_by_category(filter_recipes(recipes, None)):
         cards = "".join(recipe_card(r, crafted_by, crafter_links) for r in members)
         sections.append(
             f'<details class="fold" data-section><summary><span>{esc(family)}</span>'
@@ -543,11 +805,6 @@ class WebSite:
         if character is None:
             raise web.HTTPNotFound(text="Perso introuvable.")
 
-        prof_rows = "".join(
-            f'<tr><td><a href="/metier/{esc(p)}">{esc(profession_label(p))}</a></td>'
-            f'<td class="num">{skill if skill is not None else "?"}</td></tr>'
-            for p, skill in sorted(character.professions.items(), key=lambda kv: (not is_primary(kv[0]), kv[0]))
-        )
         synced = ""
         if character.armory_synced_at:
             when = datetime.fromtimestamp(character.armory_synced_at).strftime("%d/%m/%Y")
@@ -556,21 +813,23 @@ class WebSite:
         known = self.db.character_recipe_ids(character.id)
         all_recipes = self.db.guild_recipes(gid)
         crafted_by = crafted_by_map(all_recipes)
-        recipes_html = ""
+        tabs, panels = [], []
         for profession in sorted({p for p in PROFESSIONS}, key=lambda p: (not is_primary(p), p)):
             mine = [r for r in self.db.guild_recipes(gid, profession) if r.id in known]
             if mine:
-                recipes_html += (
-                    f'<details class="fold big" data-section open><summary><span>{esc(profession_label(profession))}'
-                    f'</span><span class="n">{len(mine)}</span></summary><div class="fold-body">'
-                    + recipes_by_family_html(mine, crafted_by, None)
-                    + "</div></details>"
+                tabs.append(
+                    f'<button type="button" data-tab="{esc(profession)}">{esc(profession_label(profession))}'
+                    f'<span class="n">{len(mine)}</span></button>'
                 )
-        if recipes_html:
+                panels.append(
+                    f'<div data-panel="{esc(profession)}">' + recipes_by_family_html(mine, crafted_by, None) + "</div>"
+                )
+        recipes_html = ""
+        if tabs:
             recipes_html = (
-                '<div class="filters"><input id="q" type="search" '
+                '<h2>Recettes</h2><div class="filters"><input id="q" type="search" '
                 f'placeholder="Chercher une recette, un composant, un effet (ex. agilité)…" autocomplete="off">{FOLD_BUTTONS}</div>'
-                + recipes_html
+                f'<div class="tabs" role="tablist">{"".join(tabs)}</div>' + "".join(panels)
             )
         else:
             recipes_html = '<p class="empty">Pas de recettes connues (perso absent de l\'armurerie, ou sans métier).</p>'
@@ -584,21 +843,27 @@ class WebSite:
                 f'<div class="render"><div class="frame"><img src="{esc(character.render_url)}" '
                 f'alt="{esc(character.name)}" referrerpolicy="no-referrer"></div></div>'
             )
-        professions_block = (
-            f'<div class="table-wrap" style="max-width:420px"><table><thead><tr><th>Métier</th>'
-            f'<th class="num">Niveau</th></tr></thead><tbody>{prof_rows}</tbody></table></div>'
-            if prof_rows else '<p class="empty">Aucun métier déclaré.</p>'
-        )
+        professions_block = professions_table(character)
+        spec_key = gear.detect_spec(character.talents, character.preferred_role, character.equipment)
+        icons = self.db.item_icons({i.get("id") for i in character.equipment or []})
+        # Les arbres de talents vont sous l'équipement, dans la même colonne (à côté des caractéristiques).
+        armory = armory_html(character, spec_key, icons, talents_block)
+        if armory:
+            talents_block = ""
+        title = f"""<h1 class="title" style="color:{CLASS_COLORS.get(character.wow_class, "inherit")}">{esc(character.name)}</h1>
+<p class="sub">{level}{esc(class_label(character.wow_class))} {esc(race_label(character.race))}{spec} · {roles_html(character)}{synced}</p>"""
+        # Ordre : perso (équipement, stats), talents, puis métiers et recettes.
+        if armory:
+            top = f"{title}{armory}"
+        else:
+            top = f'<div class="hero"><div class="info">{title}</div>{render}</div>'
         body = f"""
-<div class="hero"><div class="info">
-<h1 class="title" style="color:{CLASS_COLORS.get(character.wow_class, "inherit")}">{esc(character.name)}</h1>
-<p class="sub">{level}{esc(class_label(character.wow_class))} {esc(race_label(character.race))}{spec} · {roles_html(character)}{synced}</p>
+{top}
+{talents_block}
 <h2>Métiers</h2>
 {professions_block}
-</div>{render}</div>
-{talents_block}
 {recipes_html}"""
-        return page(character.name, "persos", body, FILTER_SCRIPT)
+        return page(character.name, "persos", body, FILTER_SCRIPT + TABS_SCRIPT)
 
     async def professions(self, request: web.Request) -> web.Response:
         gid = self._scope()

@@ -142,7 +142,7 @@ class ArmoryClient:
     async def icon(self, kind: str, media_id: int) -> str | None:
         """Icône d'un sort (« spell ») ou d'une spé (« playable-specialization »), hébergée par Blizzard."""
         data = await self.get(f"/data/wow/media/{kind}/{media_id}", "static-forever")
-        return next((a.get("value") for a in data.get("assets", []) if a.get("key") == "icon"), None)
+        return icon_url(next((a.get("value") for a in data.get("assets", []) if a.get("key") == "icon"), None))
 
     # ------------------------------------------------------------ fiche complète
 
@@ -320,6 +320,12 @@ def parse_recipe(data: dict[str, Any]) -> RecipeDetails:
     )
 
 
+def icon_url(url: str | None) -> str | None:
+    """Le CDN « forever » de Blizzard n'a pas toutes les icônes (403) ; celui du jeu principal les a toutes,
+    avec les mêmes identifiants de fichier : …/forever-eu/icons/56/135463.jpg → …/eu/icons/56/135463.jpg."""
+    return re.sub(r"/forever-([a-z]+)/icons/", r"/\1/icons/", url) if url else url
+
+
 def parse_talent_index(data: dict[str, Any]) -> list[tuple[int, int]]:
     """(id d'arbre, id de spé) de chaque arbre, dans l'ordre du jeu, depuis /data/wow/talent-tree/index."""
     result = []
@@ -398,4 +404,11 @@ def parse_item(data: dict[str, Any]) -> dict[str, Any]:
         add("effect", spell.get("description"))
     add("flavor", p.get("description"))
     add("req", ((p.get("requirements") or {}).get("level") or {}).get("display_string"))
-    return {"quality": (p.get("quality") or {}).get("type"), "lines": lines}
+    item_class = data.get("item_class") or p.get("item_class") or {}
+    subclass = data.get("item_subclass") or p.get("item_subclass") or {}
+    return {
+        "quality": (p.get("quality") or {}).get("type"), "lines": lines,
+        # Pour classer les recettes : composants d'artisanat, consommables, armure par emplacement…
+        "class": item_class.get("id"), "class_name": item_class.get("name"), "subclass_name": subclass.get("name"),
+        "slot": slot.get("type"), "slot_name": slot.get("name"),
+    }

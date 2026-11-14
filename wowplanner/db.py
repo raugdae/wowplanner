@@ -109,6 +109,12 @@ CREATE TABLE IF NOT EXISTS orders (
 );
 CREATE INDEX IF NOT EXISTS idx_orders_requester ON orders (requester_id);
 
+-- Icônes des objets (hébergées par Blizzard), une seule demande par objet. url NULL : pas d'icône.
+CREATE TABLE IF NOT EXISTS item_icons (
+    item_id INTEGER PRIMARY KEY,
+    url     TEXT
+);
+
 -- Arbres de talents de Forever (données de jeu, pas de perso), redemandés de temps en temps.
 CREATE TABLE IF NOT EXISTS talent_trees (
     spec_id    INTEGER PRIMARY KEY,
@@ -173,12 +179,16 @@ class Character:
     render_url: str | None = None
     # Talents choisis, voir ArmorySheet.talents.
     talents: list | None = None
+    # Caractéristiques et objets portés, voir gear.parse_stats / gear.parse_equipment.
+    stats: dict | None = None
+    equipment: list | None = None
 
 
 # Version du format des détails de recette ; une recette plus ancienne est redemandée à Blizzard.
 # 2 : identifiants des composants et de l'objet fabriqué (pour relier les sous-recettes).
 # 3 : effet de la recette et infobulle de l'objet fabriqué (stats, effets), pour le site.
-RECIPE_DETAILS_VERSION = 3
+# 4 : type de l'objet fabriqué (composant d'artisanat, consommable, armure…), pour classer les recettes.
+RECIPE_DETAILS_VERSION = 4
 
 
 @dataclass
@@ -261,7 +271,9 @@ class Database:
         if "armory_synced_at" not in columns:
             self.conn.execute("ALTER TABLE characters ADD COLUMN armory_synced_at INTEGER")
         # v1.5 → v1.6 : niveau et images du perso.
-        for column in ("level INTEGER", "avatar_url TEXT", "render_url TEXT", "talents TEXT"):
+        for column in (
+            "level INTEGER", "avatar_url TEXT", "render_url TEXT", "talents TEXT", "stats TEXT", "equipment TEXT",
+        ):
             if column.split()[0] not in columns:
                 self.conn.execute(f"ALTER TABLE characters ADD COLUMN {column}")
         # v1.4 → v1.5 : liens entre recettes (composant fabriqué par une autre recette).
@@ -421,6 +433,8 @@ class Database:
                 armory_synced_at=r["armory_synced_at"],
                 level=r["level"], avatar_url=r["avatar_url"], render_url=r["render_url"],
                 talents=json.loads(r["talents"]) if r["talents"] else None,
+                stats=json.loads(r["stats"]) if r["stats"] else None,
+                equipment=json.loads(r["equipment"]) if r["equipment"] else None,
             )
             for r in rows
         ]
@@ -562,17 +576,36 @@ class Database:
     def set_armory_look(
         self, character_id: int, level: int | None, avatar_url: str | None, render_url: str | None,
         talents: list | None = None,
+        stats: dict | None = None,
+        equipment: list | None = None,
     ) -> None:
-        """Niveau, images et talents lus dans l'armurerie (on garde l'ancien si l'armurerie n'en donne pas)."""
+        """Niveau, images, talents, stats et équipement lus dans l'armurerie (on garde l'ancien si l'armurerie
+        n'en donne pas)."""
+        dump = lambda v: json.dumps(v, ensure_ascii=False) if v is not None else None  # noqa: E731
         with self.conn:
             self.conn.execute(
                 """UPDATE characters SET level = COALESCE(?, level), avatar_url = COALESCE(?, avatar_url),
-                                         render_url = COALESCE(?, render_url), talents = COALESCE(?, talents)
+                                         render_url = COALESCE(?, render_url), talents = COALESCE(?, talents),
+                                         stats = COALESCE(?, stats), equipment = COALESCE(?, equipment)
                    WHERE id = ?""",
-                (
-                    level, avatar_url, render_url,
-                    json.dumps(talents, ensure_ascii=False) if talents is not None else None, character_id,
-                ),
+                (level, avatar_url, render_url, dump(talents), dump(stats), dump(equipment), character_id),
+            )
+
+    # ------------------------------------------------------------ item icons
+
+    def item_icons(self, item_ids: set[int] | list[int]) -> dict[int, str]:
+        ids = [i for i in item_ids if isinstance(i, int)]
+        if not ids:
+            return {}
+        rows = self.conn.execute(
+            f"SELECT item_id, url FROM item_icons WHERE item_id IN ({','.join('?' * len(ids))})", ids
+        ).fetchall()
+        return {r["item_id"]: r["url"] for r in rows if r["url"]}
+
+    def set_item_icons(self, icons: dict[int, str | None]) -> None:
+        with self.conn:
+            self.conn.executemany(
+                "INSERT OR REPLACE INTO item_icons (item_id, url) VALUES (?, ?)", list(icons.items())
             )
 
     # ------------------------------------------------------------ talent trees

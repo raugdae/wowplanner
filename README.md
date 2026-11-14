@@ -277,7 +277,11 @@ Un petit site public, en lecture seule, pour parcourir les persos et les métier
 
 - **Persos** : tableau de tous les persos (classe, race, rôles, métiers et niveaux), recherche et filtres par classe,
   rôle ou métier ;
-- **fiche d'un perso** : son rendu en pied et son niveau (armurerie), ses métiers et ses recettes (composants dépliés) ;
+- **fiche d'un perso** : façon fiche du jeu, son **équipement** autour de son rendu en pied (icônes, infobulles,
+  enchantements) et ses **caractéristiques**, avec les **stats à pousser en priorité** pour sa spé (devinée d'après
+  ses talents et son rôle préféré ; priorités du guide WoW Forever de stillsixty.com, nov. 2026, toucher jusqu'au
+  cap). Puis ses métiers en tableau, et ses recettes par **onglet de métier**, classées par type d'objet
+  (composants d'artisanat, potions, armure : torse…) ;
   le portrait apparaît aussi dans les listes. Images hébergées par Blizzard, mises à jour à chaque synchro ;
   ses **talents** comme dans le jeu (les trois arbres, icônes, rangs, infobulle au survol ou au toucher, double
   spé). Les arbres sont récupérés une fois par semaine auprès de Blizzard, les talents du perso à chaque synchro ;
