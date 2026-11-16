@@ -478,25 +478,6 @@ class Database:
         found = self._load_characters(rows)
         return found[0] if found else None
 
-    def update_character(self, c: Character) -> None:
-        """Enregistre nom, classe, race et rôle préféré. Lève sqlite3.IntegrityError si le nom est déjà pris."""
-        with self.conn:
-            self.conn.execute(
-                "UPDATE characters SET name = ?, wow_class = ?, race = ?, preferred_role = ? WHERE id = ?",
-                (c.name, c.wow_class, c.race, c.preferred_role, c.id),
-            )
-
-    def character_events(self, character_id: int) -> list[int]:
-        """Sorties où ce perso est inscrit."""
-        rows = self.conn.execute(
-            "SELECT DISTINCT message_id FROM signups WHERE character_id = ?", (character_id,)
-        ).fetchall()
-        return [r["message_id"] for r in rows]
-
-    def set_preferred_role(self, character_id: int, role: str | None) -> None:
-        with self.conn:
-            self.conn.execute("UPDATE characters SET preferred_role = ? WHERE id = ?", (role, character_id))
-
     def delete_character(self, user_id: int, character_id: int) -> list[int]:
         """Supprime le perso et renvoie les sorties où il était inscrit (pour mettre leur message à jour)."""
         with self.conn:
@@ -507,22 +488,6 @@ class Database:
         return [r["message_id"] for r in rows]
 
     # --------------------------------------------------------------- métiers
-
-    def set_profession(self, character_id: int, profession: str, skill: int | None) -> None:
-        with self.conn:
-            self.conn.execute(
-                """INSERT INTO character_professions (character_id, profession, skill) VALUES (?, ?, ?)
-                   ON CONFLICT (character_id, profession) DO UPDATE SET skill = excluded.skill""",
-                (character_id, profession, skill),
-            )
-
-    def remove_profession(self, character_id: int, profession: str) -> bool:
-        with self.conn:
-            cur = self.conn.execute(
-                "DELETE FROM character_professions WHERE character_id = ? AND profession = ?",
-                (character_id, profession),
-            )
-        return cur.rowcount > 0
 
     def characters_with_profession(self, guild_id: int, profession: str) -> list[tuple[Character, int | None]]:
         """Persos des membres du serveur qui ont ce métier, du plus haut niveau au plus bas."""
@@ -667,13 +632,6 @@ class Database:
     def all_characters(self) -> list[Character]:
         return self._load_characters(self.conn.execute("SELECT * FROM characters ORDER BY id").fetchall())
 
-    def characters_named(self, name: str) -> list[Character]:
-        """Persos déclarés sous ce nom, tous joueurs confondus (insensible à la casse)."""
-        rows = self.conn.execute(
-            "SELECT * FROM characters WHERE name = ? COLLATE NOCASE ORDER BY id", (name.strip(),)
-        ).fetchall()
-        return self._load_characters(rows)
-
     def guild_characters(self, guild_id: int) -> list[Character]:
         rows = self.conn.execute(
             """SELECT c.* FROM characters c
@@ -707,6 +665,10 @@ class Database:
             sql += " AND profession = ?"
             args += (profession,)
         return [r["id"] for r in self.conn.execute(sql + " ORDER BY id", args)]
+
+    def all_recipe_ids(self) -> list[int]:
+        """Toutes les recettes connues (pour /admin sync, qui redemande tous les détails)."""
+        return [r["id"] for r in self.conn.execute("SELECT id FROM recipes ORDER BY id")]
 
     def set_recipe_details(
         self,

@@ -230,20 +230,15 @@ def test_db_professions_battletags_and_members(tmp_path):
     db.touch_member(guild, 2)
     db.touch_member(other_guild, 3)
 
-    db.set_profession(a.id, "forge", 150)
-    db.set_profession(a.id, "forge", 285)  # mise à jour du niveau
-    db.set_profession(a.id, "minage", None)
-    db.set_profession(b.id, "forge", None)
-    db.set_profession(c.id, "forge", 300)  # autre serveur : invisible ici
+    db.replace_professions(a.id, {"forge": 150, "couture": 20})
+    db.replace_professions(a.id, {"forge": 285, "minage": None})  # resynchro : tout est remplacé
+    db.replace_professions(b.id, {"forge": None})
+    db.replace_professions(c.id, {"forge": 300})  # autre serveur : invisible ici
 
     assert db.get_character(a.id).professions == {"forge": 285, "minage": None}
     assert db.get_character(a.id).preferred_role == "tank"
     found = db.characters_with_profession(guild, "forge")
     assert [(ch.name, skill) for ch, skill in found] == [("Grommash", 285), ("Aelys", None)]
-    assert db.remove_profession(a.id, "minage") and not db.remove_profession(a.id, "minage")
-
-    db.set_preferred_role(b.id, "heal")
-    assert db.get_character(b.id).preferred_role == "heal"
 
     db.set_battletag(1, "Raug#2134")
     db.set_battletag(3, "Other#1111")
@@ -328,7 +323,7 @@ def test_ephemeral_cleaner():
 
     async def scenario():
         c = EphemeralCleaner()
-        await c.on_interaction(inter(1, user=7))  # /liste persos
+        await c.on_interaction(inter(1, user=7))  # /liste events
         await c.on_interaction(inter(2, user=7, kind="button"))  # clic Heal sur une sortie → efface 1
         await c.on_interaction(inter(3, user=7, kind="button", ephemeral_msg=True))  # choix du perso : on garde 2
         await c.on_interaction(inter(4, user=8))  # autre joueur : n'efface rien de 7
@@ -457,27 +452,25 @@ def test_armory_sheet_parsing():
 def test_armory_apply_replaces_professions_and_warns(tmp_path):
     from types import SimpleNamespace
 
-    from wowplanner.cogs.armory import ArmoryCog, build_armory_embed
+    from wowplanner.cogs.armory import ArmoryCog
     from wowplanner.db import Database
 
     db = Database(tmp_path / "t.db")
     c = db.add_character(1, "Hollie Tétine", "mage", "skyborne")
-    db.set_profession(c.id, "forge", 10)  # saisie manuelle, remplacée par l'armurerie
+    db.replace_professions(c.id, {"forge": 10})  # ancienne valeur, remplacée par l'armurerie
     cog = ArmoryCog(SimpleNamespace(db=db))
     result = cog.apply(c, _sheet())
     synced = db.get_character(c.id)
     assert synced.professions == {"alchimie": 139, "cuisine": 54}
     assert synced.armory_synced_at is not None
     assert result.professions_synced and len(result.warnings) == 1  # classe différente, race identique
-    assert "Prêtre" in result.warnings[0]
-    embed = build_armory_embed(_sheet(), [1])
-    assert len(embed) < 6000 and embed.title == "Hollie Tétine"
+    assert "Prêtre" in result.warnings[0] and "recrée" in result.warnings[0]
     db.close()
 
 
-def test_recipes_db_and_pages(tmp_path):
+def test_recipes_db_and_search(tmp_path):
     from wowplanner.db import Database
-    from wowplanner.recipes import crafters_text, filter_recipes, recipe_field
+    from wowplanner.recipes import filter_recipes
 
     db = Database(tmp_path / "t.db")
     hollie = db.add_character(1, "Hollie Tétine", "pretre", "humain")
@@ -498,11 +491,7 @@ def test_recipes_db_and_pages(tmp_path):
     assert recipes[54211].name == "Elixir of Minor Force" and recipes[54211].reagents is None  # pas encore récupérée
 
     assert [r.id for r in filter_recipes(list(recipes.values()), "POTION")] == [1379]
-    card = recipe_field(recipes[1379])
-    assert card.name == "Potion de mana mineure" and card.inline
-    assert card.value == "1× Mage royal\n1× Fiole vide\n👥 Grommash, Hollie"
-    assert "composants inconnus" in recipe_field(recipes[54211]).value
-    assert crafters_text([f"Perso{i} X" for i in range(8)]) == "Perso0, Perso1, Perso2, Perso3, Perso4, Perso5 +2"
+    assert db.all_recipe_ids() == [1379, 9999, 54211]  # /admin sync redemande tout, tous serveurs confondus
 
     # Resynchro : la liste des recettes du perso est remplacée, pas cumulée.
     db.replace_character_recipes(grom.id, {"alchimie": []})
@@ -510,9 +499,9 @@ def test_recipes_db_and_pages(tmp_path):
     db.close()
 
 
-def test_recipe_families_and_pages():
+def test_recipe_families():
     from wowplanner.db import GuildRecipe
-    from wowplanner.recipes import MAX_FIELDS_PER_PAGE, build_pages, filter_recipes, group_by_family
+    from wowplanner.recipes import filter_recipes, group_by_family
 
     def r(i, name):
         return GuildRecipe(i, name, [(1, "Fiole vide", 3371)], ["Hollie Tétine"])
@@ -527,37 +516,6 @@ def test_recipe_families_and_pages():
     assert [(f, [x.id for x in m]) for f, m in families] == [
         ("Élixirs", [3, 1, 2]), ("Potions", [4, 6, 5]), ("Autres", [8, 7]),
     ]
-    page = build_pages(recipes)[0]
-    assert [f.name for f in page if not f.inline] == ["── Élixirs (3) ──", "── Potions (3) ──", "── Autres (2) ──"]
-
-    # Pagination : limites Discord respectées, aucune recette perdue, titre « (suite) » en haut des pages suivantes.
-    many = filter_recipes([r(i, f"Potion numéro {i:03d}") for i in range(200)], None)
-    pages = build_pages(many)
-    assert len(pages) > 1
-    assert all(len(p) <= MAX_FIELDS_PER_PAGE and sum(len(f.name) + len(f.value) for f in p) < 6000 for p in pages)
-    assert sum(1 for p in pages for f in p if f.inline) == 200
-    assert all(not p[0].inline for p in pages) and pages[1][0].name == "── Potions (suite) ──"
-
-
-def test_recipe_messages_respect_discord_limits():
-    from wowplanner.cogs.armory import recipe_messages
-    from wowplanner.db import GuildRecipe
-    from wowplanner.recipes import build_pages, filter_recipes
-
-    many = filter_recipes([
-        GuildRecipe(i, f"Potion de protection contre le feu {i:03d}",
-                    [(1, "Doulourante", 1), (1, "Chardonnier", 2), (1, "Fiole plombée", 3)],
-                    ["Hollie Tétine", "Xfalsia Truc", "Gwoo Machin", "Feuille Bidule"])
-        for i in range(300)
-    ], None)
-    messages = recipe_messages(build_pages(many), "⚒️ Alchimie — 300 recette(s)")
-    assert len(messages) > 1
-    for embeds in messages:
-        assert 1 <= len(embeds) <= 10
-        assert sum(len(e) for e in embeds) <= 6000  # limite Discord par message
-        assert all(len(e.fields) <= 25 for e in embeds)
-        assert embeds[0].title and embeds[-1].footer.text.startswith("Page ")
-    assert sum(1 for m in messages for e in m for f in e.fields if f.inline) == 300
 
 
 class _FakeResponse:
@@ -661,7 +619,7 @@ def test_add_character_name_only_needs_class_race_when_not_found(tmp_path):
 def test_subrecipes_are_expanded_with_scaled_quantities(tmp_path):
     """Lin → rouleau → sac : les composants fabriqués par une recette du serveur sont dépliés."""
     from wowplanner.db import Database
-    from wowplanner.recipes import crafted_by_map, filter_recipes, recipe_field
+    from wowplanner.recipes import crafted_by_map, filter_recipes, reagent_lines
 
     db = Database(tmp_path / "t.db")
     hollie = db.add_character(1, "Hollie Tétine", "pretre", "humain")
@@ -679,15 +637,14 @@ def test_subrecipes_are_expanded_with_scaled_quantities(tmp_path):
     every = db.guild_recipes(42)  # tous métiers : les sous-recettes peuvent venir d'un autre métier
     crafted_by = crafted_by_map(every)
     bag = filter_recipes(db.guild_recipes(42, "couture"), "sac")[0]
-    assert recipe_field(bag, crafted_by).value.split("\n") == [
+    assert reagent_lines(bag.reagents, crafted_by, seen=frozenset({bag.id})) == [
         "3× Rouleau d'étoffe en lin",
         "\u2003\u2003↳ 6× Etoffe de lin",       # 3 rouleaux × 2 étoffes
         "3× Bobine de fil grossier",
         "\u2003\u2003↳ 2× Etoffe de lin",       # 3 bobines, 2 par craft → 2 crafts × 1 étoffe
-        "👥 Hollie",
     ]
     loop = next(r for r in every if r.id == 9100)
-    assert recipe_field(loop, crafted_by).value.split("\n") == ["1× Boucle", "👥 Hollie"]
+    assert reagent_lines(loop.reagents, crafted_by, seen=frozenset({loop.id})) == ["1× Boucle"]
     db.close()
 
 
@@ -921,7 +878,6 @@ def test_item_tooltip_parse_and_site(tmp_path):
 
 
 def test_family_plural_and_site_links():
-    from wowplanner.cogs.armory import profession_url
     from wowplanner.config import public_url
     from wowplanner.recipes import plural
 
@@ -933,8 +889,6 @@ def test_family_plural_and_site_links():
     assert public_url("https://wow.exemple.fr/", "autre.fr") == "https://wow.exemple.fr"
     assert public_url("wow.exemple.fr", "") == "https://wow.exemple.fr"
     assert public_url("", "") == ""
-    assert profession_url("https://w.fr", "couture") == "https://w.fr/metier/couture"
-    assert profession_url("https://w.fr", "couture", " sac en lin ") == "https://w.fr/metier/couture?q=sac%20en%20lin"
 
 
 def test_character_look_on_site(tmp_path):
@@ -1126,6 +1080,50 @@ def test_gear_stats_priorities_and_categories(tmp_path):
     assert 'id="spec-data"' in html
     assert '<td class="prof"><small>Alchimie</small><b>139</b></td><td class="prof"><span class="none">—</span></td>' in pages["/"]
     assert '<td class="sec split"><b>57</b></td>' in pages["/"]  # cuisine, 1re colonne secondaire
+    assert 'data-k="intellect" tabindex="0"' in html and "la réserve de mana" in html  # infobulles des stats
+
+
+def test_sync_steps_without_armory(tmp_path):
+    """Synchro : chaque étape donne une ligne de bilan, une étape en échec n'arrête pas les suivantes."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from wowplanner.cogs.sync import SyncCog
+
+    class Registry:
+        async def refresh(self, session):
+            return 37
+
+    class Stats:
+        async def refresh(self):
+            return False  # guide injoignable
+
+    bot = SimpleNamespace(
+        config=SimpleNamespace(timezone=PARIS, data_dir=tmp_path), instances=Registry(), http_session=None,
+        db=None, get_cog=lambda name: Stats() if name == "StatSyncCog" else None,
+    )
+    cog = SyncCog(bot)
+    assert cog._last_run() is None
+    lines = asyncio.run(cog._run_steps(full=False))
+    assert lines[0] == "✅ **Donjons et raids (wiki)** : 37 donjons et raids"
+    assert lines[1].startswith("⚠️") and "anciennes priorités gardées" in lines[1]
+    assert len(lines) == 5 and all(line.startswith("⏭️") for line in lines[2:])  # pas de clés Blizzard
+    assert cog._last_run() is not None  # la synchro de nuit ne sera pas rattrapée au prochain démarrage
+
+
+def test_stat_tooltips():
+    from wowplanner.web import STAT_GROUPS, STAT_HELP, stat_tooltip
+
+    # Chaque caractéristique affichée a son explication.
+    assert {key for _, rows in STAT_GROUPS for key, _, _ in rows if key != "power"} <= set(STAT_HELP)
+    mage = stat_tooltip("strength", "Force", "mage")
+    assert mage.startswith('<div class="tt"><b>Force</b>') and "Mage : Inutile" in mage
+    assert "note" not in stat_tooltip("strength", "Force", "voleur")  # pas de remarque pour cette classe
+    assert "Inutile pour cette classe" in stat_tooltip("intellect", "Intelligence", "guerrier")
+    assert "Se recharge vite" in stat_tooltip("power", "Énergie", "voleur")
+    assert "Se gagne en frappant" in stat_tooltip("power", "Rage", "guerrier")
+    assert "ressource" in stat_tooltip("power", "Focalisation", "chasseur")  # ressource inconnue : texte générique
+    assert stat_tooltip("inconnue", "?", "mage") == ""
 
 
 def test_dungeons_data_and_page(tmp_path):

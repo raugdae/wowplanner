@@ -364,10 +364,11 @@ class OrdersCog(commands.Cog):
         else:
             found = search(candidates, query)
         if not found:
+            site = getattr(getattr(self.bot, "config", None), "web_url", "")
+            where = f"ou regarde les recettes sur le site : {site}/metiers" if site else "ou essaie le nom d'un composant"
             await interaction.followup.send(
                 f"🤷 Personne d'autre que toi ne sait faire « {query.lstrip('#')} » sur le serveur. Seules les recettes "
-                "débloquées par les persos (vues dans l'armurerie) peuvent être commandées : essaie un autre mot, "
-                "ou regarde `/liste recettes`.",
+                f"débloquées par les persos (vues dans l'armurerie) peuvent être commandées : essaie un autre mot, {where}.",
                 ephemeral=True,
             )
             return

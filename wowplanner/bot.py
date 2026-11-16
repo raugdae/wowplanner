@@ -42,11 +42,11 @@ class WowPlannerBot(commands.Bot):
         self.http_session = aiohttp.ClientSession(headers={"User-Agent": USER_AGENT})
         self.instances.load()
 
-        await self.load_extension("wowplanner.cogs.instances")
         await self.load_extension("wowplanner.cogs.events")
         await self.load_extension("wowplanner.cogs.armory")
         await self.load_extension("wowplanner.cogs.orders")
         await self.load_extension("wowplanner.cogs.statsync")
+        await self.load_extension("wowplanner.cogs.sync")
         await self.load_extension("wowplanner.cogs.commands")  # après events et instances, qu'il appelle
         await self.load_extension("wowplanner.cogs.schedule")
 

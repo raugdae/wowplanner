@@ -1,9 +1,11 @@
-"""Logique des commandes sur les persos et les métiers (déclarées dans cogs/commands.py)."""
+"""Logique des commandes sur les persos (déclarées dans cogs/commands.py).
+
+Les métiers ne se saisissent plus à la main : ils viennent de l'armurerie.
+"""
 from __future__ import annotations
 
 import re
 import sqlite3
-from dataclasses import replace
 from typing import TYPE_CHECKING
 
 import discord
@@ -11,16 +13,7 @@ from discord import app_commands
 
 from ..db import Character
 from .armory import NOT_FOUND_HELP_SHORT, SyncResult
-from ..gamedata import (
-    MAX_PRIMARY_PROFESSIONS,
-    RACES,
-    class_label,
-    is_primary,
-    profession_label,
-    race_allows,
-    race_label,
-    roles_for,
-)
+from ..gamedata import RACES, class_label, race_allows, race_label, roles_for
 from ..roles import LABELS
 
 if TYPE_CHECKING:
@@ -41,28 +34,6 @@ NAME_ERROR = (
 def roles_text(c: Character) -> str:
     """« Tank ⭐, DPS » : rôles possibles, le préféré marqué d'une étoile."""
     return ", ".join(f"{LABELS[r]} ⭐" if r == c.preferred_role else LABELS[r] for r in roles_for(c.wow_class))
-
-
-def professions_text(c: Character) -> str:
-    return ", ".join(
-        f"{profession_label(p)} ({skill})" if skill is not None else profession_label(p)
-        for p, skill in sorted(c.professions.items(), key=lambda kv: (not is_primary(kv[0]), kv[0]))
-    )
-
-
-def character_block(c: Character) -> str:
-    text = f"• **{c.name}** — {class_label(c.wow_class)} {race_label(c.race)} · {roles_text(c)}"
-    if c.professions:
-        text += f"\n  ⚒️ {professions_text(c)}"
-    if c.armory_synced_at:
-        text += f"\n  🔎 synchronisé avec l'armurerie <t:{c.armory_synced_at}:R>"
-    return text
-
-
-ARMORY_OVERWRITE_NOTE = (
-    "\n💡 Ce perso est synchronisé avec l'armurerie : ses métiers y seront relus "
-    "(et remplacés) à la prochaine synchro."
-)
 
 
 def normalize_name(name: str) -> str | None:
@@ -97,18 +68,10 @@ class CharacterCommands:
         else:
             await interaction.response.send_message(text, ephemeral=True)
 
-    async def _armory_check(self, interaction: discord.Interaction, character: Character) -> tuple[str, bool]:
-        """Cherche le perso dans l'armurerie (si activée). Renvoie (ligne à afficher, métiers synchronisés ?)."""
-        armory = self.bot.get_cog("ArmoryCog")
-        if armory is None or not armory.available:
-            return "", False
-        if not interaction.response.is_done():
-            # L'appel peut dépasser les 3 s que Discord laisse pour répondre.
-            await interaction.response.defer(ephemeral=True, thinking=True)
-        result = await armory.sync(character, max_age=0)
-        if result is None:
-            return "", False
-        return "\n" + result.summary(), result.professions_synced
+    def _site_hint(self) -> str:
+        """« Tes persos sont visibles sur le site : … » si le site a une adresse publique."""
+        site = getattr(getattr(self.bot, "config", None), "web_url", "")
+        return f" Tous les persos sont visibles sur le site : {site}" if site else ""
 
     async def _refresh_events(self, message_ids: list[int]) -> None:
         events = self.bot.get_cog("EventsCog")
@@ -196,20 +159,19 @@ class CharacterCommands:
         if interaction.guild is not None:
             self.db.touch_member(interaction.guild.id, owner.id)
 
-        armory_line, professions_synced = "", False
+        armory_line = ""
         if armory is not None:
             result = armory.apply(character, sheet) if sheet is not None else SyncResult(found=found)
-            armory_line, professions_synced = "\n" + result.summary(), result.professions_synced
+            armory_line = "\n" + result.summary()
         if from_armory:
             armory_line += f"\n🔎 {' et '.join(from_armory).capitalize()} reprise(s) de l'armurerie."
 
         whose = f" pour {owner.mention}" if by_admin else ""
         tips = []
-        if not by_admin:
-            if role_prefere is None and len(roles_for(classe)) > 1:
-                tips.append("Indique ton rôle préféré avec `/modifier perso`.")
-            if not professions_synced:
-                tips.append("Ajoute ses métiers avec `/ajouter metier`.")
+        if not by_admin and role_prefere is None and len(roles_for(classe)) > 1:
+            tips.append(
+                "Pas de rôle préféré : pour en mettre un, supprime le perso et recrée-le avec `role_prefere`."
+            )
         await self._send(
             interaction,
             f"✅ **{name}** ({class_label(classe)} {race_label(race)}) ajouté{whose}. "
@@ -218,65 +180,9 @@ class CharacterCommands:
         if by_admin:
             await self._notify_owner(
                 interaction, owner,
-                f"a ajouté ton perso **{name}** ({class_label(classe)} {race_label(race)}) sur le bot. "
-                "Tu peux le voir avec `/liste persos` et le modifier avec `/modifier perso`.",
+                f"a ajouté ton perso **{name}** ({class_label(classe)} {race_label(race)}) sur le bot."
+                + self._site_hint(),
             )
-
-    async def modify(
-        self,
-        interaction: discord.Interaction,
-        perso: str,
-        nom: str | None,
-        classe: str | None,
-        race: str | None,
-        role_prefere: str | None,
-        owner: discord.abc.User | None = None,
-    ) -> None:
-        owner = owner or interaction.user
-        has = f"{owner.mention} a" if owner.id != interaction.user.id else "Tu as"
-        character = await self.own_character(interaction, perso, owner.id)
-        if character is None:
-            return
-        if not any((nom, classe, race, role_prefere)):
-            return await self._send(interaction, "Indique au moins une chose à modifier (nom, classe, race ou rôle).")
-
-        updated = replace(character)
-        notes = []
-        if nom:
-            name = normalize_name(nom)
-            if name is None:
-                return await self._send(interaction, NAME_ERROR)
-            updated.name = name
-        updated.wow_class = classe or character.wow_class
-        updated.race = race or character.race
-        if not race_allows(updated.race, updated.wow_class):
-            return await self._send(interaction, race_refusal(updated.race, updated.wow_class))
-
-        if role_prefere == "aucun":
-            updated.preferred_role = None
-        elif role_prefere:
-            if role_prefere not in roles_for(updated.wow_class):
-                return await self._send(interaction, role_refusal(updated.wow_class, role_prefere))
-            updated.preferred_role = role_prefere
-        elif updated.preferred_role and updated.preferred_role not in roles_for(updated.wow_class):
-            notes.append(f"Rôle préféré {LABELS[updated.preferred_role]} retiré : impossible avec cette classe.")
-            updated.preferred_role = None
-
-        try:
-            self.db.update_character(updated)
-        except sqlite3.IntegrityError:
-            return await self._send(interaction, f"⚠️ {has} déjà un perso nommé **{updated.name}**.")
-
-        armory_line = ""
-        if updated.name != character.name:  # nouveau nom : on revérifie dans l'armurerie
-            armory_line, _ = await self._armory_check(interaction, updated)
-            updated = self.db.get_character(updated.id) or updated  # métiers éventuellement synchronisés
-
-        await self._send(
-            interaction,
-            f"✅ Perso modifié : {character_block(updated)}{armory_line}" + "".join(f"\n💡 {n}" for n in notes),
-        )
-        await self._refresh_events(self.db.character_events(character.id))
 
     async def delete(
         self, interaction: discord.Interaction, perso: str, owner: discord.abc.User | None = None
@@ -293,93 +199,6 @@ class CharacterCommands:
         await self._refresh_events(affected)
         if by_admin:
             await self._notify_owner(interaction, owner, f"a supprimé ton perso **{character.name}** du bot.")
-
-    async def list(self, interaction: discord.Interaction, joueur: discord.abc.User | None) -> None:
-        target = joueur or interaction.user
-        characters = self.db.get_characters(target.id)
-        battletag = self.db.get_battletag(target.id)
-        if not characters and not battletag:
-            who = "Tu n'as" if target.id == interaction.user.id else f"{target.mention} n'a"
-            return await self._send(interaction, f"{who} aucun perso déclaré. Ça se fait avec `/ajouter perso`.")
-        lines = []
-        if battletag:
-            lines += [f"🎮 BattleTag : `{battletag}`", ""]
-        lines += [character_block(c) for c in characters] or ["*Aucun perso déclaré.*"]
-        embed = discord.Embed(
-            title=f"Persos de {target.display_name}", description="\n".join(lines)[:4096], color=0x3498DB
-        )
-        embed.set_footer(text="⭐ rôle préféré")
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-
-    # ================================================================= métiers
-
-    async def add_profession(self, interaction: discord.Interaction, perso: str, metier: str, niveau: int | None) -> None:
-        character = await self.own_character(interaction, perso)
-        if character is None:
-            return
-        label = profession_label(metier)
-        if metier in character.professions:
-            return await self._send(
-                interaction, f"**{character.name}** a déjà {label}. Pour changer le niveau : `/modifier metier`."
-            )
-        if is_primary(metier):
-            primaries = [p for p in character.professions if is_primary(p)]
-            if len(primaries) >= MAX_PRIMARY_PROFESSIONS:
-                current = ", ".join(profession_label(p) for p in primaries)
-                return await self._send(
-                    interaction,
-                    f"⚠️ **{character.name}** a déjà {MAX_PRIMARY_PROFESSIONS} métiers principaux ({current}). "
-                    "Retires-en un avec `/supprimer metier`.",
-                )
-        self.db.set_profession(character.id, metier, niveau)
-        lvl = f" ({niveau})" if niveau is not None else ""
-        note = ARMORY_OVERWRITE_NOTE if character.armory_synced_at else ""
-        await self._send(interaction, f"✅ **{character.name}** : {label}{lvl}.{note}")
-
-    async def modify_profession(self, interaction: discord.Interaction, perso: str, metier: str, niveau: int) -> None:
-        character = await self.own_character(interaction, perso)
-        if character is None:
-            return
-        label = profession_label(metier)
-        if metier not in character.professions:
-            return await self._send(
-                interaction, f"**{character.name}** n'a pas {label}. Pour l'ajouter : `/ajouter metier`."
-            )
-        self.db.set_profession(character.id, metier, niveau)
-        note = ARMORY_OVERWRITE_NOTE if character.armory_synced_at else ""
-        await self._send(interaction, f"✅ **{character.name}** : {label} ({niveau}).{note}")
-
-    async def delete_profession(self, interaction: discord.Interaction, perso: str, metier: str) -> None:
-        character = await self.own_character(interaction, perso)
-        if character is None:
-            return
-        label = profession_label(metier)
-        if self.db.remove_profession(character.id, metier):
-            await self._send(interaction, f"🗑️ **{character.name}** : {label} retiré.")
-        else:
-            await self._send(interaction, f"**{character.name}** n'a pas {label}.")
-
-    async def search_profession(self, interaction: discord.Interaction, metier: str) -> None:
-        assert interaction.guild is not None
-        label = profession_label(metier)
-        found = self.db.characters_with_profession(interaction.guild.id, metier)
-        if not found:
-            return await self._send(interaction, f"Personne n'a déclaré **{label}** pour l'instant (`/ajouter metier`).")
-        lines = [
-            f"`{skill if skill is not None else '?':>3}` **{c.name}** ({class_label(c.wow_class)}) · <@{c.user_id}>"
-            for c, skill in found
-        ]
-        embed = discord.Embed(
-            title=f"⚒️ {label} — {len(found)} perso(s)", description="\n".join(lines)[:4096], color=0x3498DB
-        )
-        embed.set_footer(text="Classés par niveau de compétence · ? = niveau non renseigné")
-        extra = {}
-        site = getattr(self.bot.config, "web_url", "")
-        if site:
-            view = discord.ui.View()
-            view.add_item(discord.ui.Button(label="Recettes sur le site", emoji="🌐", url=f"{site}/metier/{metier}"))
-            extra["view"] = view
-        await interaction.response.send_message(embed=embed, ephemeral=True, **extra)
 
     # ============================================================== interne
 
@@ -407,8 +226,8 @@ class CharacterCommands:
             )
         if character is None:
             if owner_id == interaction.user.id:
-                text = "Perso introuvable. Tes persos : `/liste persos`, pour en ajouter : `/ajouter perso`."
+                text = "Perso introuvable : choisis-le dans la liste proposée. Pour en ajouter un : `/ajouter perso`."
             else:
-                text = f"Perso introuvable chez <@{owner_id}> (voir `/liste persos joueur:`)."
+                text = f"Perso introuvable chez <@{owner_id}> : choisis-le dans la liste proposée."
             await self._send(interaction, text)
         return character

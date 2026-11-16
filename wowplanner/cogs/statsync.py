@@ -1,18 +1,17 @@
-"""Mise à jour nocturne des priorités de stats (guide WoW Forever de stillsixty.com), pour le site.
+"""Priorités de stats (guide WoW Forever de stillsixty.com), pour le site.
 
-Une fois par nuit (4 h, heure du serveur Discord), et au démarrage si la dernière lecture date de plus
-d'un jour. En cas d'échec, on garde les dernières priorités connues : le site ne perd jamais rien.
+Relues par la synchro de nuit et par /admin sync (voir cogs/sync.py). En cas d'échec, on garde les
+dernières priorités connues : le site ne perd jamais rien.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
 import time
-from datetime import time as dtime
 from typing import TYPE_CHECKING
 
 import aiohttp
-from discord.ext import commands, tasks
+from discord.ext import commands
 
 from .. import gear, statsource
 
@@ -21,32 +20,16 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-STALE_SECONDS = 24 * 3600
-
 
 class StatSyncCog(commands.Cog):
     def __init__(self, bot: WowPlannerBot):
         self.bot = bot
         self.db = bot.db
-        self.nightly.change_interval(time=dtime(4, 0, tzinfo=bot.config.timezone))
 
     async def cog_load(self) -> None:
+        # Dernières priorités connues, en attendant la prochaine synchro.
         specs, caps, checked = self.db.stat_priorities()
         gear.apply_overrides(specs, caps, checked)
-        self.nightly.start()
-        asyncio.create_task(self._catch_up(checked))
-
-    async def cog_unload(self) -> None:
-        self.nightly.cancel()
-
-    async def _catch_up(self, checked: int | None) -> None:
-        await self.bot.wait_until_ready()
-        if checked is None or time.time() - checked > STALE_SECONDS:
-            await self.refresh()
-
-    @tasks.loop(time=dtime(4, 0))
-    async def nightly(self) -> None:
-        await self.refresh()
 
     async def refresh(self) -> bool:
         """Relit le guide et enregistre les priorités ; False (et rien de changé) si ça échoue."""

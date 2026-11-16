@@ -6,44 +6,34 @@ Bot Discord pour organiser des sorties donjon / raid sur **World of Warcraft: Fo
 - Les joueurs s'inscrivent avec les boutons sous le message : 🛡️ Tank, ⛑️ Heal, ⚔️ DPS, Se désinscrire.
 - Chaque joueur déclare ses persos (`/ajouter perso`). À l'inscription, le bot prend le perso capable de tenir le rôle, ou demande lequel s'il y en a plusieurs.
 - Quand un rôle est complet, son bouton passe en gris et les nouvelles inscriptions sont refusées.
-- Chaque perso peut avoir un rôle préféré et ses métiers. `/liste metier` retrouve qui a un métier donné, et `/liste battletags` donne les BattleTag de tout le monde.
+- Chaque perso peut avoir un rôle préféré. Ses métiers et recettes sont lus dans l'armurerie Blizzard. Pour consulter les persos, métiers, recettes et donjons, il y a **le site web**. Côté Discord, `/liste battletags` donne les BattleTag de tout le monde.
 - 30 minutes avant le départ, chaque inscrit reçoit un rappel en MP.
 - 15 minutes avant le départ, le bot crée un salon vocal pour la sortie et ajoute son lien au message. Le salon est supprimé quand il est vide, au plus tôt 30 minutes après le début.
-- La liste des donjons et raids vient de [warcraft.wiki.gg](https://warcraft.wiki.gg/wiki/World_of_Warcraft:_Forever) et se met à jour toute seule une fois par jour.
+- La liste des donjons et raids vient de [warcraft.wiki.gg](https://warcraft.wiki.gg/wiki/World_of_Warcraft:_Forever) et se met à jour toute seule chaque nuit, avec le reste des données (voir « Synchro des données »).
 
 ## Commandes
 
-Toutes les commandes suivent la logique **verbe + catégorie** : `/ajouter`, `/modifier`, `/supprimer`, `/liste`, puis ce sur quoi ça porte.
+Le bot ne garde que l'essentiel : les sorties, la déclaration des persos et l'atelier. Tout ce qui se consulte (persos, métiers, recettes, donjons, fiches d'armurerie) est sur **le site web**.
 
-| | event | perso | metier | battletag | autre |
-|---|---|---|---|---|---|
-| **`/ajouter`** | crée une sortie | ✅ | ✅ | ✅ | |
-| **`/modifier`** | | nom, classe, race, rôle préféré | niveau | | `armurerie` · `instances` (modos) |
-| **`/supprimer`** | annule la sortie | ✅ | ✅ | ✅ | `inscrit` |
-| **`/liste`** | `events` | `persos` | `metier` (qui l'a) · `recettes` | `battletags` | `instances` · `armurerie` |
+Les commandes suivent la logique **verbe + catégorie** :
+
+| | event | perso | battletag | autre |
+|---|---|---|---|---|
+| **`/ajouter`** | crée une sortie | ✅ | ✅ | |
+| **`/supprimer`** | annule la sortie | ✅ | ✅ | `inscrit` |
+| **`/liste`** | `events` | | `battletags` | |
 
 | Commande | Rôle |
 |---|---|
 | `/ajouter event instance date heure [joueurs] [tanks] [heals] [dps] [description]` | Crée une sortie. L'instance se cherche par nom ou abréviation (`brd`, `ony`, `sm cath`…). |
-| `/ajouter perso nom [classe] [race] [role_prefere]` | Déclare un de tes persos. Seul le nom est obligatoire : classe et race sont lues dans l'armurerie si le perso y est (niveau 10+), sinon le bot les demande. La combinaison race/classe et le rôle préféré sont vérifiés. |
-| `/ajouter metier perso metier [niveau]` | Ajoute un métier à un perso (niveau 1 à 300). 2 métiers principaux maximum. |
+| `/ajouter perso nom [classe] [race] [role_prefere]` | Déclare un de tes persos. Seul le nom est obligatoire : classe et race sont lues dans l'armurerie si le perso y est (niveau 10+), sinon le bot les demande. La combinaison race/classe et le rôle préféré sont vérifiés. Pour corriger un perso : le supprimer et le recréer. |
 | `/ajouter battletag tag` | Enregistre ton BattleTag (`Nom#1234`), ou remplace l'ancien. |
-| `/modifier perso perso [nom] [classe] [race] [role_prefere]` | Modifie un perso sans perdre ses métiers ni ses inscriptions. Rôle préféré « Aucun » pour le retirer. |
-| `/modifier metier perso metier niveau` | Change le niveau d'un métier. |
-| `/modifier armurerie [perso]` | Relit tout de suite tes persos (ou l'un d'eux) dans l'armurerie : métiers, recettes. Une fois par minute maximum. |
-| `/modifier instances` | Recharge la liste des donjons/raids depuis le wiki (permission « Gérer le serveur »). |
 | `/supprimer event sortie` | Annule la sortie après confirmation, et prévient les inscrits. Réservé à l'organisateur et aux modérateurs. |
 | `/supprimer inscrit sortie joueur` | Désinscrit un joueur d'**une** sortie. Choisis la sortie d'abord : le champ `joueur` ne propose que ses inscrits. Les autres sorties du joueur ne changent pas. Réservé à l'organisateur et aux modérateurs. |
 | `/supprimer perso perso` | Supprime un perso et ses métiers. Ses inscriptions en cours restent, avec ton pseudo à la place. |
-| `/supprimer metier perso metier` | Retire un métier. |
 | `/supprimer battletag` | Retire ton BattleTag. |
 | `/liste events` | Prochaines sorties du serveur. |
-| `/liste persos [joueur]` | Tes persos (ou ceux d'un autre joueur) : rôles possibles, rôle préféré ⭐, métiers, BattleTag. |
-| `/liste metier metier` | Les persos du serveur qui ont ce métier, du plus haut niveau au plus bas. |
 | `/liste battletags` | Les BattleTag des joueurs du serveur. |
-| `/liste instances [type]` | Les donjons (avec niveaux) et les raids. |
-| `/liste recettes metier [recherche]` | Recettes du métier connues sur le serveur. Avec le site web : un lien vers la page du métier, recherche pré-remplie. Sans site : envoyées en MP (pages ◀ ▶). Si rien ne correspond, réponse privée dans le salon. |
-| `/liste armurerie perso` | Fiche armurerie d'un perso (stats, équipement, métiers), envoyée en MP. Voir « Armurerie WoW Forever ». |
 
 **Date** : `25/12/2026`, `25/12`, `aujourd'hui`, `demain`. **Heure** : `21:00`, `21h30`, `21h`.
 
@@ -85,9 +75,8 @@ Le Paladin tank est viable dans Forever (Seal of Fury, Consecration de base). Le
 
 ### Métiers et BattleTag
 
-- Métiers principaux : Alchimie, Forge, Enchantement, Ingénierie, Herboristerie, Travail du cuir, Minage, Dépeçage, Couture (2 maximum par perso). Secondaires : Cuisine, Secourisme, Pêche. C'est la même liste qu'en Classic : le « Camping » de Forever est un système de feux de camp, pas un métier.
-- Le niveau de métier est facultatif. Pense à le mettre à jour avec `/modifier metier`.
-- Les listes (`/liste metier`, `/liste battletags`) ne montrent que les joueurs vus sur le serveur : ceux qui y ont utilisé une commande du bot ou se sont inscrits à une sortie. Elles s'affichent seulement pour celui qui tape la commande.
+- Les métiers ne se saisissent plus à la main : ils viennent de l'armurerie (niveau compris), à l'ajout du perso puis à chaque synchro. Sans clés Blizzard, les persos n'ont donc pas de métiers.
+- `/liste battletags` ne montre que les joueurs vus sur le serveur : ceux qui y ont utilisé une commande du bot ou se sont inscrits à une sortie. La liste s'affiche seulement pour celui qui tape la commande.
 
 ### Rappel et salon vocal
 
@@ -104,13 +93,28 @@ Intégrations → WoW Planner → `/admin`*. Le bot revérifie la permission à 
 
 | Commande | Rôle |
 |---|---|
-| `/admin ajouter perso joueur nom [classe] [race] [role_prefere]` | Ajoute un perso à un membre, mêmes règles que `/ajouter perso`. Le membre reçoit un MP et peut ensuite le modifier lui-même. |
-| `/admin modifier perso joueur perso [nom] [classe] [race] [role_prefere]` | Modifie un perso d'un membre (choisir le membre d'abord : le champ `perso` propose ses persos). |
-| `/admin supprimer perso joueur perso` | Supprime un perso d'un membre (il reçoit un MP). |
-| `/admin modifier armurerie [joueur]` | Relit dans l'armurerie les persos d'un membre, ou de tout le serveur. Sans limite de fréquence. |
+| `/admin ajouter perso joueur nom [classe] [race] [role_prefere]` | Ajoute un perso à un membre, mêmes règles que `/ajouter perso`. Le membre reçoit un MP. |
+| `/admin supprimer perso joueur perso` | Supprime un perso d'un membre (choisir le membre d'abord : le champ `perso` propose ses persos). Il reçoit un MP. |
 | `/admin atelier` | Poste (et épingle) le panneau de l'atelier dans le salon courant. |
+| `/admin sync` | Relit **tout** maintenant, sans attendre la synchro de nuit. Voir ci-dessous. |
 
-Pour voir les persos d'un membre, `/liste persos joueur:@membre` suffit (ouvert à tous).
+### Synchro des données (nuit et `/admin sync`)
+
+Tout ce qui vient de l'extérieur est mis à jour au même endroit (`cogs/sync.py`), en 5 étapes :
+1. la liste des donjons et raids (wiki) ;
+2. les priorités de stats (guide stillsixty) ;
+3. les arbres de talents (Blizzard) ;
+4. tous les persos déclarés : métiers, recettes, équipement, stats, talents, images (armurerie) ;
+5. les détails des recettes : noms français, composants, objets fabriqués (Blizzard).
+
+- **Chaque nuit à 4 h** (fuseau `TIMEZONE`), tout seul. Les talents ne sont redemandés que s'ils ont plus d'une semaine, et seules les recettes nouvelles sont demandées. Si le bot était éteint à 4 h (ou au premier lancement), la synchro est rattrapée au démarrage dès que la dernière a plus de 20 h. Le bilan est dans les logs.
+- **`/admin sync`** : la même chose tout de suite, mais en forçant les talents et **toutes** les recettes. L'avancement s'affiche étape par étape. Si ça dépasse 15 minutes, Discord ne permet plus de mettre à jour la réponse : le bilan arrive en MP.
+
+Une étape en échec n'empêche pas les suivantes, et on garde alors les anciennes données. Sans clés Blizzard, les étapes 3 à 5 sont sautées. Une seule synchro à la fois.
+
+**Quotas Blizzard** : 100 requêtes par seconde et 36 000 par heure. Le bot fait au plus 5 requêtes en parallèle et marque une pause d'une seconde entre deux persos ; s'il reçoit malgré tout un refus pour excès de requêtes, il patiente puis réessaie. Ordre de grandeur pour un `/admin sync` : environ 550 requêtes pour les talents, 6 par perso, 2 par recette. Avec 50 persos et 1 000 recettes, ça fait environ 3 000 requêtes, moins de 10 % du quota horaire. La synchro de nuit en fait beaucoup moins (persos et recettes nouvelles seulement).
+
+Pour voir les persos d'un membre : le site web.
 
 ## Atelier : commandes entre persos
 
@@ -222,8 +226,8 @@ python -m wowplanner
 
 Blizzard ne publie pas d'API pour WoW Forever. Le bot lit donc le tableau « Dungeons and raids » de la page [World of Warcraft: Forever](https://warcraft.wiki.gg/wiki/World_of_Warcraft:_Forever) du wiki communautaire, via son API MediaWiki :
 
-- au démarrage, puis toutes les `INSTANCES_REFRESH_HOURS` heures (24 par défaut) ;
-- à la demande avec `/modifier instances`.
+- chaque nuit, avec la synchro de nuit ;
+- à la demande avec `/admin sync`.
 
 Le résultat est mis en cache dans `data/instances_cache.json`. Une liste intégrée (`wowplanner/instances_default.json`, à jour au 11/11/2026) sert de secours si le wiki est injoignable. Si la page change de structure et que le bot ne trouve plus qu'une liste suspecte (moins de 10 donjons ou aucun raid), la mise à jour est ignorée et l'ancienne liste est conservée.
 
@@ -237,20 +241,11 @@ versionné).
 
 **Ce que ça apporte**
 
-- `/liste armurerie perso` : fiche d'un perso (déclaré ou pas) **envoyée en MP**, pour la garder sans encombrer le
-  salon : avatar, niveau, guilde, spé active, item level, stats, métiers avec niveau, équipement. Si les MP du joueur
-  sont fermés, la fiche s'affiche en réponse privée.
-- **Métiers synchronisés** : quand un perso est trouvé, ses métiers et leurs niveaux sont repris de l'armurerie (ils
-  remplacent la saisie manuelle). Synchro à `/ajouter perso`, quand le nom change avec `/modifier perso`, à chaque
-  `/liste armurerie`, et une fois par jour pour tous les persos.
-- `/liste recettes metier [recherche]` : toutes les recettes du métier connues par les persos du serveur, avec
-  leurs composants (en français) et les persos qui savent les faire. **Si le site web est en ligne**, le bot répond
-  juste par un bouton-lien vers la page du métier (recherche pré-remplie) ; sinon, **en MP** : Une carte par recette (nom complet,
-  un composant par ligne, 👥 les persos), regroupées par famille (Élixirs, Potions…), 3 par ligne sur PC ; environ
-  45 recettes par page, pages ◀ ▶ au-delà. Un composant lui-même fabriqué par une recette connue sur le serveur est
-  déplié en dessous, quantités recalculées (ex. : 3× Rouleau d'étoffe de lin ↳ 6× Étoffe de lin). `recherche` filtre sur le nom, sans tenir compte des accents ni des majuscules. Si aucune
-  recette ne correspond, le bot répond seulement dans le salon, sans MP. Les recettes connues sont relues à chaque
-  synchro ; les composants d'une recette sont demandés une seule fois puis gardés en base.
+- **Persos synchronisés** : quand un perso est trouvé, ses métiers (avec niveau), recettes connues, équipement,
+  stats, talents et images sont repris de l'armurerie, pour le site. Synchro à `/ajouter perso`,
+  chaque nuit pour tous les persos, et à la demande avec `/admin sync`.
+- **Recettes** : les recettes connues sont relues à chaque synchro. Leurs détails (nom français, composants, objet
+  fabriqué) sont demandés une seule fois puis gardés en base ; `/admin sync` les redemande tous.
 - **Vérification à l'ajout** : `/ajouter perso` dit si le perso existe dans l'armurerie, et prévient si la classe ou
   la race déclarée ne correspond pas. Jamais bloquant.
 
@@ -278,9 +273,10 @@ Un petit site public, en lecture seule, pour parcourir les persos et les métier
 - **Persos** : tableau de tous les persos (classe, race, rôles, métiers et niveaux), recherche et filtres par classe,
   rôle ou métier ;
 - **fiche d'un perso** : façon fiche du jeu, son **équipement** autour de son rendu en pied (icônes, infobulles,
-  enchantements) et ses **caractéristiques**, avec les **stats à pousser en priorité** pour sa spé (devinée d'après
+  enchantements) et ses **caractéristiques** (chacune expliquée au survol ou au toucher : à quoi elle sert, avec une
+  remarque selon la classe du perso, ex. « Force : inutile pour un Mage »), avec les **stats à pousser en priorité** pour sa spé (devinée d'après
   ses talents et son rôle préféré, avec un menu pour voir les autres spés de la classe). Les priorités viennent du
-  guide WoW Forever de stillsixty.com, **relu chaque nuit à 4 h** (et au démarrage s'il date de plus d'un jour) :
+  guide WoW Forever de stillsixty.com, **relu chaque nuit à 4 h** avec la synchro de nuit :
   si le guide change, le site suit ; si la page ne répond pas ou change de forme, on garde les dernières connues. Puis ses métiers en tableau, et ses recettes par **onglet de métier**, classées par type d'objet
   (composants d'artisanat, potions, armure : torse…) ;
   le portrait apparaît aussi dans les listes. Images hébergées par Blizzard, mises à jour à chaque synchro ;
@@ -313,7 +309,7 @@ WEB_DOMAIN=wow.ton-domaine.fr
 
 puis `docker compose up -d --build`. `docker-compose.traefik.yml` ajoute les labels Traefik (HTTPS) et lance le site
 sur le port interne 8080. Sans Docker : `WEB_PORT=8080` dans `.env`, et `WEB_URL=https://…` (adresse publique) pour
-que `/liste recettes` renvoie vers le site ; avec Traefik, `WEB_DOMAIN` suffit.
+que le bot renvoie vers le site dans ses messages ; avec Traefik, `WEB_DOMAIN` suffit.
 
 ## Structure
 
@@ -330,16 +326,17 @@ wowplanner/
   armory.py           client de l'API Blizzard (armurerie Forever)
   armory_probe.py     script de test de l'armurerie
   timeparse.py        lecture des dates et heures
-  cogs/commands.py    déclaration de toutes les commandes slash (/ajouter, /modifier, /supprimer, /liste)
+  cogs/commands.py    déclaration de toutes les commandes slash (/ajouter, /supprimer, /liste, /admin)
   cogs/events.py      sorties + boutons d'inscription
-  cogs/characters.py  persos et métiers
+  cogs/characters.py  persos
   cogs/players.py     BattleTag
-  cogs/instances.py   instances + mise à jour périodique
-  cogs/armory.py      /liste armurerie et /liste recettes, synchro des métiers et recettes
+  cogs/armory.py      synchro armurerie : métiers, recettes, équipement, talents
+  cogs/statsync.py    lecture des priorités de stats (guide stillsixty)
+  cogs/sync.py        synchro de nuit et /admin sync : tout ce qui vient de l'extérieur
   cogs/orders.py      atelier : panneau, commandes entre persos, boutons en MP
   orders.py           règles des commandes (recettes commandables, droits, composants)
-  recipes.py          mise en forme des recettes (recherche, pages)
-  web.py              site web public (persos, métiers, recettes)
+  recipes.py          recettes : recherche, regroupement, composants dépliés
+  web.py              site web public (persos, métiers, recettes, donjons)
   cogs/schedule.py    rappels en MP et salons vocaux temporaires
 tests/test_core.py
 ```

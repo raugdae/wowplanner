@@ -235,13 +235,23 @@ td .none { color:var(--muted); opacity:.5; }
 .statbox h3 { margin:0 0 8px; font-size:16px; }
 .statbox h4 { margin:12px 0 4px; font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); }
 .srow { display:flex; align-items:center; gap:8px; padding:3px 6px; border-radius:6px; font-size:14px; }
-.srow span { flex:1; } .srow b { font-variant-numeric:tabular-nums; }
+.srow > span { flex:1; } .srow > b { font-variant-numeric:tabular-nums; }
 .srow i { font-style:normal; font-size:11px; font-weight:700; min-width:18px; height:18px; line-height:18px;
   text-align:center; border-radius:9px; background:var(--panel2); color:var(--muted); }
 .srow.p1, .srow.p2, .srow.p3 { background:linear-gradient(90deg, rgba(242,199,92,.22), transparent); }
 .srow.p1 i, .srow.p2 i, .srow.p3 i { background:#f2c75c; color:#1a1406; }
 .srow.p1 span, .srow.p2 span, .srow.p3 span { font-weight:700; }
-.srow.capped b::after { content:" ✓"; color:#3ee05a; }
+.srow.capped > b::after { content:" ✓"; color:#3ee05a; }
+.srow[tabindex] { position:relative; cursor:help; }
+.srow[tabindex] > span { text-decoration:underline dotted rgba(127,127,127,.6); text-underline-offset:3px; }
+.srow[tabindex]:focus { outline:2px solid var(--accent); outline-offset:1px; }
+.srow .tt { display:none; position:absolute; top:calc(100% + 4px); left:0; right:0; z-index:30;
+  background:rgba(10,13,22,.97); color:#eee; border:1px solid #6a5a32; border-radius:8px; padding:8px 10px;
+  font-size:13px; line-height:1.4; box-shadow:0 6px 22px rgba(0,0,0,.65); cursor:auto; font-weight:400; }
+.srow .tt b { color:#f2c75c; } .srow .tt p { margin:4px 0 0; }
+.srow .tt .note { color:#9fd0ff; }
+.srow:hover .tt, .srow:focus .tt { display:block; }
+.statbox .help { font-size:12px; color:var(--muted); margin:-4px 0 8px; }
 .prio-box select { font:inherit; font-weight:700; background:var(--panel); color:var(--accent);
   border:1px solid var(--line); border-radius:6px; padding:1px 4px; }
 .prio-box { background:var(--panel2); border:1px solid var(--line); border-radius:10px; padding:8px 10px; font-size:13px; }
@@ -798,6 +808,81 @@ STAT_GROUPS = (
 )
 ALWAYS_SHOWN = {"health", "power", "armor", "strength", "agility", "stamina", "intellect", "spirit"}
 
+# À quoi sert chaque caractéristique (infobulle du panneau). Volontairement sans chiffres précis quand
+# Forever peut différer de Classic.
+STAT_HELP = {
+    "health": "Les points de vie : à 0, le perso meurt. Ils viennent surtout de l'Endurance.",
+    "armor": "Réduit les dégâts physiques subis (coups, flèches). Aucun effet contre la magie. "
+             "Vient surtout de l'équipement, et un peu de l'Agilité.",
+    "strength": "Augmente la puissance d'attaque en mêlée, donc les dégâts des armes et des techniques physiques. "
+                "Augmente aussi les dégâts absorbés quand on bloque avec un bouclier.",
+    "agility": "Augmente les chances de coup critique et d'esquive, ainsi que l'armure. Donne de la puissance "
+               "d'attaque à distance, et aussi en mêlée pour les Voleurs, les Chasseurs et les Druides en forme de félin.",
+    "stamina": "Augmente les points de vie. C'est la stat de survie : indispensable pour les tanks, utile à tout le monde.",
+    "intellect": "Augmente la réserve de mana et les chances de coup critique des sorts.",
+    "spirit": "Accélère la régénération de vie et de mana. Pour le mana, elle ne joue qu'après 5 secondes "
+              "sans lancer de sort : c'est la récupération entre deux combats.",
+    "attack_power": "Augmente les dégâts des attaques et techniques de mêlée. Vient de la Force (et de l'Agilité "
+                    "pour certaines classes) et de l'équipement.",
+    "melee_hit": "Réduit le risque de rater sa cible en mêlée. Contre un boss, inutile au-delà du cap affiché.",
+    "melee_crit": "Chance qu'une attaque de mêlée soit un coup critique, qui inflige le double de dégâts.",
+    "melee_haste": "Accélère la vitesse d'attaque : plus de coups par seconde.",
+    "expertise": "Réduit les chances que la cible esquive ou pare vos attaques de mêlée.",
+    "main_hand_dps": "Dégâts moyens par seconde de l'arme tenue en main droite.",
+    "ranged_attack_power": "Augmente les dégâts des armes à distance (arcs, fusils, arbalètes) et des techniques "
+                           "à distance. Vient surtout de l'Agilité et de l'équipement.",
+    "ranged_hit": "Réduit le risque de rater sa cible à distance. Contre un boss, inutile au-delà du cap affiché.",
+    "ranged_crit": "Chance qu'un tir soit un coup critique, qui inflige le double de dégâts.",
+    "ranged_haste": "Accélère la vitesse de tir.",
+    "spell_power": "Augmente les dégâts infligés par les sorts.",
+    "spell_healing": "Augmente les points de vie rendus par les sorts de soin.",
+    "spell_hit": "Réduit le risque qu'un sort soit résisté (raté). Contre un boss, inutile au-delà du cap affiché.",
+    "spell_crit": "Chance qu'un sort de dégâts ou de soin soit critique, pour un effet nettement plus fort.",
+    "spell_haste": "Réduit le temps d'incantation des sorts.",
+    "mana_regen_combat": "Mana récupéré toutes les 5 secondes, même en lançant des sorts. Précieux pour les "
+                         "soigneurs sur les longs combats.",
+    "defense": "Réduit les chances d'être touché et de subir un coup critique, et augmente esquive, parade et "
+               "blocage. La stat clé des tanks, qui doivent éviter les coups critiques des boss.",
+    "dodge": "Chance d'esquiver complètement une attaque de mêlée.",
+    "parry": "Chance de parer une attaque de mêlée venant de face (aucun dégât).",
+    "block": "Chance de bloquer une attaque avec un bouclier, ce qui réduit les dégâts reçus.",
+}
+POWER_HELP = {
+    "mana": "La ressource des sorts. Le mana max vient de l'Intelligence ; il se régénère grâce à l'Esprit et au "
+            "mana / 5 s.",
+    "rage": "Se gagne en frappant et en recevant des coups, et redescend hors combat. Sert à lancer les techniques.",
+    "energie": "Se recharge vite et en continu. Elle limite le nombre de techniques qu'on peut enchaîner.",
+}
+POWER_HELP["energy"] = POWER_HELP["energie"]  # au cas où l'API répond en anglais
+# Remarques propres à la classe du perso : (caractéristique, classes concernées, texte).
+CASTERS = frozenset({"mage", "pretre", "demoniste"})
+NO_MANA = frozenset({"guerrier", "voleur"})
+CLASS_NOTES = (
+    ("strength", CASTERS, "Inutile ou presque pour cette classe, qui se bat avec ses sorts."),
+    ("strength", frozenset({"guerrier", "paladin", "chaman", "druide"}),
+     "Très efficace pour cette classe en mêlée : chaque point de Force donne plus de puissance d'attaque."),
+    ("agility", CASTERS, "Peu utile pour cette classe : un peu d'armure et de critique en mêlée seulement."),
+    ("agility", frozenset({"voleur", "chasseur"}), "Une des stats principales de cette classe."),
+    ("intellect", NO_MANA, "Inutile pour cette classe, qui n'a pas de mana."),
+    ("spirit", NO_MANA, "Pour cette classe (sans mana), ne sert qu'à récupérer de la vie hors combat."),
+)
+
+
+def stat_tooltip(key: str, label: str, wow_class: str) -> str:
+    """Infobulle d'une ligne du panneau : à quoi sert la caractéristique, plus une remarque selon la classe."""
+    if key == "power":
+        text = POWER_HELP.get(normalize(label), "La ressource utilisée pour lancer les techniques.")
+    else:
+        text = STAT_HELP.get(key)
+    if not text:
+        return ""
+    notes = "".join(
+        f'<p class="note">{esc(class_label(wow_class))} : {esc(note)}</p>'
+        for stat, classes, note in CLASS_NOTES
+        if stat == key and wow_class in classes
+    )
+    return f'<div class="tt"><b>{esc(label)}</b><p>{esc(text)}</p>{notes}</div>'
+
 
 def _num(value: float, pct: bool) -> str:
     text = f"{value:.2f}".rstrip("0").rstrip(".") if pct else f"{value:.0f}" if value == int(value) else f"{value:.1f}"
@@ -851,9 +936,11 @@ def stats_html(c: Character, spec: str | None, guessed: bool = False) -> str:
             css += " capped" if capped else ""
             cap = gear.hit_cap(key.split("_")[0]) if key.endswith("_hit") else None
             shown = _num(value, pct) + (f" / {cap:.0f} %" if cap else "")
+            tooltip = stat_tooltip(key, label, c.wow_class)
+            focus = ' tabindex="0"' if tooltip else ""  # tabindex : l'infobulle s'ouvre aussi au toucher
             cells.append(
-                f'<div class="srow{css}" data-k="{key}"><i>{rank or ""}</i><span>{esc(label)}</span>'
-                f"<b>{esc(shown)}</b></div>"
+                f'<div class="srow{css}" data-k="{key}"{focus}><i>{rank or ""}</i><span>{esc(label)}</span>'
+                f"<b>{esc(shown)}</b>{tooltip}</div>"
             )
         if cells:
             groups.append(f"<h4>{esc(title)}</h4>{''.join(cells)}")
@@ -869,7 +956,10 @@ def stats_html(c: Character, spec: str | None, guessed: bool = False) -> str:
         "on passe à la suite.</p>" if prio else ""
     )
     data = f'<script type="application/json" id="spec-data">{json.dumps(views)}</script>' if prio else ""
-    return f'<aside class="statbox"><h3>Caractéristiques</h3>{prio}{"".join(groups)}{source}{data}</aside>'
+    help_line = '<p class="help">Survole ou touche une caractéristique pour savoir à quoi elle sert.</p>'
+    return (
+        f'<aside class="statbox"><h3>Caractéristiques</h3>{help_line}{prio}{"".join(groups)}{source}{data}</aside>'
+    )
 
 
 def armory_html(c: Character, spec: str | None, icons: dict[int, str], below: str = "", guessed: bool = False) -> str:

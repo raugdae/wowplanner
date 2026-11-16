@@ -17,7 +17,6 @@ class Config:
     emoji_tank: str
     emoji_heal: str
     emoji_dps: str
-    instances_refresh_hours: float
     event_channel_ids: frozenset[int] = frozenset()
     reminder_minutes: int = 30
     voice_channel_minutes: int = 15
@@ -29,7 +28,7 @@ class Config:
     # Site web public (persos et métiers, sans info perso). 0 = désactivé.
     web_port: int = 0
     web_host: str = "0.0.0.0"
-    # Adresse publique du site (ex. https://wow.exemple.fr) : /liste recettes y renvoie au lieu d'un MP.
+    # Adresse publique du site (ex. https://wow.exemple.fr) : le bot y renvoie dans ses messages.
     web_url: str = ""
 
     @property
@@ -61,7 +60,6 @@ def load_config() -> Config:
         emoji_tank=os.getenv("EMOJI_TANK", "🛡️"),
         emoji_heal=os.getenv("EMOJI_HEAL", "⛑️"),
         emoji_dps=os.getenv("EMOJI_DPS", "⚔️"),
-        instances_refresh_hours=float(os.getenv("INSTANCES_REFRESH_HOURS", "24")),
         event_channel_ids=frozenset(
             int(cid) for cid in os.getenv("EVENT_CHANNEL_IDS", "").replace(" ", "").split(",") if cid
         ),
