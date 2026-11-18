@@ -406,9 +406,23 @@ def parse_item(data: dict[str, Any]) -> dict[str, Any]:
     add("req", ((p.get("requirements") or {}).get("level") or {}).get("display_string"))
     item_class = data.get("item_class") or p.get("item_class") or {}
     subclass = data.get("item_subclass") or p.get("item_subclass") or {}
+    def number(*values: Any) -> int | None:
+        """Premier nombre trouvé : entier direct, ou {"value": …} de l'aperçu d'objet."""
+        for value in values:
+            if isinstance(value, dict):
+                value = value.get("value")
+            if isinstance(value, int) and not isinstance(value, bool):
+                return value
+        return None
+
+    required = number(data.get("required_level"), ((p.get("requirements") or {}).get("level")))
     return {
         "quality": (p.get("quality") or {}).get("type"), "lines": lines,
         # Pour classer les recettes : composants d'artisanat, consommables, armure par emplacement…
         "class": item_class.get("id"), "class_name": item_class.get("name"), "subclass_name": subclass.get("name"),
         "slot": slot.get("type"), "slot_name": slot.get("name"),
+        # Pour l'équipement conseillé : type exact (tissu, mailles, épée à une main…), niveaux requis et d'objet.
+        "subclass": subclass.get("id"),
+        "req_level": required,
+        "ilvl": number(data.get("level"), p.get("level")),
     }

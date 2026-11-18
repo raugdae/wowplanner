@@ -208,6 +208,20 @@ class SyncCog(commands.Cog):
 
     # ============================================================ /admin sync
 
+    @property
+    def busy(self) -> bool:
+        return self._lock.locked()
+
+    async def run_full(self, progress: Progress | None = None) -> list[str] | None:
+        """Synchro complète (page d'administration du site). None si une synchro est déjà en cours."""
+        if self._lock.locked():
+            return None
+        async with self._lock:
+            return await self._run_steps(full=True, progress=progress)
+
+    def last_run(self) -> float | None:
+        return self._last_run()
+
     async def run(self, interaction: discord.Interaction) -> None:
         if self._lock.locked():
             await interaction.response.send_message("⏳ Une synchro est déjà en cours.", ephemeral=True)

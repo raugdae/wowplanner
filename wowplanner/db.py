@@ -194,6 +194,8 @@ class Character:
     # Où le perso a été déclaré : « web » (vérifié dans l'armurerie à l'ajout), sinon Discord.
     source: str | None = None
     created_at: int | None = None
+    # Perso préféré du joueur (un seul) : proposé en premier pour s'inscrire.
+    favorite: bool = False
 
 
 # Persos ajoutés depuis le site (les autres viennent de Discord).
@@ -204,7 +206,8 @@ SOURCE_WEB = "web"
 # 2 : identifiants des composants et de l'objet fabriqué (pour relier les sous-recettes).
 # 3 : effet de la recette et infobulle de l'objet fabriqué (stats, effets), pour le site.
 # 4 : type de l'objet fabriqué (composant d'artisanat, consommable, armure…), pour classer les recettes.
-RECIPE_DETAILS_VERSION = 4
+# 5 : sous-type exact, niveau requis et niveau d'objet, pour l'équipement conseillé sur la fiche perso.
+RECIPE_DETAILS_VERSION = 5
 
 
 @dataclass
@@ -293,6 +296,7 @@ class Database:
         for column in (
             "level INTEGER", "avatar_url TEXT", "render_url TEXT", "talents TEXT", "stats TEXT", "equipment TEXT",
             "source TEXT",  # v1.13 → v1.14 : persos ajoutés depuis le site
+            "favorite INTEGER NOT NULL DEFAULT 0",  # v1.14 → v1.15 : perso préféré
         ):
             if column.split()[0] not in columns:
                 self.conn.execute(f"ALTER TABLE characters ADD COLUMN {column}")
@@ -464,7 +468,7 @@ class Database:
                 talents=json.loads(r["talents"]) if r["talents"] else None,
                 stats=json.loads(r["stats"]) if r["stats"] else None,
                 equipment=json.loads(r["equipment"]) if r["equipment"] else None,
-                source=r["source"], created_at=r["created_at"],
+                source=r["source"], created_at=r["created_at"], favorite=bool(r["favorite"]),
             )
             for r in rows
         ]
@@ -495,6 +499,29 @@ class Database:
     def set_preferred_role(self, character_id: int, role: str | None) -> None:
         with self.conn:
             self.conn.execute("UPDATE characters SET preferred_role = ? WHERE id = ?", (role, character_id))
+
+    def set_favorite(self, user_id: int, character_id: int | None) -> None:
+        """Perso préféré du joueur (un seul) ; None : plus aucun."""
+        with self.conn:
+            self.conn.execute("UPDATE characters SET favorite = 0 WHERE user_id = ?", (user_id,))
+            if character_id is not None:
+                self.conn.execute(
+                    "UPDATE characters SET favorite = 1 WHERE id = ? AND user_id = ?", (character_id, user_id)
+                )
+
+    def last_display_name(self, user_id: int) -> str | None:
+        """Dernier pseudo connu du joueur (vu à son inscription à une sortie)."""
+        row = self.conn.execute(
+            """SELECT display_name FROM signups WHERE user_id = ? AND display_name IS NOT NULL
+               ORDER BY signed_at DESC LIMIT 1""",
+            (user_id,),
+        ).fetchone()
+        return row["display_name"] if row else None
+
+    def guild_member_ids(self, guild_id: int) -> list[int]:
+        return [r["user_id"] for r in self.conn.execute(
+            "SELECT user_id FROM guild_members WHERE guild_id = ? ORDER BY user_id", (guild_id,)
+        )]
 
     def get_characters(self, user_id: int) -> list[Character]:
         rows = self.conn.execute(

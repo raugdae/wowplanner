@@ -19,19 +19,19 @@ import logging
 import secrets
 import time
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Awaitable, Callable
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 from aiohttp import web
 
-from .db import Character, Database, GuildRecipe
+from .db import Character, Crafter, Database, GuildRecipe
 from .gamedata import (
     CLASSES, MAX_PROFESSION_SKILL, PROFESSIONS, class_label, is_primary, profession_label, race_label, roles_for,
 )
 from .recipes import crafted_by_map, expand_reagents, filter_recipes, group_by_category, normalize
-from . import dungeon_guides, dungeons, gear, statsource
+from . import dungeon_guides, dungeons, gear, proficiency, statsource
 from .armory import icon_url
 from .roles import LABELS, ROLES
 from .webauth import (
@@ -50,6 +50,8 @@ class Viewer:
     """Visiteur de la requête en cours, quand la connexion Discord est activée."""
     user: dict[str, Any] | None  # {"id", "name", …} si connecté
     path: str  # page demandée (pour y revenir après connexion)
+    characters: list[Character] = field(default_factory=list)  # ses persos (menu du compte)
+    admin: bool = False  # permission « Gérer le serveur » sur Discord
 
 
 # Posé par le middleware de connexion le temps d'une requête ; None = connexion désactivée (site ouvert).
@@ -66,16 +68,39 @@ def login_url(path: str) -> str:
     return f"/auth/login?next={quote(safe_next(path), safe='')}"
 
 
-def _account_html() -> str:
+def is_admin_viewer() -> bool:
     viewer = _VIEWER.get()
-    if viewer is None:
-        return ""
-    if viewer.user:
+    return viewer is not None and viewer.user is not None and viewer.admin
+
+
+def _menu_html() -> str:
+    """Menu en haut à droite : compte, persos du joueur (préféré en tête), thème, administration, déconnexion."""
+    viewer = _VIEWER.get()
+    themes = "".join(f'<option value="{k}">{esc(v)}</option>' for k, v in THEMES.items())
+    theme = (
+        '<div class="menu-sec"><label class="menu-theme">Thème'
+        f'<select id="theme" aria-label="Thème">{themes}</select></label></div>'
+    )
+    if viewer is None or not viewer.user:
+        login = ""
+        if viewer is not None:
+            login = f'<a class="account login" href="{esc(login_url(viewer.path))}">Se connecter avec Discord</a>'
         return (
-            f'<span class="account">{esc(viewer.user.get("name", "?"))} · '
-            '<a href="/auth/logout">Déconnexion</a></span>'
+            f'<div class="account-zone">{login}<details class="usermenu"><summary aria-label="Menu">☰</summary>'
+            f'<div class="menu-panel">{theme}</div></details></div>'
         )
-    return f'<a class="account login" href="{esc(login_url(viewer.path))}">Se connecter avec Discord</a>'
+    chars = sorted(viewer.characters, key=lambda c: (not c.favorite, c.name.lower()))
+    links = "".join(
+        f'<a class="menu-char" href="/perso/{c.id}">{avatar_html(c)}<span>{"⭐ " if c.favorite else ""}{esc(c.name)}'
+        f'<small>{esc(class_label(c.wow_class))}{f" · {c.level}" if c.level else ""}</small></span></a>'
+        for c in chars
+    ) or '<p class="muted">Aucun perso déclaré.</p>'
+    admin = '<a class="menu-link" href="/admin">🛠️ Administration</a>' if viewer.admin else ""
+    name = esc(viewer.user.get("name", "?"))
+    return f"""<div class="account-zone"><details class="usermenu"><summary>👤 {name} ▾</summary>
+<div class="menu-panel"><div class="menu-head">Connecté en tant que <b>{name}</b></div>
+<div class="menu-sec"><small>Mes persos</small>{links}<a class="menu-link" href="/mes-persos">Gérer mes persos →</a></div>
+{theme}{admin}<a class="menu-link" href="/auth/logout">Déconnexion</a></div></details></div>"""
 
 CLASS_COLORS = {
     "guerrier": "#C79C6E", "paladin": "#F58CBA", "chasseur": "#ABD473", "voleur": "#FFF569", "pretre": "#FFFFFF",
@@ -142,9 +167,28 @@ header .brand::before { content:var(--crest); margin-right:8px; }
 header nav { display:flex; gap:16px; }
 header nav a { color:var(--muted); }
 header nav a.active { color:var(--text); font-weight:600; border-bottom:2px solid var(--accent); }
-header .theme { margin-left:auto; }
+header .account-zone { margin-left:auto; display:flex; gap:8px; align-items:center; position:relative; }
 header .account { font-size:13px; color:var(--muted); white-space:nowrap; }
 header .account.login { color:var(--text); border:1px solid var(--accent); border-radius:8px; padding:4px 10px; }
+.usermenu > summary { list-style:none; cursor:pointer; user-select:none; border:1px solid var(--accent);
+  border-radius:8px; padding:4px 10px; font-size:14px; white-space:nowrap; background:rgba(0,0,0,.2); }
+.usermenu > summary::-webkit-details-marker { display:none; }
+.usermenu[open] > summary { background:var(--accent); color:var(--bg); }
+.menu-panel { position:absolute; right:0; top:calc(100% + 8px); width:290px; max-width:calc(100vw - 32px);
+  max-height:calc(100vh - 90px); overflow-y:auto; background:var(--panel); border:1px solid var(--line);
+  border-top:2px solid var(--accent); border-radius:10px; padding:8px; box-shadow:0 10px 30px rgba(0,0,0,.55); z-index:40; }
+.menu-head { padding:4px 8px 8px; color:var(--muted); font-size:13px; border-bottom:1px solid var(--line); }
+.menu-head b { color:var(--text); }
+.menu-sec { padding:8px 4px; border-bottom:1px solid var(--line); }
+.menu-sec > small { display:block; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; font-size:11px;
+  padding:0 4px 4px; }
+.menu-char { display:flex; align-items:center; gap:8px; padding:4px; border-radius:8px; }
+.menu-char:hover { background:var(--panel2); text-decoration:none; }
+.menu-char .avatar { width:28px; height:28px; }
+.menu-char small { display:block; color:var(--muted); font-size:12px; }
+.menu-link { display:block; padding:7px 8px; border-radius:8px; }
+.menu-link:hover { background:var(--panel2); text-decoration:none; }
+.menu-theme { display:flex; justify-content:space-between; align-items:center; gap:8px; padding:0 4px; font-size:14px; }
 .login-box { max-width:520px; margin:40px auto; text-align:center; }
 .login-box .btn { font-size:16px; padding:10px 18px; }
 header select { background:rgba(0,0,0,.25); color:var(--text); border:1px solid var(--accent); border-radius:8px;
@@ -403,6 +447,7 @@ tr[data-href] { cursor:pointer; }
 .dtile.none { display:flex; align-items:center; justify-content:center; font-size:40px; background:var(--panel2); }
 .dhero h1 .badge-new { font-family:system-ui,sans-serif; font-size:12px; vertical-align:6px; }
 .dhero .sub { margin-bottom:8px; }
+.dhero .create-ev { margin-top:10px; }
 .facts { display:flex; gap:8px; flex-wrap:wrap; }
 .fact { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:4px 12px; text-align:center; }
 .fact small { display:block; color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.05em; }
@@ -451,6 +496,37 @@ tr[data-href] { cursor:pointer; }
 .flash { border:1px solid var(--line); border-left:4px solid #5fd38d; background:var(--panel); border-radius:10px;
   padding:10px 14px; margin:0 0 16px; }
 .flash.err { border-left-color:#ff6b6b; }
+/* Équipement fabricable (fiche perso). */
+.gear-only { display:flex; gap:8px; align-items:center; color:var(--muted); cursor:pointer; margin:0 0 10px; }
+.gear-only input { accent-color:var(--accent); width:16px; height:16px; }
+.gear-group h4 { margin:14px 0 6px; font-size:15px; color:var(--accent); }
+.gear-group h4 small { font-weight:400; }
+.gear-list { display:grid; grid-template-columns:repeat(auto-fill,minmax(250px,1fr)); gap:8px; }
+.gear-item { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:8px 10px; font-size:13px; }
+.gear-item[data-up="1"] { border-color:#3ee05a; }
+.gear-item.later { opacity:.7; }
+.gear-item .gi-head b { font-size:14px; }
+.gear-item .gi-meta { color:var(--muted); font-size:12px; margin:2px 0 4px; }
+.gear-item .tip { border-bottom:none; margin:0 0 4px; padding:0; }
+.gear-item .prio { color:#fff; font-weight:700; } .gear-item .prio::after { content:" ★"; color:#f2c75c; }
+.gear-item .gi-who { color:var(--muted); font-size:12px; } .gear-item .gi-who a { color:var(--text); }
+.gbadge { display:inline-block; margin-left:6px; font-size:11px; border-radius:999px; padding:0 7px; vertical-align:1px; }
+.gbadge.up { background:#1f5a2c; color:#9ff0b0; } .gbadge.later { background:var(--panel2); color:var(--muted); }
+.only-up .gear-item:not([data-up="1"]) { display:none; }
+.only-up .gear-group:not(:has(.gear-item[data-up="1"])) { display:none; }
+.order-link { color:var(--accent) !important; font-weight:600; }
+/* Atelier. */
+.order-grid { display:grid; grid-template-columns:minmax(0, 1fr) minmax(0, 1.4fr); gap:14px; align-items:start; }
+@media (max-width:760px) { .order-grid { grid-template-columns:1fr; } }
+pre.reagents { white-space:pre-wrap; font:inherit; font-size:13px; margin:4px 0; color:var(--muted); }
+main h3 { margin:16px 0 8px; font-size:16px; }
+.fav { background:none; border:none; cursor:pointer; font-size:20px; line-height:1; color:var(--muted); padding:2px 4px; }
+.fav.on { color:#f2c75c; }
+.fav:hover { color:#f2c75c; }
+.src-tag.warn { border-color:#a98a2a; color:#e6c35c; }
+.admin-sec { margin:0 0 16px; }
+.sync-log { background:var(--panel2); border:1px solid var(--line); border-radius:8px; padding:6px 12px; margin:8px 0; }
+.sync-log p { margin:4px 0; } .sync-log ul { margin:4px 0; padding-left:18px; }
 .ev { margin:0 0 14px; padding:12px 16px 14px; }
 .ev.mine { border-color:var(--accent); }
 .ev-head { display:flex; gap:12px; align-items:flex-start; justify-content:space-between; flex-wrap:wrap; }
@@ -495,7 +571,7 @@ select.pick, .form input, .form select, .form textarea { background:var(--panel)
 .src-tag { font-size:11px; color:var(--muted); border:1px solid var(--line); border-radius:999px; padding:0 7px; }
 @media (max-width:600px) { .ev { padding:10px 12px; } }
 footer { color:var(--muted); font-size:12px; text-align:center; padding:24px; }
-@media (max-width:600px) { header .theme { margin-left:0; width:100%; } header select { width:100%; } }
+@media (max-width:600px) { header nav { flex-wrap:wrap; gap:10px; } }
 """
 
 # Appliqué dans <head> pour éviter un flash du thème par défaut.
@@ -513,6 +589,32 @@ THEME_SCRIPT = """
     document.documentElement.dataset.theme = sel.value;
     try { localStorage.setItem("wp-theme", sel.value); } catch (e) {}
   });
+})();
+</script>
+"""
+
+# Équipement fabricable (fiche perso) : filtre « seulement les améliorations », section ouverte mémorisée.
+GEAR_SCRIPT = """
+<script>
+(() => {
+  const box = document.getElementById("gear-only-up"), groups = document.querySelector(".gear-groups");
+  const fold = document.getElementById("equipement-fabricable");
+  if (box && groups) box.addEventListener("change", () => groups.classList.toggle("only-up", box.checked));
+  if (!fold) return;
+  try { if (localStorage.getItem("wp-gear-open") === "1") fold.open = true; } catch (e) {}
+  fold.addEventListener("toggle", () => { try { localStorage.setItem("wp-gear-open", fold.open ? "1" : ""); } catch (e) {} });
+})();
+</script>
+"""
+
+# Menu du compte : se ferme au clic ailleurs ou avec Échap.
+MENU_SCRIPT = """
+<script>
+(() => {
+  const menu = document.querySelector("details.usermenu");
+  if (!menu) return;
+  document.addEventListener("click", e => { if (menu.open && !menu.contains(e.target)) menu.open = false; });
+  document.addEventListener("keydown", e => { if (e.key === "Escape") menu.open = false; });
 })();
 </script>
 """
@@ -675,24 +777,19 @@ FOLD_BUTTONS = (
 
 
 def page(title: str, active: str, body: str, scripts: str = "") -> web.Response:
-    links = [("sorties", "/sorties", "Sorties"), ("persos", "/", "Persos"), ("metiers", "/metiers", "Métiers"),
-             ("donjons", "/donjons", "Donjons")]
-    viewer = _VIEWER.get()
-    if viewer is not None and viewer.user:
-        links.append(("mes-persos", "/mes-persos", "Mes persos"))
+    links = [("sorties", "/sorties", "Sorties"), ("persos", "/", "Guilde"), ("metiers", "/metiers", "Métiers"),
+             ("atelier", "/atelier", "Atelier"), ("donjons", "/donjons", "Donjons")]
     nav = "".join(
         f'<a href="{href}" class="{"active" if key == active else ""}">{label}</a>' for key, href, label in links
     )
-    themes = "".join(f'<option value="{k}">{esc(v)}</option>' for k, v in THEMES.items())
     document = f"""<!doctype html>
 <html lang="fr" data-theme="{DEFAULT_THEME}"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{esc(title)} · WoW Planner</title>{THEME_BOOT}<style>{STYLE}</style></head>
-<body><header><a class="brand title" href="/">WoW Planner</a><nav>{nav}</nav>
-<label class="theme" title="Thème d'affichage"><select id="theme" aria-label="Thème">{themes}</select></label>{_account_html()}</header>
+<body><header><a class="brand title" href="/">WoW Planner</a><nav>{nav}</nav>{_menu_html()}</header>
 <main>{body}</main>
 <footer>Données des persos déclarés sur le Discord, complétées par l'armurerie Blizzard (WoW Forever).</footer>
-{THEME_SCRIPT}{scripts}</body></html>"""
+{THEME_SCRIPT}{MENU_SCRIPT}{scripts}</body></html>"""
     return web.Response(text=document, content_type="text/html")
 
 
@@ -1085,7 +1182,9 @@ def armory_html(c: Character, spec: str | None, icons: dict[int, str], below: st
     )
 
 
-def recipe_card(recipe: GuildRecipe, crafted_by: dict, crafter_links: dict[str, int] | None) -> str:
+def recipe_card(
+    recipe: GuildRecipe, crafted_by: dict, crafter_links: dict[str, int] | None, order_link: bool = True,
+) -> str:
     if recipe.reagents is None:
         reagents = '<li class="muted">composants inconnus pour l\'instant</li>'
     elif not recipe.reagents:
@@ -1111,6 +1210,9 @@ def recipe_card(recipe: GuildRecipe, crafted_by: dict, crafter_links: dict[str, 
             for n in recipe.crafters
         )
         who = f'<div class="who">👥 {links}</div>'
+    viewer = _VIEWER.get()
+    if order_link and viewer is not None and viewer.user:
+        who += f'<div class="who"><a class="order-link" href="/atelier?recette={recipe.id}#commande">🛒 Commander</a></div>'
     search = normalize(" ".join([recipe.name, *(r[1] for r in recipe.reagents or []), *(t for _, t in lines)]))
     return (
         f'<div class="card" data-search="{esc(search)}"><h4{title_style}>{esc(recipe.name)}</h4>'
@@ -1128,6 +1230,105 @@ def recipes_by_family_html(recipes: list[GuildRecipe], crafted_by: dict, crafter
             "</div></details>"
         )
     return "".join(sections)
+
+
+# Équipement fabricable : objets jusqu'à N niveaux au-dessus du perso (« bientôt »), au plus N par emplacement.
+GEAR_LEVEL_AHEAD = 5
+GEAR_PER_SLOT = 12
+GEAR_GROUP_LABELS = {"FINGER_1": "Anneaux", "TRINKET_1": "Bijoux", "MAIN_HAND": "Armes", "OFF_HAND": "Main gauche"}
+
+
+def crafted_gear_html(
+    c: Character, recipes: list[GuildRecipe], crafters: dict[int, list[Crafter]], viewer_id: int | None,
+    top: list[str],
+) -> str:
+    """Objets que les persos du serveur savent fabriquer et que ce perso peut porter (classe, niveau), par
+    emplacement, avec l'objet porté pour comparer et qui sait le faire. Vide s'il n'y en a aucun."""
+    equipped = {i["slot"]: i for i in c.equipment or []}
+    groups: dict[str, list[tuple[GuildRecipe, int]]] = {}
+    for recipe in recipes:
+        item = recipe.item
+        from_level = proficiency.usable_from(c.wow_class, item)
+        if from_level is None or (c.level and from_level > c.level + GEAR_LEVEL_AHEAD):
+            continue
+        slots = proficiency.EQUIP_SLOTS.get((item or {}).get("slot") or "")
+        if slots:
+            groups.setdefault(slots[0], []).append((recipe, from_level))
+    if not groups:
+        return ""
+
+    def worn_ilvl(slot: str) -> int | None:
+        """Niveau d'objet le plus faible porté sur ces emplacements (0 : un emplacement est vide)."""
+        levels = [(equipped.get(s) or {}).get("ilvl") for s in proficiency.EQUIP_SLOTS_OF_GROUP.get(slot, (slot,))]
+        if not equipped:
+            return None
+        return min((lv or 0) for lv in levels)
+
+    html_groups, total = [], 0
+    for slot in sorted(groups, key=lambda s: proficiency.SLOT_ORDER.index(s) if s in proficiency.SLOT_ORDER else 99):
+        worn = worn_ilvl(slot)
+        entries = []
+        for recipe, from_level in groups[slot]:
+            item = recipe.item or {}
+            tokens = {t for k, text in item.get("lines", []) if k == "stat" for t in gear.line_tokens(text)}
+            ilvl = item.get("ilvl")
+            up = worn is not None and isinstance(ilvl, int) and ilvl > worn
+            later = bool(c.level and from_level > c.level)
+            entries.append((later, -(ilvl or 0), -len(tokens & set(top)), recipe, from_level, tokens, up))
+        entries.sort(key=lambda e: e[:3])
+        cards = []
+        for later, _, _, recipe, from_level, tokens, up in entries[:GEAR_PER_SLOT]:
+            item = recipe.item or {}
+            kind = proficiency.item_kind(item)
+            color = QUALITY_COLORS.get(item.get("quality") or "", "inherit")
+            meta = [proficiency.kind_label(kind) if kind else ""]
+            if item.get("ilvl"):
+                meta.append(f"niv. d'objet {item['ilvl']}")
+            meta.append(f"à partir du niveau {from_level}" if later else f"niv. {from_level}+")
+            lines = "".join(
+                f'<div class="{esc(k)}{" prio" if k == "stat" and set(gear.line_tokens(text)) & set(top) else ""}">'
+                f"{esc(text)}</div>"
+                for k, text in item.get("lines", []) if k in ("stat", "effect", "armor", "weapon")
+            )
+            makers = crafters.get(recipe.id, [])
+            mine = viewer_id is not None and any(m.user_id == viewer_id for m in makers)
+            others = [m for m in makers if m.user_id != viewer_id]
+            who = ", ".join(f'<a href="/perso/{m.character_id}">{esc(m.name)}</a>' for m in makers) or "?"
+            action = ""
+            if viewer_id is not None and others:
+                action = f' · <a class="order-link" href="/atelier?recette={recipe.id}">🛒 Commander</a>'
+            elif mine:
+                action = " · tu sais le fabriquer"
+            badges = ('<span class="gbadge up">▲ mieux que l\'objet porté</span>' if up else "") + (
+                '<span class="gbadge later">bientôt</span>' if later else ""
+            )
+            cards.append(
+                f'<div class="gear-item{" later" if later else ""}" data-up="{int(up)}">'
+                f'<div class="gi-head"><b style="color:{color}">{esc(recipe.name)}</b>{badges}</div>'
+                f'<div class="gi-meta">{esc(" · ".join(m for m in meta if m))}</div>'
+                f'<div class="tip">{lines}</div><div class="gi-who">🔨 {who}{action}</div></div>'
+            )
+        total += len(cards)
+        label = GEAR_GROUP_LABELS.get(slot) or gear.SLOT_LABELS.get(slot, slot)
+        current = [equipped[s] for s in proficiency.EQUIP_SLOTS_OF_GROUP.get(slot, (slot,)) if s in equipped]
+        worn_text = ", ".join(
+            f'{esc(i["name"])}' + (f' ({i["ilvl"]})' if i.get("ilvl") else "") for i in current
+        ) or "rien"
+        more = len(entries) - GEAR_PER_SLOT
+        more_text = f'<p class="muted">… et {more} autre(s), de plus bas niveau.</p>' if more > 0 else ""
+        html_groups.append(
+            f'<div class="gear-group"><h4>{esc(label)} <small class="muted">· porté : {worn_text}</small></h4>'
+            f'<div class="gear-list">{"".join(cards)}</div>{more_text}</div>'
+        )
+
+    level = f"jusqu'au niveau {c.level + GEAR_LEVEL_AHEAD} " if c.level else ""
+    return f"""<details class="fold big" data-keep id="equipement-fabricable"><summary><span>🛠️ Équipement fabricable par
+la guilde</span><span class="n">{total}</span></summary><div class="fold-body">
+<p class="muted">Objets que les persos du serveur savent fabriquer et qu'un {esc(class_label(c.wow_class))} peut porter
+{level}(armure, armes, bijoux), triés par niveau d'objet ; ★ les stats prioritaires de la spé. Les mailles et plaques
+s'apprennent au niveau 40 ; certaines armes chez un maître d'armes.</p>
+<label class="gear-only"><input type="checkbox" id="gear-only-up"> Seulement ce qui améliore l'équipement porté</label>
+<div class="gear-groups">{"".join(html_groups)}</div></div></details>"""
 
 
 class WebSite:
@@ -1188,7 +1389,16 @@ class WebSite:
                 user["chk"] = int(time.time())
                 refresh = True
 
-        token = _VIEWER.set(Viewer(user, request.path_qs))
+        viewer = Viewer(user, request.path_qs)
+        if user is not None:
+            viewer.characters = self.db.get_characters(int(user["id"]))
+            is_admin = getattr(self.actions, "is_admin", None)
+            if is_admin is not None:
+                try:
+                    viewer.admin = bool(await is_admin(int(user["id"])))
+                except Exception:
+                    log.exception("Vérification des droits d'administration impossible")
+        token = _VIEWER.set(viewer)
         try:
             if user is None and not request.path.startswith(PUBLIC_PATHS):
                 response: web.StreamResponse = self._login_page(request.path_qs)
@@ -1303,8 +1513,8 @@ Connecte-toi avec ton compte Discord : le site ne voit que ton pseudo.</p>
             )
         options = lambda items: "".join(f'<option value="{esc(k)}">{esc(v)}</option>' for k, v in items)  # noqa: E731
         body = f"""
-<h1 class="title">Persos</h1>
-<p class="sub"><span id="count">{len(characters)}</span> perso(s) · ⭐ rôle préféré</p>
+<h1 class="title">Guilde</h1>
+<p class="sub"><span id="count">{len(characters)}</span> perso(s) du serveur, par ordre alphabétique · ⭐ rôle préféré</p>
 <div class="filters">
   <input id="q" type="search" placeholder="Chercher un perso, une classe, une race…" autocomplete="off">
   <select data-filter="classe"><option value="">Toutes les classes</option>{options((k, v[0]) for k, v in CLASSES.items())}</select>
@@ -1318,7 +1528,7 @@ Connecte-toi avec ton compte Discord : le site ne voit que ton pseudo.</p>
 )}</tr></thead>
 <tbody>{"".join(rows) or f'<tr><td colspan="{7 + len(SECONDARY_PROFESSIONS)}" class="empty">Aucun perso déclaré.</td></tr>'}</tbody>
 </table></div>"""
-        return page("Persos", "persos", body, FILTER_SCRIPT)
+        return page("Guilde", "persos", body, FILTER_SCRIPT)
 
     async def character(self, request: web.Request) -> web.Response:
         gid = self._scope()
@@ -1384,13 +1594,18 @@ Connecte-toi avec ton compte Discord : le site ne voit que ton pseudo.</p>
             top = f"{title}{armory}"
         else:
             top = f'<div class="hero"><div class="info">{title}</div>{render}</div>'
+        viewer = _VIEWER.get()
+        viewer_id = int(viewer.user["id"]) if viewer is not None and viewer.user else None
+        top_stats = list(gear.PRIORITIES[spec_key][2][:3]) if spec_key in gear.PRIORITIES else []
+        gear_block = crafted_gear_html(character, all_recipes, self.db.recipe_crafters(gid), viewer_id, top_stats)
         body = f"""
 {top}
 {talents_block}
+{gear_block}
 <h2>Métiers</h2>
 {professions_block}
 {recipes_html}"""
-        return page(character.name, "persos", body, FILTER_SCRIPT + TABS_SCRIPT + SPEC_SCRIPT)
+        return page(character.name, "persos", body, FILTER_SCRIPT + TABS_SCRIPT + SPEC_SCRIPT + GEAR_SCRIPT)
 
     async def professions(self, request: web.Request) -> web.Response:
         gid = self._scope()
@@ -1614,6 +1829,15 @@ Warcraft Tavern ({dungeons.SOURCES_CHECKED}) : l'API Blizzard ne fournit pas le 
             "🗺️ Carte détaillée et stratégies (Warcraft Tavern) ↗</a>"
             if guide.guide_url else ""
         )
+        # Membre connecté : créer une sortie pour ce donjon (formulaire de la page Sorties prérempli).
+        create = ""
+        viewer = _VIEWER.get()
+        if viewer is not None and viewer.user and self.actions is not None:
+            match = self.actions.match_instance(found.english, found.name)
+            params = {"instance": match or found.name}
+            if not match:  # nom libre : la taille du groupe ne peut pas être devinée
+                params["joueurs"] = str(found.players)
+            create = f'<a class="btn create-ev" href="/sorties?{esc(urlencode(params))}#nouvelle">➕ Créer une sortie</a>'
         index = everything.index(found)
         prev_ = everything[index - 1] if index > 0 else None
         next_ = everything[index + 1] if index + 1 < len(everything) else None
@@ -1626,7 +1850,7 @@ Warcraft Tavern ({dungeons.SOURCES_CHECKED}) : l'API Blizzard ne fournit pas le 
 <div class="dhero">{tile}<div>
 <h1 class="title">{esc(found.name)}{badge}</h1>
 <p class="sub">{esc(found.english)} · {sub}</p>
-<div class="facts">{"".join(facts)}</div></div></div>
+<div class="facts">{"".join(facts)}</div>{create}</div></div>
 <div class="dgrid">
 <section class="card"><h2>Entrée</h2>{"".join(entry)}{link}</section>
 <section class="card"><h2>Persos dans la tranche</h2><div class="who-list">{who}</div></section>

@@ -111,6 +111,7 @@ class CharacterPickView(discord.ui.View):
                     description=(
                         describe_character(c)
                         + (" · rôle préféré" if c.preferred_role == role else "")
+                        + (" · perso préféré" if c.favorite else "")
                         + (" · actuel" if c.id == current_id else "")
                     )[:100],
                     value=str(c.id),
@@ -434,9 +435,10 @@ class EventsCog(commands.Cog):
 
         self.db.touch_member(ev.guild_id, interaction.user.id)
         characters = self.db.get_characters(interaction.user.id)
-        # Les persos dont c'est le rôle préféré passent en premier.
+        # Les persos dont c'est le rôle préféré passent en premier, puis le perso préféré du joueur.
         capable = sorted(
-            (c for c in characters if can_play(c.wow_class, role)), key=lambda c: c.preferred_role != role
+            (c for c in characters if can_play(c.wow_class, role)),
+            key=lambda c: (c.preferred_role != role, not c.favorite),
         )
 
         if characters and not capable:

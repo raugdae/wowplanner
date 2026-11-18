@@ -405,7 +405,6 @@ class OrdersCog(commands.Cog):
         if order is None:
             await interaction.response.send_message("Cette commande n'existe plus.", ephemeral=True)
             return
-        transition = TRANSITIONS[action]
         if action not in allowed_actions(order, interaction.user.id):
             # Bouton périmé (commande déjà traitée) ou pas la bonne personne : on montre l'état réel.
             if interaction.user.id in (order.requester_id, order.crafter_user_id):
@@ -413,15 +412,45 @@ class OrdersCog(commands.Cog):
             else:
                 await interaction.response.send_message("Cette commande ne te concerne pas.", ephemeral=True)
             return
-        if not self.db.set_order_status(order.id, transition.to_status, transition.from_status):
-            order = self.db.get_order(order_id) or order
-            await interaction.response.edit_message(embed=order_embed(order), view=order_view(order, interaction.user.id))
-            return
-        order = self.db.get_order(order_id) or order
+        order, done = self.transition(order, action)
         await interaction.response.edit_message(embed=order_embed(order), view=order_view(order, interaction.user.id))
+        if done:
+            await self.after_transition(order, action, interaction.message.id if interaction.message else None)
 
-        # Le MP de l'artisan suit l'état de la commande, d'où qu'on ait cliqué.
-        clicked = interaction.message.id if interaction.message else None
+    # Partagé avec le site (cogs/webbridge.py).
+
+    def build_order(
+        self, guild_id: int, requester_id: int, requester_name: str, recipe_id: int, crafter_character_id: int,
+        quantity: int, note: str | None,
+    ) -> Order:
+        """Commande prête à envoyer. Lève ValueError (message pour le joueur) si elle n'est pas possible."""
+        candidate = next(
+            (c for c in self.candidates(guild_id, requester_id) if c.recipe.id == recipe_id), None
+        )
+        if candidate is None:
+            raise ValueError("Personne d'autre que toi ne sait fabriquer cet objet sur le serveur.")
+        crafter = next((c for c in candidate.crafters if c.character_id == crafter_character_id), None)
+        if crafter is None:
+            raise ValueError("Ce perso ne sait pas (ou plus) fabriquer cet objet : choisis un autre artisan.")
+        if not 1 <= quantity <= MAX_QUANTITY:
+            raise ValueError(f"La quantité doit être un nombre entre 1 et {MAX_QUANTITY}.")
+        recipe = candidate.recipe
+        return Order(
+            guild_id=guild_id, requester_id=requester_id, requester_name=requester_name, recipe_id=recipe.id,
+            recipe_name=recipe.name, quantity=quantity, crafter_character_id=crafter.character_id,
+            crafter_name=crafter.name, crafter_user_id=crafter.user_id,
+            reagents_text=scaled_reagents(recipe, quantity, self.crafted_by(guild_id)), note=note,
+        )
+
+    def transition(self, order: Order, action: str) -> tuple[Order, bool]:
+        """Change l'état (action déjà autorisée). (commande relue, changé ?) : False si un autre clic est passé avant."""
+        t = TRANSITIONS[action]
+        done = self.db.set_order_status(order.id, t.to_status, t.from_status)
+        return self.db.get_order(order.id) or order, done
+
+    async def after_transition(self, order: Order, action: str, clicked: int | None = None) -> None:
+        """Après un changement d'état : MP de l'artisan à jour, et l'autre partie prévenue."""
+        # Le MP de l'artisan suit l'état de la commande, d'où qu'on ait cliqué (Discord ou site).
         if order.crafter_dm_message_id and order.crafter_dm_message_id != clicked and order.crafter_dm_channel_id:
             try:
                 dm = self.bot.get_partial_messageable(order.crafter_dm_channel_id).get_partial_message(

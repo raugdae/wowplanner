@@ -1426,11 +1426,29 @@ def test_member_pages_events_and_characters(tmp_path):
     db.create_event(Event(111, 42, 7, organizer, "Les Mortemines", "dungeon", "18-24", starts,
                           {"tank": 1, "heal": 1, "dps": 3}, description="RDV <b>devant</b>", creator_name="Orga"))
     db.upsert_signup(111, organizer, "tank", "PseudoOrga", None)
+    db.set_favorite(me, hollie.id)
     calls = []
 
     class Backend:
         timezone = PARIS
         armory_enabled = True
+        sync_state = None
+
+        async def is_admin(self, user_id):
+            return user_id == me
+
+        def last_sync(self):
+            return None
+
+        async def member_names(self, ids):
+            return {i: f"Membre{i}" for i in ids}
+
+        def match_instance(self, *names):
+            return "Deadmines" if "The Deadmines" in names else None
+
+        async def start_sync(self, user):
+            calls.append(("sync", user.id))
+            return "🔄 Synchro complète lancée."
 
         def event_channels(self):
             return [(7, "#sorties")]
@@ -1507,6 +1525,17 @@ def test_member_pages_events_and_characters(tmp_path):
             async with s.get(base + "/api/armurerie?nom=Gro") as resp:
                 got["lookup"] = resp.status, await resp.json()
             got["mine"] = await get("/mes-persos")
+            got["dungeon"] = await get("/donjon/the-deadmines")
+            got["prefilled"] = await get("/sorties?instance=Deadmines")
+            got["admin"] = await get("/admin")
+            await post("/admin/sync", {"csrf": token})
+            got["admin_after_sync"] = await get("/admin")
+        async with aiohttp.ClientSession(
+            cookie_jar=aiohttp.CookieJar(unsafe=True),
+            cookies={SESSION_COOKIE: sign({"id": organizer, "name": "Orga", "chk": now, "exp": now + 3600}, secret)},
+        ) as s:
+            async with s.get(base + "/admin") as resp:
+                got["admin_refused"] = resp.status, await resp.text()
         await site.stop()
 
     asyncio.run(scenario())
@@ -1532,6 +1561,21 @@ def test_member_pages_events_and_characters(tmp_path):
     assert got["lookup"] == (200, {"status": "not_found", "name": "Gro"})
     status, text = got["mine"]
     assert status == 200 and "Hollie Tétine" in text and 'data-armory="1"' in text and 'id="new-submit"' in text
+    assert 'class="fav on"' in text  # perso préféré
+    # Menu du compte : pseudo, persos (le préféré marqué), thème, administration pour un admin.
+    page_text = got["page"][1]
+    assert 'class="usermenu"' in page_text and "⭐ Hollie Tétine" in page_text and 'id="theme"' in page_text
+    assert 'href="/admin"' in page_text and ">Guilde<" in page_text
+    assert ">⭐ Hollie Tétine — Prêtre</option>" in page_text  # proposé en premier pour s'inscrire
+    # Fiche de donjon → formulaire de sortie prérempli.
+    assert "/sorties?instance=Deadmines#nouvelle" in got["dungeon"][1]
+    prefilled = got["prefilled"][1]
+    assert 'id="nouvelle" open' in prefilled and 'value="Deadmines"' in prefilled
+    # Administration.
+    status, text = got["admin"]
+    assert status == 200 and "Persos des membres" in text and "Membre123" in text and "Hollie Tétine" in text
+    assert ("sync", me) in calls and "Synchro complète lancée" in got["admin_after_sync"][1]
+    assert got["admin_refused"][0] == 403 and "Gérer le serveur" in got["admin_refused"][1]
 
 
 def test_web_bridge_rules(tmp_path):
@@ -1543,6 +1587,7 @@ def test_web_bridge_rules(tmp_path):
     from wowplanner.armory import ArmorySheet
     from wowplanner.cogs.webbridge import WebBridge
     from wowplanner.db import SOURCE_WEB, Database, Event
+    from wowplanner.instances import Instance
     from wowplanner.webmember import ActionError, WebUser
 
     db = Database(tmp_path / "t.db")
@@ -1578,11 +1623,32 @@ def test_web_bridge_rules(tmp_path):
         async def refresh_event(self, message_id):
             self.refreshed.append(message_id)
 
+    class FakeMember:
+        def __init__(self, user_id):
+            self.display_name = f"M{user_id}"
+            self.guild_permissions = SimpleNamespace(manage_guild=user_id == 1)  # Raug gère le serveur
+
+    class FakeGuild:
+        def get_member(self, user_id):
+            return FakeMember(user_id)
+
+    dms = []
+
+    class FakeUser:
+        def __init__(self, user_id):
+            self.id = user_id
+
+        async def send(self, text):
+            dms.append((self.id, text))
+
     armory, events = FakeArmory(), FakeEvents()
     cogs = {"ArmoryCog": armory, "EventsCog": events}
     bot = SimpleNamespace(
         db=db, config=SimpleNamespace(timezone=PARIS, event_channel_ids=frozenset()), get_cog=cogs.get,
-        website=SimpleNamespace(guild_id=lambda: 42),
+        website=SimpleNamespace(guild_id=lambda: 42), get_guild=lambda gid: FakeGuild(), get_user=FakeUser,
+        instances=SimpleNamespace(all=[
+            Instance("Deadmines", "DM/VC", "dungeon", 5), Instance("Temple of Atal'Hakkar (Sunken Temple)", "ST", "dungeon", 5),
+        ]),
     )
     bridge = WebBridge(bot)
     raug, other = WebUser(1, "Raug"), WebUser(2, "Autre")
@@ -1625,11 +1691,31 @@ def test_web_bridge_rules(tmp_path):
         assert events.registered == [(9, "Raug", "tank", "Grommash Hurlenfer")] and events.refreshed == [9]
         assert "plus de rôle préféré" in await bridge.set_role(raug, grom.id, None)
         assert db.get_character(grom.id).preferred_role is None
+        assert "perso préféré" in await bridge.set_favorite(raug, grom.id) and db.get_character(grom.id).favorite
+        assert "n'est plus" in await bridge.set_favorite(raug, grom.id) and not db.get_character(grom.id).favorite
         with pytest.raises(ActionError, match="pas à toi"):
-            await bridge.delete_character(other, grom.id)
+            await bridge.delete_character(other, grom.id)  # Autre n'est pas admin
         db.upsert_signup(9, 1, "tank", "Raug", grom.id)
         assert "supprimé" in await bridge.delete_character(raug, grom.id)
-        assert db.get_characters(1) == [] and events.refreshed == [9, 9]
+        assert db.get_characters(1) == [] and events.refreshed == [9, 9] and dms == []
+
+        # Administration : Raug (« Gérer le serveur ») gère les persos des autres membres, qui sont prévenus.
+        assert await bridge.is_admin(1) and not await bridge.is_admin(2)
+        with pytest.raises(ActionError, match="Gérer le serveur"):
+            await bridge.add_character(other, "grommash hurlenfer", None, owner_id=1)
+        text = await bridge.add_character(raug, "grommash hurlenfer", "dps", owner_id=2)
+        assert "pour **M2**" in text and dms[-1][0] == 2 and "Raug" in dms[-1][1]
+        theirs = db.get_characters(2)[0]
+        assert "Tank" in await bridge.set_role(raug, theirs.id, "tank")
+        with pytest.raises(ActionError, match="pas à toi"):
+            await bridge.set_favorite(raug, theirs.id)  # le perso préféré reste le choix du joueur
+        assert "supprimé" in await bridge.delete_character(raug, theirs.id)
+        assert db.get_characters(2) == [] and "a supprimé ton perso" in dms[-1][1]
+
+        # Fiche de donjon → nom dans la liste des instances.
+        assert bridge.match_instance("The Deadmines", "Les Mortemines") == "Deadmines"
+        assert bridge.match_instance("Sunken Temple", "Temple englouti") == "Temple of Atal'Hakkar (Sunken Temple)"
+        assert bridge.match_instance("Nowhere") is None
 
     asyncio.run(scenario())
     db.close()
@@ -1680,4 +1766,124 @@ def test_nightly_cleanup_of_discord_characters(tmp_path):
     assert icon == "✅" and "1 perso(s)" in text and "Vieux Perso" in text
     assert sorted(c.name for c in db.all_characters()) == ["Bien Present", "Site Perso", "Tout Neuf"]
     assert len(dms) == 1 and dms[0][0] == 1 and "Vieux Perso" in dms[0][1]
+    db.close()
+
+
+def test_proficiency_rules():
+    """Armures et armes par classe (Forever) : niveau 40 pour mailles/plaques, nouveautés Voleur et Druide."""
+    from wowplanner import proficiency as p
+    from wowplanner.armory import parse_item
+
+    def armor(sub, req=None, name=None):
+        return {"class": 4, "subclass": sub, "subclass_name": name, "slot": "CHEST", "req_level": req}
+
+    def weapon(sub, req=None):
+        return {"class": 2, "subclass": sub, "slot": "WEAPON", "req_level": req}
+
+    assert p.usable_from("chasseur", armor(p.MAIL)) == 40 and p.usable_from("chasseur", armor(p.LEATHER, 12)) == 12
+    assert p.usable_from("guerrier", armor(p.PLATE, 45)) == 45 and p.usable_from("guerrier", armor(p.MAIL)) == 1
+    assert p.usable_from("mage", armor(p.LEATHER)) is None and p.usable_from("mage", armor(p.CLOTH)) == 1
+    assert p.usable_from("pretre", armor(p.SHIELD)) is None and p.usable_from("chaman", armor(p.SHIELD)) == 1
+    assert p.usable_from("voleur", weapon(p.AXE_1H)) == 1  # nouveau dans Forever
+    assert p.usable_from("druide", weapon(p.POLEARM)) == 1  # nouveau dans Forever
+    assert p.usable_from("pretre", weapon(p.SWORD_1H)) is None and p.usable_from("pretre", weapon(p.WAND, 20)) == 20
+    assert p.usable_from("paladin", weapon(p.DAGGER)) is None and p.usable_from("guerrier", weapon(p.WAND)) is None
+    # Objets lus avant l'identifiant du sous-type : reconnus par leur nom français.
+    assert p.item_kind(armor(None, name="Mailles")) == (4, p.MAIL)
+    assert p.item_kind({"class": 2, "subclass_name": "Haches à deux mains", "slot": "TWOHWEAPON"}) == (2, p.AXE_2H)
+    assert p.item_kind({"class": 2, "subclass_name": "Armes d'hast", "slot": "TWOHWEAPON"}) == (2, p.POLEARM)
+    assert p.item_kind({"class": 4, "subclass_name": "Divers", "slot": "FINGER"}) == (4, p.MISC)
+    assert p.item_kind({"class": 0, "slot": "NON_EQUIP"}) is None  # consommable
+    assert p.kind_label((2, p.DAGGER)) == "Dague"
+
+    item = parse_item({
+        "level": 35, "required_level": 30, "item_class": {"id": 4, "name": "Armure"},
+        "item_subclass": {"id": 3, "name": "Mailles"},
+        "preview_item": {"inventory_type": {"type": "CHEST", "name": "Torse"}, "level": {"value": 35},
+                         "requirements": {"level": {"value": 30, "display_string": "Niveau 30 requis"}}},
+    })
+    assert (item["subclass"], item["req_level"], item["ilvl"], item["class"]) == (3, 30, 35, 4)
+
+
+def test_crafted_gear_on_character_page(tmp_path):
+    """Fiche perso : équipement fabricable par la guilde que le perso peut porter, comparé à ce qu'il porte."""
+    from wowplanner.db import Crafter, GuildRecipe
+    from wowplanner.web import crafted_gear_html
+    from wowplanner.db import Character
+
+    def recipe(rid, name, cls, sub, slot, req, ilvl, stats=()):
+        item = {"class": cls, "subclass": sub, "slot": slot, "req_level": req, "ilvl": ilvl, "quality": "UNCOMMON",
+                "lines": [["stat", s] for s in stats]}
+        return GuildRecipe(rid, name, [], ["Forge Ron"], item=item)
+
+    recipes = [
+        recipe(1, "Cotte en mailles lourdes", 4, 3, "CHEST", 30, 35, ["+10 Force"]),
+        recipe(2, "Plastron en thorium", 4, 4, "CHEST", 40, 45),
+        recipe(3, "Jambières lointaines", 4, 4, "LEGS", 55, 60),
+        recipe(4, "Robe de soirée", 4, 1, "ROBE", 20, 22, ["+5 Intelligence"]),
+        recipe(5, "Dague de cuivre", 2, 15, "WEAPON", 8, 11),
+        recipe(6, "Baguette magique", 2, 19, "RANGEDRIGHT", 10, 15),
+        GuildRecipe(7, "Élixir de mangouste", [], ["Alice"], item={"class": 0, "slot": "NON_EQUIP", "lines": []}),
+    ]
+    warrior = Character(1, 10, "Grom", "guerrier", "orc", "dps", level=38,
+                        equipment=[{"slot": "CHEST", "name": "Vieille cotte", "ilvl": 20, "lines": []}])
+    crafters = {r.id: [Crafter(50 + r.id, "Forge Ron", 99, "guerrier")] for r in recipes}
+    html_text = crafted_gear_html(warrior, recipes, crafters, 10, ["strength"])
+    assert "Cotte en mailles lourdes" in html_text and "Plastron en thorium" in html_text  # plaques : bientôt (40)
+    assert "Jambières lointaines" not in html_text  # niveau 55 : trop loin
+    assert "Baguette magique" not in html_text and "Élixir" not in html_text  # pas pour un guerrier / pas équipable
+    assert "Robe de soirée" in html_text and "Dague de cuivre" in html_text
+    assert 'data-up="1"' in html_text and "Vieille cotte (20)" in html_text  # mieux que l'objet porté
+    assert "à partir du niveau 40" in html_text and "/atelier?recette=1" in html_text
+    assert 'class="stat prio"' in html_text  # Force : stat prioritaire de la spé
+    assert html_text.index("Cotte en mailles lourdes") < html_text.index("Plastron en thorium")  # dispo d'abord
+    mage = Character(2, 11, "Gnomy", "mage", "gnome", level=38)
+    mage_html = crafted_gear_html(mage, recipes, crafters, None, [])
+    assert "Robe de soirée" in mage_html and "Baguette magique" in mage_html and "Cotte" not in mage_html
+    assert "Commander" not in mage_html  # visiteur non connecté
+    assert crafted_gear_html(mage, recipes[:3], crafters, None, []) == ""
+
+
+def test_orders_shared_with_site(tmp_path):
+    """Atelier : commande préparée et suivie hors de Discord (site), mêmes règles qu'avec les boutons."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from wowplanner.cogs.orders import OrdersCog
+    from wowplanner.db import Database
+
+    db = Database(tmp_path / "t.db")
+    me, alice = 1, 2
+    a = db.add_character(alice, "Alice Alchi", "pretre", "humain")
+    for user in (me, alice):
+        db.touch_member(42, user)
+    db.replace_character_recipes(a.id, {"alchimie": [(1, "Mongoose")]})
+    db.set_recipe_details(1, "Élixir de la mangouste", [(2, "Fleur de feu", 100)], 900, 1.0)
+    cog = OrdersCog(SimpleNamespace(db=db))
+    sent = []
+
+    async def fake_dm(user_id, content, embed, view):
+        sent.append((user_id, content))
+        return None
+
+    cog._dm = fake_dm
+
+    with pytest.raises(ValueError, match="Personne d'autre"):
+        cog.build_order(42, alice, "Alice", 1, a.id, 1, None)  # sa propre recette
+    with pytest.raises(ValueError, match="autre artisan"):
+        cog.build_order(42, me, "Moi", 1, 999, 1, None)
+    with pytest.raises(ValueError, match="quantité"):
+        cog.build_order(42, me, "Moi", 1, a.id, 0, None)
+    order = db.create_order(cog.build_order(42, me, "Moi", 1, a.id, 3, "merci"))
+    assert order.crafter_user_id == alice and "6× Fleur de feu" in order.reagents_text
+
+    async def scenario():
+        updated, done = cog.transition(order, "accept")
+        assert done and updated.status == "accepted"
+        await cog.after_transition(updated, "accept")
+        again, done_twice = cog.transition(order, "accept")  # double clic : un seul passe
+        assert not done_twice and again.status == "accepted"
+
+    asyncio.run(scenario())
+    assert sent and sent[0][0] == me and "accepté" in sent[0][1]
     db.close()

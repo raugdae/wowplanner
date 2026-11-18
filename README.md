@@ -288,12 +288,20 @@ sorties et gérer ses persos. Il peut être réservé aux membres du Discord (vo
   un clic sur ses boutons ; rappel en MP et salon vocal fonctionnent pareil. Ce qui est fait sur Discord apparaît
   sur le site au rechargement de la page. Une sortie créée depuis le site est postée dans le salon de
   `EVENT_CHANNEL_IDS` (au choix s'il y en a plusieurs), sinon dans celui de la dernière sortie ;
-- **Mes persos** (connecté) : tes persos, avec leur rôle préféré modifiable et un bouton pour les supprimer, et
-  l'ajout d'un perso. Dès 3 lettres tapées, le nom est **vérifié dans l'armurerie** pendant la saisie (classe, race
+- **Menu du compte** (en haut à droite) : ton pseudo, la liste de tes persos (le préféré en tête, marqué ⭐) avec un
+  lien vers chacun, le choix du thème, l'administration (pour les admins) et la déconnexion ;
+- **Mes persos** (connecté) : tes persos, avec leur rôle préféré modifiable, un bouton pour les supprimer, ☆/★ pour
+  choisir ton **perso préféré** (un seul, proposé en premier pour t'inscrire aux sorties, sur le site comme sur
+  Discord), et l'ajout d'un perso. Dès 3 lettres tapées, le nom est **vérifié dans l'armurerie** pendant la saisie (classe, race
   et niveau affichés, rôles proposés selon la classe) ; le bouton « Ajouter » ne s'active que pour un perso trouvé.
   L'armurerie ne sait pas chercher un nom partiel : c'est le nom exact (prénom et nom) qui est vérifié ;
-- **Persos** : tableau de tous les persos (classe, race, rôles, métiers et niveaux), recherche et filtres par classe,
-  rôle ou métier ;
+- **Atelier** (connecté) : l'atelier de Discord sur le site. On cherche un objet parmi les recettes débloquées par
+  les persos des autres joueurs, on choisit l'artisan, la quantité et un mot ; l'artisan reçoit la commande **en MP
+  sur Discord** avec ses boutons, comme depuis le panneau. « Mes commandes » liste celles reçues et passées, avec les
+  mêmes actions (Accepter, Refuser, C'est prêt, Abandonner, Annuler) : l'autre partie est prévenue en MP et le MP de
+  l'artisan se met à jour. Chaque recette des pages Métiers et chaque objet conseillé ont un lien « 🛒 Commander » ;
+- **Guilde** : tableau de tous les persos du serveur par ordre alphabétique (classe, race, rôles, métiers et
+  niveaux), recherche et filtres par classe, rôle ou métier ;
 - **fiche d'un perso** : façon fiche du jeu, son **équipement** autour de son rendu en pied (icônes, infobulles,
   enchantements) et ses **caractéristiques** (chacune expliquée au survol ou au toucher : à quoi elle sert, avec une
   remarque selon la classe du perso, ex. « Force : inutile pour un Mage »), avec les **stats à pousser en priorité** pour sa spé (devinée d'après
@@ -304,6 +312,14 @@ sorties et gérer ses persos. Il peut être réservé aux membres du Discord (vo
   le portrait apparaît aussi dans les listes. Images hébergées par Blizzard, mises à jour à chaque synchro ;
   ses **talents** comme dans le jeu (les trois arbres, icônes, rangs, infobulle au survol ou au toucher, double
   spé). Les arbres sont récupérés une fois par semaine auprès de Blizzard, les talents du perso à chaque synchro ;
+  et, en dépliant **« Équipement fabricable par la guilde »**, les objets que les persos du serveur savent fabriquer
+  et que ce perso peut porter : type d'armure et d'arme de sa classe, niveau requis (jusqu'à 5 niveaux au-dessus du
+  sien, marqués « bientôt »), par emplacement, avec l'objet porté pour comparer (▲ quand le niveau d'objet est
+  meilleur, case « seulement les améliorations »), les stats prioritaires de sa spé, qui sait le fabriquer et un lien
+  pour le commander. Les règles par classe sont dans `wowplanner/proficiency.py` : armes d'après les maîtres d'armes
+  de Forever (nouveau : haches à une main pour le Voleur, armes d'hast pour le Druide) ; armures comme dans Classic
+  (mailles au niveau 40 pour Chasseur et Chaman, plaques au niveau 40 pour Guerrier et Paladin), rien d'autre
+  n'ayant été annoncé pour Forever ;
 - **Métiers** : qui a chaque métier et à quel niveau, et toutes les recettes connues sur le serveur, avec recherche
   (nom de recette, composant ou effet, ex. *agilité*) et liens vers les persos qui savent les faire. Chaque recette
   montre ce que fait l'objet, comme l'infobulle du jeu : emplacement, armure, dégâts, stats, effets « Utiliser » /
@@ -316,6 +332,14 @@ sorties et gérer ses persos. Il peut être réservé aux membres du Discord (vo
   commande `/way` à copier (TomTom), le **parcours des boss** numéroté (optionnels à part, avec où les trouver), les
   persos du serveur du bon niveau, la vignette Blizzard et un lien vers la carte détaillée du guide Warcraft Tavern.
   Les fiches sont dans `wowplanner/dungeon_guides.py` (noms français officiels des boss quand Blizzard les donne).
+  Connecté, un bouton **« Créer une sortie »** ouvre le formulaire de la page Sorties avec ce donjon déjà choisi ;
+- **Administration** (membres qui ont « Gérer le serveur » sur Discord, comme pour `/admin`) : lancer la **synchro
+  complète** (comme `/admin sync`, avec son avancement), voir **tous les persos des membres** avec leur joueur, leur
+  origine (site ou Discord) et ceux absents de l'armurerie (avec la date à laquelle le nettoyage de nuit les retirera),
+  changer leur rôle préféré, les **supprimer** ou en **ajouter** un à un membre (comme `/admin ajouter perso` et
+  `/admin supprimer perso` : le membre est prévenu en MP). Sur la page Sorties, un admin peut annuler n'importe quelle
+  sortie et retirer un inscrit. Le panneau de l'atelier reste à poster depuis Discord (`/admin atelier`), dans le
+  salon voulu.
 
 **Infos personnelles** : ni identifiant Discord, ni BattleTag. Seule la page Sorties montre le pseudo des inscrits
 et de l'organisateur, comme le message de la sortie sur Discord. Le site lit la même base que le bot (dans le même
@@ -331,7 +355,7 @@ Avec `DISCORD_CLIENT_SECRET` renseigné, le site est **réservé aux membres du 
 
 | Pages | Sans connexion | Connecté (membre du serveur) |
 |---|---|---|
-| Sorties, Mes persos, Persos, fiches persos, Métiers, recettes | page « Réservé aux membres » avec un bouton de connexion | ✅ |
+| Sorties, Mes persos, Guilde, fiches persos, Métiers, recettes, Administration | page « Réservé aux membres » avec un bouton de connexion | ✅ |
 | Donjons et fiches des donjons | ✅ sans les persos du serveur | ✅ avec les persos dans chaque tranche |
 
 - **Connexion** : bouton « Se connecter avec Discord ». Discord demande d'autoriser le site à voir le pseudo, et rien d'autre (droit `identify` : ni serveurs, ni messages, ni e-mail). Le bot vérifie ensuite que la personne est membre du serveur. Pas besoin de l'intent « membres » : c'est une simple requête à l'API.
@@ -372,6 +396,7 @@ wowplanner/
   instances.py        liste des instances, lecture du wiki
   roles.py            rôles, compositions par défaut, émotes
   gamedata.py         classes, races, rôles et métiers de WoW Forever
+  proficiency.py      armures et armes portables par classe (équipement conseillé)
   armory.py           client de l'API Blizzard (armurerie Forever)
   armory_probe.py     script de test de l'armurerie
   timeparse.py        lecture des dates et heures
