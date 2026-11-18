@@ -30,6 +30,10 @@ class Config:
     web_host: str = "0.0.0.0"
     # Adresse publique du site (ex. https://wow.exemple.fr) : le bot y renvoie dans ses messages.
     web_url: str = ""
+    # Connexion au site avec Discord (OAuth2). Secret vide = site ouvert à tous.
+    # L'identifiant est celui de l'application du bot, sauf si DISCORD_CLIENT_ID le remplace.
+    discord_client_id: str = ""
+    discord_client_secret: str = ""
 
     @property
     def db_path(self) -> Path:
@@ -72,6 +76,8 @@ def load_config() -> Config:
         web_port=int(os.getenv("WEB_PORT", "0") or 0),
         web_host=os.getenv("WEB_HOST", "0.0.0.0").strip() or "0.0.0.0",
         web_url=public_url(os.getenv("WEB_URL", ""), os.getenv("WEB_DOMAIN", "")),
+        discord_client_id=os.getenv("DISCORD_CLIENT_ID", "").strip(),
+        discord_client_secret=os.getenv("DISCORD_CLIENT_SECRET", "").strip(),
     )
 
 

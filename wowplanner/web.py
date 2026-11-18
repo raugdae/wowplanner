@@ -1,8 +1,11 @@
-"""Petit site web public, en lecture seule : persos, métiers et recettes du serveur.
+"""Petit site web en lecture seule : persos, métiers, recettes et donjons du serveur.
 
 Aucune info personnelle : ni pseudo Discord, ni identifiant Discord, ni BattleTag, et rien qui
 permette de relier deux persos au même joueur. Seuls les persos (nom, classe, race, rôles),
 leurs métiers et leurs recettes sont affichés.
+
+Avec DISCORD_CLIENT_SECRET, le site est réservé aux membres du serveur Discord (connexion Discord,
+voir webauth.py), sauf les pages Donjons, publiques mais sans les persos du serveur.
 
 Servi par aiohttp dans le même processus que le bot (même base SQLite, lue seulement). Activé
 par WEB_PORT ; derrière Traefik en production (voir docker-compose.traefik.yml).
@@ -12,8 +15,13 @@ from __future__ import annotations
 import html
 import json
 import logging
+import secrets
+import time
+from contextvars import ContextVar
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Callable
+from typing import Any, Awaitable, Callable
+from urllib.parse import quote
 
 from aiohttp import web
 
@@ -25,8 +33,48 @@ from .recipes import crafted_by_map, expand_reagents, filter_recipes, group_by_c
 from . import dungeon_guides, dungeons, gear, statsource
 from .armory import icon_url
 from .roles import LABELS, ROLES
+from .webauth import (
+    MEMBER_RECHECK_SECONDS, SESSION_COOKIE, SESSION_SECONDS, STATE_COOKIE, STATE_SECONDS, DiscordOAuth, OAuthError,
+    safe_next, sign, unsign,
+)
 
 log = logging.getLogger(__name__)
+
+# Pages visibles sans connexion (sans les persos du serveur).
+PUBLIC_PATHS = ("/donjons", "/donjon/", "/auth/")
+
+
+@dataclass
+class Viewer:
+    """Visiteur de la requête en cours, quand la connexion Discord est activée."""
+    user: dict[str, Any] | None  # {"id", "name", …} si connecté
+    path: str  # page demandée (pour y revenir après connexion)
+
+
+# Posé par le middleware de connexion le temps d'une requête ; None = connexion désactivée (site ouvert).
+_VIEWER: ContextVar[Viewer | None] = ContextVar("viewer", default=None)
+
+
+def members_visible() -> bool:
+    """Les persos du serveur peuvent-ils être montrés ? (connexion désactivée, ou visiteur connecté)"""
+    viewer = _VIEWER.get()
+    return viewer is None or viewer.user is not None
+
+
+def login_url(path: str) -> str:
+    return f"/auth/login?next={quote(safe_next(path), safe='')}"
+
+
+def _account_html() -> str:
+    viewer = _VIEWER.get()
+    if viewer is None:
+        return ""
+    if viewer.user:
+        return (
+            f'<span class="account">{esc(viewer.user.get("name", "?"))} · '
+            '<a href="/auth/logout">Déconnexion</a></span>'
+        )
+    return f'<a class="account login" href="{esc(login_url(viewer.path))}">Se connecter avec Discord</a>'
 
 CLASS_COLORS = {
     "guerrier": "#C79C6E", "paladin": "#F58CBA", "chasseur": "#ABD473", "voleur": "#FFF569", "pretre": "#FFFFFF",
@@ -94,6 +142,10 @@ header nav { display:flex; gap:16px; }
 header nav a { color:var(--muted); }
 header nav a.active { color:var(--text); font-weight:600; border-bottom:2px solid var(--accent); }
 header .theme { margin-left:auto; }
+header .account { font-size:13px; color:var(--muted); white-space:nowrap; }
+header .account.login { color:var(--text); border:1px solid var(--accent); border-radius:8px; padding:4px 10px; }
+.login-box { max-width:520px; margin:40px auto; text-align:center; }
+.login-box .btn { font-size:16px; padding:10px 18px; }
 header select { background:rgba(0,0,0,.25); color:var(--text); border:1px solid var(--accent); border-radius:8px;
                 padding:5px 8px; font:inherit; font-size:13px; }
 header select option { background:var(--panel); }
@@ -585,7 +637,7 @@ def page(title: str, active: str, body: str, scripts: str = "") -> web.Response:
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{esc(title)} · WoW Planner</title>{THEME_BOOT}<style>{STYLE}</style></head>
 <body><header><a class="brand title" href="/">WoW Planner</a><nav>{nav}</nav>
-<label class="theme" title="Thème d'affichage"><select id="theme" aria-label="Thème">{themes}</select></label></header>
+<label class="theme" title="Thème d'affichage"><select id="theme" aria-label="Thème">{themes}</select></label>{_account_html()}</header>
 <main>{body}</main>
 <footer>Données des persos déclarés sur le Discord, complétées par l'armurerie Blizzard (WoW Forever).</footer>
 {THEME_SCRIPT}{scripts}</body></html>"""
@@ -1031,6 +1083,134 @@ class WebSite:
         self.db = db
         self._guild_id = guild_id
         self._runner: web.AppRunner | None = None
+        # Connexion Discord (voir enable_auth) ; None = site ouvert à tous.
+        self.oauth: DiscordOAuth | None = None
+        self._secret = b""
+        self._is_member: Callable[[int], Awaitable[bool | None]] | None = None
+        self._secure_cookies = True
+
+    def enable_auth(
+        self,
+        oauth: DiscordOAuth,
+        secret: bytes,
+        is_member: Callable[[int], Awaitable[bool | None]],
+        secure_cookies: bool = True,
+    ) -> None:
+        """Réserve le site aux membres du serveur. `is_member(id)` : True / False, ou None si on ne sait pas."""
+        self.oauth, self._secret, self._is_member = oauth, secret, is_member
+        self._secure_cookies = secure_cookies
+
+    # ------------------------------------------------------------ connexion
+
+    def _set_cookie(self, response: web.StreamResponse, name: str, payload: dict[str, Any], max_age: int) -> None:
+        response.set_cookie(
+            name, sign(payload, self._secret), max_age=max_age, path="/", httponly=True,
+            secure=self._secure_cookies, samesite="Lax",
+        )
+
+    @staticmethod
+    def _redirect(location: str) -> web.Response:
+        return web.Response(status=302, headers={"Location": location})
+
+    def _set_session(self, response: web.StreamResponse, user: dict[str, Any]) -> None:
+        self._set_cookie(response, SESSION_COOKIE, user, SESSION_SECONDS)
+
+    @web.middleware
+    async def _auth_middleware(self, request: web.Request, handler):
+        if self.oauth is None:
+            return await handler(request)
+
+        user = unsign(request.cookies.get(SESSION_COOKIE), self._secret)
+        refresh = clear = False
+        if user is not None and time.time() - user.get("chk", 0) > MEMBER_RECHECK_SECONDS:
+            # Revérification quotidienne : parti ou exclu du serveur → plus d'accès.
+            member = await self._is_member(int(user["id"])) if self._is_member else None
+            if member is False:
+                user, clear = None, True
+            elif member is True:
+                user["chk"] = int(time.time())
+                refresh = True
+
+        token = _VIEWER.set(Viewer(user, request.path_qs))
+        try:
+            if user is None and not request.path.startswith(PUBLIC_PATHS):
+                response: web.StreamResponse = self._login_page(request.path_qs)
+            else:
+                response = await handler(request)
+        finally:
+            _VIEWER.reset(token)
+        if refresh and user is not None:
+            self._set_session(response, user)
+        if clear:
+            response.del_cookie(SESSION_COOKIE, path="/")
+        return response
+
+    def _login_page(self, next_path: str) -> web.Response:
+        body = f"""<div class="login-box card">
+<h1 class="title">Réservé aux membres</h1>
+<p class="sub">Les persos, métiers et recettes du serveur sont visibles par les membres du Discord.
+Connecte-toi avec ton compte Discord : le site ne voit que ton pseudo.</p>
+<p><a class="btn" href="{esc(login_url(next_path))}">Se connecter avec Discord</a></p>
+<p class="muted">Les <a href="/donjons">donjons et raids</a> restent consultables sans compte.</p></div>"""
+        response = page("Connexion", "", body)
+        response.set_status(401)
+        return response
+
+    def _message_page(self, title: str, text: str, status: int) -> web.Response:
+        body = (
+            f'<div class="login-box card"><h1 class="title">{esc(title)}</h1><p class="sub">{text}</p>'
+            '<p><a href="/donjons">Voir les donjons et raids</a></p></div>'
+        )
+        response = page(title, "", body)
+        response.set_status(status)
+        return response
+
+    async def auth_login(self, request: web.Request) -> web.StreamResponse:
+        if self.oauth is None:
+            return self._redirect("/")
+        state = secrets.token_urlsafe(24)
+        response = self._redirect(self.oauth.authorize_url(state))
+        payload = {"state": state, "next": safe_next(request.query.get("next")), "exp": time.time() + STATE_SECONDS}
+        self._set_cookie(response, STATE_COOKIE, payload, STATE_SECONDS)
+        return response
+
+    async def auth_callback(self, request: web.Request) -> web.StreamResponse:
+        if self.oauth is None:
+            return self._redirect("/")
+        pending = unsign(request.cookies.get(STATE_COOKIE), self._secret)
+        state, code = request.query.get("state", ""), request.query.get("code")
+        expected = str(pending.get("state", "")) if pending else ""
+        if not expected or not code or not secrets.compare_digest(state.encode(), expected.encode()):
+            # Refus sur Discord, lien trop vieux ou rejoué : on repart de zéro.
+            return self._message_page(
+                "Connexion annulée", f'La connexion n\'a pas abouti. <a href="{esc(login_url("/"))}">Réessayer</a>', 400
+            )
+        try:
+            identity = await self.oauth.fetch_user(code)
+        except OAuthError as exc:
+            log.warning("Connexion Discord : %s", exc)
+            return self._message_page(
+                "Connexion impossible", "Discord n'a pas pu confirmer ton identité. Réessaie dans un moment.", 502
+            )
+        member = await self._is_member(identity["id"]) if self._is_member else None
+        if member is not True:
+            text = (
+                "Ce site est réservé aux membres du serveur Discord."
+                if member is False else "Impossible de vérifier ton appartenance au serveur pour l'instant. Réessaie plus tard."
+            )
+            response = self._message_page("Accès refusé" if member is False else "Vérification impossible", text, 403)
+        else:
+            response = self._redirect(safe_next(str(pending.get("next"))))
+            now = int(time.time())
+            self._set_session(response, {**identity, "chk": now, "exp": now + SESSION_SECONDS})
+            log.info("Connexion au site : %s", identity["name"])
+        response.del_cookie(STATE_COOKIE, path="/")
+        return response
+
+    async def auth_logout(self, request: web.Request) -> web.StreamResponse:
+        response = self._redirect("/donjons")
+        response.del_cookie(SESSION_COOKIE, path="/")
+        return response
 
     # ------------------------------------------------------------ données
 
@@ -1202,23 +1382,27 @@ class WebSite:
         return page(label, "metiers", body, FILTER_SCRIPT)
 
     async def dungeons(self, request: web.Request) -> web.Response:
-        gid = self._scope()
+        # Page publique : les persos du serveur ne sont montrés qu'aux membres connectés.
+        show_members = members_visible()
         characters = sorted(
-            (c for c in self.db.guild_characters(gid) if c.level),
+            (c for c in self.db.guild_characters(self._scope()) if c.level),
             key=lambda c: (-(c.level or 0), normalize(c.name)),
-        )
+        ) if show_members else []
         lo, hi = dungeons.LEVEL_MIN, dungeons.LEVEL_MAX
         span = hi - lo
 
         def players_in(low: int, high: int) -> str:
+            """Cellule « persos dans la tranche » (vide pour un visiteur non connecté : colonne masquée)."""
+            if not show_members:
+                return ""
             inside = [c for c in characters if low <= (c.level or 0) <= high]
             if not inside:
-                return '<span class="muted">—</span>'
+                return '<td><span class="muted">—</span></td>'
             shown = "".join(
                 f'<a href="/perso/{c.id}" title="{esc(c.name)} · niv. {c.level}">{avatar_html(c)}</a>' for c in inside[:8]
             )
             more = f'<span class="more">+{len(inside) - 8}</span>' if len(inside) > 8 else ""
-            return f'<div class="who-avatars">{shown}{more}</div>'
+            return f'<td><div class="who-avatars">{shown}{more}</div></td>'
 
         def name_cell(name: str, english: str, new: bool, zone: str, slug: str) -> str:
             badge = '<span class="badge-new">Nouveau</span>' if new else ""
@@ -1239,7 +1423,7 @@ class WebSite:
                 f'{name_cell(d.name, d.english, d.new, d.zone, d.slug)}<td class="zc">{esc(d.zone)}{side}</td>'
                 f'<td class="lv"><b>{d.low}–{d.high}</b><div class="lbar">'
                 f'<span style="left:{left:.1f}%;width:{width:.1f}%"></span><i></i></div></td>'
-                f'<td class="num pc">{d.players}</td><td>{players_in(d.low, d.high)}</td></tr>'
+                f'<td class="num pc">{d.players}</td>{players_in(d.low, d.high)}</tr>'
             )
         raid_rows = []
         for r in dungeons.RAIDS:
@@ -1249,38 +1433,48 @@ class WebSite:
                 f'<tr data-href="/donjon/{r.slug}">{name_cell(r.name, r.english, r.new, r.zone, r.slug)}<td class="zc">{esc(r.zone)}{note}</td>'
                 f'<td class="num">{r.players}</td><td class="num">{r.bosses or "?"}</td>'
                 f'<td class="{"status-open" if status == "Ouvert" else "muted"}">{esc(status)}</td>'
-                f"<td>{players_in(dungeons.RAID_LEVEL, dungeons.RAID_LEVEL)}</td></tr>"
+                f"{players_in(dungeons.RAID_LEVEL, dungeons.RAID_LEVEL)}</tr>"
             )
         options = "".join(f'<option value="{c.level}">{esc(c.name)} ({c.level})</option>' for c in characters)
+        if show_members:
+            intro = "avec les persos du serveur qui sont dans la tranche"
+            who_pick = f'<select id="lvl-who" aria-label="Perso"><option value="">Niveau d\'un perso…</option>{options}</select>'
+            who_head, raid_head = "<th>Persos dans la tranche</th>", f"<th>Persos {dungeons.RAID_LEVEL}</th>"
+        else:
+            viewer = _VIEWER.get()
+            intro = (
+                f'<a href="{esc(login_url(viewer.path if viewer else "/donjons"))}">connecte-toi avec Discord</a> '
+                "pour voir les persos du serveur qui sont dans chaque tranche"
+            )
+            who_pick = who_head = raid_head = ""
         body = f"""
 <h1 class="title">Donjons</h1>
-<p class="sub">{len(dungeons.DUNGEONS)} donjons de WoW Forever, du plus bas au plus haut niveau, avec les persos du
-serveur qui sont dans la tranche. Choisis un niveau pour voir ce qui est à faire, et clique sur un donjon pour
-voir son entrée et ses boss.</p>
+<p class="sub">{len(dungeons.DUNGEONS)} donjons de WoW Forever, du plus bas au plus haut niveau ; {intro}.
+Choisis un niveau pour voir ce qui est à faire, et clique sur un donjon pour voir son entrée et ses boss.</p>
 <div class="filters">
   <input id="q" type="search" placeholder="Chercher un donjon, une zone…" autocomplete="off">
   <div class="lvl-pick">
-    <select id="lvl-who" aria-label="Perso"><option value="">Niveau d'un perso…</option>{options}</select>
+    {who_pick}
     <input id="lvl" type="number" min="1" max="60" placeholder="Niveau" aria-label="Niveau">
     <label><input id="lvl-only" type="checkbox"> Seulement sa tranche</label>
   </div>
 </div>
 <div class="table-wrap"><table id="dungeons" class="dtable" data-min="{lo}" data-max="{hi}">
 <thead><tr><th>Donjon</th><th class="zc">Zone</th><th>Niveaux</th><th class="num pc">Joueurs</th>
-<th>Persos dans la tranche</th></tr></thead>
+{who_head}</tr></thead>
 <tbody>{"".join(rows)}</tbody></table></div>
 <h2>Raids</h2>
 <div class="table-wrap"><table class="dtable">
 <thead><tr><th>Raid</th><th class="zc">Accès</th><th class="num">Joueurs</th><th class="num">Boss</th><th>Ouverture</th>
-<th>Persos {dungeons.RAID_LEVEL}</th></tr></thead>
+{raid_head}</tr></thead>
 <tbody>{"".join(raid_rows)}</tbody></table></div>
 <p class="src">Niveaux conseillés, pas des verrous d'entrée. D'après Blizzard et les récapitulatifs de PC Games et
 Warcraft Tavern ({dungeons.SOURCES_CHECKED}) : l'API Blizzard ne fournit pas le journal des donjons de Forever.</p>"""
         return page("Donjons", "donjons", body, FILTER_SCRIPT + DUNGEON_SCRIPT + ROW_LINK_SCRIPT)
 
     async def dungeon(self, request: web.Request) -> web.Response:
-        """Fiche d'un donjon ou d'un raid : entrée, coordonnées, parcours des boss, persos du bon niveau."""
-        gid = self._scope()
+        """Fiche d'un donjon ou d'un raid : entrée, coordonnées, parcours des boss, persos du bon niveau
+        (ces derniers seulement pour un membre connecté : la page est publique)."""
         slug = request.match_info["slug"]
         everything = [*dungeons.DUNGEONS, *dungeons.RAIDS]
         found = next((x for x in everything if x.slug == slug), None)
@@ -1342,15 +1536,21 @@ Warcraft Tavern ({dungeons.SOURCES_CHECKED}) : l'API Blizzard ne fournit pas le 
         )
         notes = "".join(f'<p class="muted">ℹ️ {esc(t)}</p>' for t in guide.notes)
 
-        inside = [
-            c for c in sorted(self.db.guild_characters(gid), key=lambda c: (-(c.level or 0), normalize(c.name)))
-            if c.level and low <= c.level <= high
-        ]
-        who = "".join(
-            f'<a class="who-cell" href="/perso/{c.id}">{avatar_html(c)}<span><b>{esc(c.name)}</b>'
-            f'<small class="muted"> {class_span(c)} · {c.level}</small></span></a>'
-            for c in inside
-        ) or '<p class="empty">Aucun perso du serveur dans la tranche.</p>'
+        if members_visible():
+            inside = [
+                c for c in sorted(self.db.guild_characters(self._scope()), key=lambda c: (-(c.level or 0), normalize(c.name)))
+                if c.level and low <= c.level <= high
+            ]
+            who = "".join(
+                f'<a class="who-cell" href="/perso/{c.id}">{avatar_html(c)}<span><b>{esc(c.name)}</b>'
+                f'<small class="muted"> {class_span(c)} · {c.level}</small></span></a>'
+                for c in inside
+            ) or '<p class="empty">Aucun perso du serveur dans la tranche.</p>'
+        else:
+            who = (
+                f'<p class="muted">Réservé aux membres du serveur : <a href="{esc(login_url(request.path_qs))}">'
+                "connecte-toi avec Discord</a> pour voir qui a le bon niveau.</p>"
+            )
 
         link = (
             f'<a class="btn" href="{esc(guide.guide_url)}" target="_blank" rel="noopener noreferrer">'
@@ -1386,7 +1586,10 @@ Forever : la carte détaillée est sur le guide.</p>
     # ------------------------------------------------------------ serveur
 
     def app(self) -> web.Application:
-        app = web.Application()
+        app = web.Application(middlewares=[self._auth_middleware])
+        app.router.add_get("/auth/login", self.auth_login)
+        app.router.add_get("/auth/callback", self.auth_callback)
+        app.router.add_get("/auth/logout", self.auth_logout)
         app.router.add_get("/", self.characters)
         app.router.add_get("/perso/{id}", self.character)
         app.router.add_get("/metiers", self.professions)

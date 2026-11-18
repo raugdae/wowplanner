@@ -268,7 +268,8 @@ spé et l'image, puis enregistre chaque réponse brute dans `data/armory_probe/*
 
 ## Site web (facultatif)
 
-Un petit site public, en lecture seule, pour parcourir les persos et les métiers du serveur :
+Un petit site en lecture seule, pour parcourir les persos et les métiers du serveur. Il peut être réservé aux
+membres du Discord (voir « Connexion avec Discord » plus bas) :
 
 - **Persos** : tableau de tous les persos (classe, race, rôles, métiers et niveaux), recherche et filtres par classe,
   rôle ou métier ;
@@ -298,6 +299,29 @@ Un petit site public, en lecture seule, pour parcourir les persos et les métier
 **Aucune info personnelle** : ni pseudo Discord, ni identifiant, ni BattleTag, et rien qui relie deux persos au même
 joueur. Le site lit la même base que le bot (dans le même conteneur), donc il est toujours à jour. Il montre les persos
 du serveur `GUILD_ID` (ou du seul serveur connu du bot).
+
+### Connexion avec Discord
+
+Avec `DISCORD_CLIENT_SECRET` renseigné, le site est **réservé aux membres du serveur Discord** :
+
+| Pages | Sans connexion | Connecté (membre du serveur) |
+|---|---|---|
+| Persos, fiches persos, Métiers, recettes | page « Réservé aux membres » avec un bouton de connexion | ✅ |
+| Donjons et fiches des donjons | ✅ sans les persos du serveur | ✅ avec les persos dans chaque tranche |
+
+- **Connexion** : bouton « Se connecter avec Discord ». Discord demande d'autoriser le site à voir le pseudo, et rien d'autre (droit `identify` : ni serveurs, ni messages, ni e-mail). Le bot vérifie ensuite que la personne est membre du serveur. Pas besoin de l'intent « membres » : c'est une simple requête à l'API.
+- **Durée** : la session dure 30 jours. L'appartenance au serveur est revérifiée une fois par jour : quelqu'un qui quitte le serveur ou qui en est exclu perd l'accès dans les 24 h.
+- **Cookies** : signés, donc impossibles à falsifier, et lisibles seulement par le site (`HttpOnly`, `Secure` en HTTPS). La clé de signature est créée au premier lancement dans `data/session_secret`. La supprimer déconnecte tout le monde.
+- Sans `DISCORD_CLIENT_SECRET`, le site reste ouvert à tous, et un avertissement le rappelle dans les logs au démarrage.
+
+**Mise en place** (5 minutes) :
+1. Ouvre le [portail développeur Discord](https://discord.com/developers/applications), puis l'application du bot, onglet **OAuth2**.
+2. Dans **Redirects**, ajoute `https://wow.ton-domaine.fr/auth/callback` (ton adresse, suivie de `/auth/callback`). Enregistre.
+3. Copie le **Client Secret** (bouton *Reset Secret* s'il n'est pas affiché) dans `.env` : `DISCORD_CLIENT_SECRET=…`. Ne le committe jamais.
+4. Vérifie que `WEB_DOMAIN` (avec Traefik) ou `WEB_URL` est renseigné : c'est l'adresse de retour envoyée à Discord.
+5. Lance `docker compose up -d`. Les logs doivent afficher « Site réservé aux membres du serveur ».
+
+L'identifiant de l'application est repris automatiquement du bot (`DISCORD_CLIENT_ID` ne sert que pour en utiliser une autre). Si le secret est renseigné mais pas l'adresse du site, le site **ne démarre pas** plutôt que de rester ouvert par erreur.
 
 **Avec Traefik** (réseau Docker externe partagé avec Traefik) : dans `.env`,
 
@@ -336,7 +360,8 @@ wowplanner/
   cogs/orders.py      atelier : panneau, commandes entre persos, boutons en MP
   orders.py           règles des commandes (recettes commandables, droits, composants)
   recipes.py          recettes : recherche, regroupement, composants dépliés
-  web.py              site web public (persos, métiers, recettes, donjons)
+  web.py              site web (persos, métiers, recettes, donjons)
+  webauth.py          connexion au site avec Discord (OAuth2, cookies signés)
   cogs/schedule.py    rappels en MP et salons vocaux temporaires
 tests/test_core.py
 ```

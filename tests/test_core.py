@@ -1083,6 +1083,119 @@ def test_gear_stats_priorities_and_categories(tmp_path):
     assert 'data-k="intellect" tabindex="0"' in html and "la réserve de mana" in html  # infobulles des stats
 
 
+def test_web_auth_cookies(tmp_path):
+    import time
+
+    from wowplanner.webauth import load_secret, safe_next, sign, unsign
+
+    secret = load_secret(tmp_path / "session_secret")
+    assert load_secret(tmp_path / "session_secret") == secret  # gardée : les sessions survivent au redémarrage
+    value = sign({"id": 1, "name": "Raug", "exp": time.time() + 60}, secret)
+    assert unsign(value, secret)["name"] == "Raug"
+    assert unsign(value, b"autre-cle") is None  # mauvaise clé
+    sig = value.rsplit(".", 1)[1]
+    forged = sign({"id": 2, "name": "Pirate", "exp": time.time() + 60}, b"x").rsplit(".", 1)[0]
+    assert unsign(f"{forged}.{sig}", secret) is None  # contenu modifié
+    assert unsign(sign({"id": 1, "exp": time.time() - 1}, secret), secret) is None  # expiré
+    assert unsign("n'importe quoi", secret) is None and unsign(None, secret) is None
+    assert safe_next("/perso/3?x=1") == "/perso/3?x=1"
+    for bad in ("https://evil.fr", "//evil.fr", "/\\evil.fr", "", None):
+        assert safe_next(bad) == "/"
+
+
+def test_website_discord_login(tmp_path):
+    """Site réservé aux membres : pages privées → connexion, donjons publics sans persos, refus des non-membres."""
+    import asyncio
+    import time
+    from urllib.parse import parse_qs, urlparse
+
+    import aiohttp
+
+    from wowplanner.db import Database
+    from wowplanner.web import WebSite
+    from wowplanner.webauth import SESSION_COOKIE, DiscordOAuth, OAuthError, sign
+
+    db = Database(tmp_path / "t.db")
+    member_id, stranger_id = 123, 999
+    hollie = db.add_character(member_id, "Hollie Tétine", "pretre", "humain", "heal")
+    db.set_armory_look(hollie.id, 20, None, None, None, None, None)
+    db.touch_member(42, member_id)
+
+    class FakeOAuth(DiscordOAuth):
+        async def fetch_user(self, code):
+            if code == "bad":
+                raise OAuthError("code expiré")
+            return {"id": int(code), "name": f"Joueur{code}"}
+
+    async def is_member(user_id):
+        return user_id == member_id
+
+    site = WebSite(db, lambda: 42)
+    secret = b"k" * 32
+    site.enable_auth(FakeOAuth(None, "1", "s", "https://wow.fr/auth/callback"), secret, is_member, secure_cookies=False)
+    got = {}
+
+    async def scenario():
+        await site.start("127.0.0.1", 0)
+        port = next(iter(site._runner.sites))._server.sockets[0].getsockname()[1]
+        base = f"http://127.0.0.1:{port}"
+
+        async def get(session, path):
+            async with session.get(base + path, allow_redirects=False) as resp:
+                return resp.status, await resp.text(), resp.headers.get("Location", "")
+
+        async def login(session, code, next_path="/perso/1"):
+            _, _, location = await get(session, f"/auth/login?next={next_path}")
+            state = parse_qs(urlparse(location).query)["state"][0]
+            got["authorize"] = location
+            return await get(session, f"/auth/callback?code={code}&state={state}")
+
+        jar = aiohttp.CookieJar(unsafe=True)  # cookies sur une adresse IP (127.0.0.1)
+        async with aiohttp.ClientSession(cookie_jar=jar) as s:
+            got["home_anon"] = await get(s, "/")
+            got["dungeons_anon"] = await get(s, "/donjons")
+            got["dungeon_anon"] = await get(s, "/donjon/the-deadmines")
+            await get(s, "/auth/login?next=/")  # pose le cookie d'état…
+            got["bad_state"] = await get(s, "/auth/callback?code=123&state=faux")
+            got["callback"] = await login(s, str(member_id), "/metiers")
+            got["home"] = await get(s, "/")
+            got["dungeons"] = await get(s, "/donjons")
+            got["logout"] = await get(s, "/auth/logout")
+            got["home_after_logout"] = await get(s, "/")
+        async with aiohttp.ClientSession(cookie_jar=aiohttp.CookieJar(unsafe=True)) as s:
+            got["stranger"] = await login(s, str(stranger_id))
+            got["stranger_home"] = await get(s, "/")
+            got["discord_down"] = await login(s, "bad")
+        # Session d'un membre exclu depuis : la revérification quotidienne lui retire l'accès.
+        old = int(time.time()) - 2 * 24 * 3600
+        cookie = sign({"id": stranger_id, "name": "Ex", "chk": old, "exp": time.time() + 3600}, secret)
+        async with aiohttp.ClientSession(cookie_jar=aiohttp.CookieJar(unsafe=True), cookies={SESSION_COOKIE: cookie}) as s:
+            got["kicked"] = await get(s, "/")
+        await site.stop()
+
+    asyncio.run(scenario())
+    db.close()
+
+    status, text, _ = got["home_anon"]
+    assert status == 401 and "Se connecter avec Discord" in text and "Hollie" not in text
+    status, text, _ = got["dungeons_anon"]
+    assert status == 200 and "Hollie" not in text and "Persos dans la tranche" not in text
+    assert "connecte-toi avec Discord" in text
+    status, text, _ = got["dungeon_anon"]
+    assert status == 200 and "Hollie" not in text and "Réservé aux membres du serveur" in text
+    assert "scope=identify" in got["authorize"] and "redirect_uri=https%3A%2F%2Fwow.fr%2Fauth%2Fcallback" in got["authorize"]
+    assert got["bad_state"][0] == 400
+    assert got["callback"][0] == 302 and got["callback"][2] == "/metiers"  # retour à la page demandée
+    status, text, _ = got["home"]
+    assert status == 200 and "Hollie Tétine" in text and f"Joueur{member_id}" in text and "Déconnexion" in text
+    assert "Persos dans la tranche" in got["dungeons"][1]
+    assert got["logout"][0] == 302 and got["home_after_logout"][0] == 401
+    assert got["stranger"][0] == 403 and "réservé aux membres" in got["stranger"][1]
+    assert got["stranger_home"][0] == 401  # pas de session pour un non-membre
+    assert got["discord_down"][0] == 502
+    assert got["kicked"][0] == 401
+
+
 def test_sync_steps_without_armory(tmp_path):
     """Synchro : chaque étape donne une ligne de bilan, une étape en échec n'arrête pas les suivantes."""
     import asyncio
