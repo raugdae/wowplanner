@@ -214,7 +214,7 @@ def test_db_migration_adds_columns(tmp_path):
     conn.close()
     db = Database(path)
     ev = db.get_event(1)
-    assert ev.reminder_sent is False and ev.voice_channel_id is None
+    assert ev.reminder_sent is False and ev.voice_channel_id is None and ev.creator_name is None
     db.close()
 
 
@@ -1220,7 +1220,7 @@ def test_sync_steps_without_armory(tmp_path):
     lines = asyncio.run(cog._run_steps(full=False))
     assert lines[0] == "✅ **Donjons et raids (wiki)** : 37 donjons et raids"
     assert lines[1].startswith("⚠️") and "anciennes priorités gardées" in lines[1]
-    assert len(lines) == 5 and all(line.startswith("⏭️") for line in lines[2:])  # pas de clés Blizzard
+    assert len(lines) == 6 and all(line.startswith("⏭️") for line in lines[2:])  # pas de clés Blizzard
     assert cog._last_run() is not None  # la synchro de nuit ne sera pas rattrapée au prochain démarrage
 
 
@@ -1365,3 +1365,319 @@ def test_stat_priorities_from_guide(tmp_path):
         gear.PRIORITIES.clear()
         gear.PRIORITIES.update(backup[0])
         gear.SPELL_HIT_CAP, gear.PHYSICAL_HIT_CAP, gear.SOURCE_CHECKED_AT = backup[1:]
+
+
+def test_db_web_fields(tmp_path):
+    """Sorties et persos venus du site : pseudo de l'organisateur, origine du perso, rôle préféré modifiable."""
+    from wowplanner.db import SOURCE_WEB, Database, Event
+
+    db = Database(tmp_path / "t.db")
+    assert db.last_event_channel(42) is None
+    db.create_event(Event(1, 42, 7, 3, "Deadmines", "dungeon", None, 100, {"tank": 1, "heal": 1, "dps": 3},
+                          created_at=10, creator_name="Raug"))
+    db.create_event(Event(2, 42, 8, 3, "Deadmines", "dungeon", None, 100, {"tank": 1, "heal": 1, "dps": 3}, created_at=20))
+    assert db.get_event(1).creator_name == "Raug" and db.get_event(2).creator_name is None
+    assert db.last_event_channel(42) == 8
+    web = db.add_character(1, "Grommash Hurlenfer", "guerrier", "orc", source=SOURCE_WEB)
+    discord_one = db.add_character(1, "Aelys", "mage", "humain")
+    loaded = {c.name: c for c in db.get_characters(1)}
+    assert loaded["Grommash Hurlenfer"].source == SOURCE_WEB and loaded["Aelys"].source is None
+    assert loaded["Aelys"].created_at and web.created_at
+    db.set_preferred_role(discord_one.id, "dps")
+    assert db.get_character(discord_one.id).preferred_role == "dps"
+    db.set_preferred_role(discord_one.id, None)
+    assert db.get_character(discord_one.id).preferred_role is None
+    db.close()
+
+
+def test_web_texts():
+    from wowplanner.webmember import _date_fr, rich, when_text
+
+    now = datetime(2026, 11, 18, 10, 0, tzinfo=PARIS)  # un mercredi
+    at = lambda *a: int(datetime(*a, tzinfo=PARIS).timestamp())  # noqa: E731
+    assert when_text(at(2026, 11, 18, 21, 0), PARIS, now) == "aujourd'hui à 21:00"
+    assert when_text(at(2026, 11, 19, 20, 30), PARIS, now) == "demain à 20:30"
+    assert when_text(at(2026, 11, 20, 21, 0), PARIS, now) == "vendredi 20 novembre à 21:00"
+    assert when_text(at(2027, 1, 4, 21, 0), PARIS, now) == "lundi 4 janvier 2027 à 21:00"
+    html_text = rich("✅ **Grom** <t:1800000000:F> <@123>\n<script>`/ajouter perso`", PARIS)
+    assert "<b>Grom</b>" in html_text and "un joueur" in html_text and "&lt;t:" not in html_text
+    assert "&lt;script&gt;" in html_text and "<br>" in html_text and "<code>/ajouter perso</code>" in html_text
+    assert _date_fr("2026-12-24") == "24/12/2026" and _date_fr("demain") == "demain"
+
+
+def test_member_pages_events_and_characters(tmp_path):
+    """Sorties et « Mes persos » sur le site : affichage, jeton anti-falsification, messages après action."""
+    import asyncio
+    import re
+    import time
+
+    import aiohttp
+
+    from wowplanner.db import Database, Event
+    from wowplanner.web import WebSite
+    from wowplanner.webauth import SESSION_COOKIE, DiscordOAuth, sign
+    from wowplanner.webmember import ActionError
+
+    db = Database(tmp_path / "t.db")
+    me, organizer = 123, 456
+    db.touch_member(42, me)
+    hollie = db.add_character(me, "Hollie Tétine", "pretre", "humain", "heal")
+    starts = int(time.time()) + 2 * 86400
+    db.create_event(Event(111, 42, 7, organizer, "Les Mortemines", "dungeon", "18-24", starts,
+                          {"tank": 1, "heal": 1, "dps": 3}, description="RDV <b>devant</b>", creator_name="Orga"))
+    db.upsert_signup(111, organizer, "tank", "PseudoOrga", None)
+    calls = []
+
+    class Backend:
+        timezone = PARIS
+        armory_enabled = True
+
+        def event_channels(self):
+            return [(7, "#sorties")]
+
+        def instance_options(self):
+            return [("Les Mortemines", "Les Mortemines (VC) — Donjon 5 joueurs")]
+
+        async def can_manage(self, user_id, ev):
+            return user_id == ev.creator_id
+
+        async def signup(self, user, mid, role, character_id):
+            calls.append(("signup", user.id, user.display_name, mid, role, character_id))
+            if role == "dps":
+                raise ActionError("Le rôle **DPS** est complet.")
+            return f"✅ Inscrit en **Heal** pour **Les Mortemines** (<t:{starts}:F>)."
+
+        async def create_event(self, user, channel, instance, date, heure, joueurs, tanks, heals, dps, description):
+            calls.append(("create", channel, instance, date, heure, joueurs, tanks, heals, dps, description))
+            return "✅ Sortie créée."
+
+        async def armory_lookup(self, user_id, name):
+            calls.append(("lookup", user_id, name))
+            return {"status": "not_found", "name": name}
+
+    class FakeOAuth(DiscordOAuth):
+        async def fetch_user(self, code):
+            raise AssertionError("pas utilisé")
+
+    async def is_member(user_id):
+        return True
+
+    site = WebSite(db, lambda: 42)
+    secret = b"k" * 32
+    site.enable_auth(FakeOAuth(None, "1", "s", "https://wow.fr/auth/callback"), secret, is_member, secure_cookies=False)
+    site.enable_actions(Backend())
+    now = int(time.time())
+    session = sign({"id": me, "name": "Raug", "chk": now, "exp": now + 3600}, secret)
+    got = {}
+
+    async def scenario():
+        await site.start("127.0.0.1", 0)
+        port = next(iter(site._runner.sites))._server.sockets[0].getsockname()[1]
+        base = f"http://127.0.0.1:{port}"
+        async with aiohttp.ClientSession(cookie_jar=aiohttp.CookieJar(unsafe=True)) as anon:
+            async with anon.get(base + "/sorties", allow_redirects=False) as resp:
+                got["anon"] = resp.status
+        jar = aiohttp.CookieJar(unsafe=True)
+        async with aiohttp.ClientSession(cookie_jar=jar, cookies={SESSION_COOKIE: session}) as s:
+
+            async def get(path):
+                async with s.get(base + path, allow_redirects=False) as resp:
+                    return resp.status, await resp.text()
+
+            async def post(path, data, headers=None):
+                async with s.post(base + path, data=data, headers=headers or {}, allow_redirects=False) as resp:
+                    return resp.status, resp.headers.get("Location", "")
+
+            got["page"] = await get("/sorties")
+            token = re.search(r'name="csrf" value="([0-9a-f]+)"', got["page"][1]).group(1)
+            got["signup"] = await post("/sortie/111/inscrire", {"csrf": token, "perso": str(hollie.id), "role": "heal"})
+            got["after_signup"] = await get("/sorties")
+            got["again"] = await get("/sorties")
+            await post("/sortie/111/inscrire", {"csrf": token, "perso": str(hollie.id), "role": "dps"})
+            got["refused"] = await get("/sorties")
+            await post("/sortie/111/inscrire", {"perso": str(hollie.id), "role": "heal"})
+            got["no_token"] = await get("/sorties")
+            await post("/sortie/111/inscrire", {"csrf": token, "role": "heal"}, {"Origin": "https://evil.example"})
+            got["cross_site"] = await get("/sorties")
+            await post("/sorties", {"csrf": token, "salon": "7", "instance": "Les Mortemines", "date": "2026-12-24",
+                                    "heure": "21:00", "tanks": "2", "joueurs": "", "description": "  "})
+            await post("/sorties", {"csrf": token, "salon": "7", "instance": "X", "date": "2026-12-24",
+                                    "heure": "21:00", "tanks": "deux"})
+            got["bad_number"] = await get("/sorties")
+            async with s.get(base + "/api/armurerie?nom=Gro") as resp:
+                got["lookup"] = resp.status, await resp.json()
+            got["mine"] = await get("/mes-persos")
+        await site.stop()
+
+    asyncio.run(scenario())
+    db.close()
+
+    assert got["anon"] == 401
+    status, text = got["page"]
+    assert status == 200 and "Les Mortemines" in text and "organisé par Orga" in text and "PseudoOrga" in text
+    assert "RDV &lt;b&gt;devant&lt;/b&gt;" in text and "Hollie Tétine" in text and "Mes persos" in text
+    assert "Annuler la sortie" not in text and 'action="/sorties"' in text  # pas organisateur ; formulaire de création
+    assert got["signup"] == (302, "/sorties#s111")
+    signups = [c for c in calls if c[0] == "signup"]
+    assert signups[0] == ("signup", me, "Raug", 111, "heal", hollie.id)
+    flash = got["after_signup"][1]
+    assert 'class="flash"' in flash and "Inscrit en <b>Heal</b>" in flash and "&lt;t:" not in flash
+    assert 'class="flash' not in got["again"][1]  # message montré une seule fois
+    assert 'class="flash err"' in got["refused"][1] and "<b>DPS</b> est complet" in got["refused"][1]
+    assert len(signups) == 2  # sans jeton, ou depuis un autre site : rien n'est fait
+    assert "Formulaire expiré" in got["no_token"][1] and "Formulaire expiré" in got["cross_site"][1]
+    creates = [c for c in calls if c[0] == "create"]
+    assert creates == [("create", 7, "Les Mortemines", "24/12/2026", "21:00", None, 2, None, None, None)]
+    assert "« Tanks » doit être un nombre" in got["bad_number"][1]
+    assert got["lookup"] == (200, {"status": "not_found", "name": "Gro"})
+    status, text = got["mine"]
+    assert status == 200 and "Hollie Tétine" in text and 'data-armory="1"' in text and 'id="new-submit"' in text
+
+
+def test_web_bridge_rules(tmp_path):
+    """Actions du site côté bot : perso vérifié dans l'armurerie, inscription avec un perso à soi et du bon rôle."""
+    import asyncio
+    import time
+    from types import SimpleNamespace
+
+    from wowplanner.armory import ArmorySheet
+    from wowplanner.cogs.webbridge import WebBridge
+    from wowplanner.db import SOURCE_WEB, Database, Event
+    from wowplanner.webmember import ActionError, WebUser
+
+    db = Database(tmp_path / "t.db")
+    profile = {"name": "Grommash", "surname": "Hurlenfer", "level": 34, "character_class": {"id": 1}, "race": {"id": 2}}
+
+    class FakeArmory:
+        available = True
+
+        def __init__(self):
+            self.lookups, self.applied = 0, []
+
+        async def lookup(self, name):
+            self.lookups += 1
+            return (ArmorySheet(profile), True) if name == "Grommash Hurlenfer" else (None, False)
+
+        async def fetch(self, name, max_age=0):
+            return (ArmorySheet(profile), True) if name == "Grommash Hurlenfer" else (None, False)
+
+        def apply(self, character, sheet):
+            self.applied.append(character.name)
+
+        async def fetch_item_icons(self, ids):
+            pass
+
+    class FakeEvents:
+        def __init__(self):
+            self.registered, self.refreshed = [], []
+
+        async def register(self, message_id, user, role, character):
+            self.registered.append((message_id, user.display_name, role, character.name if character else None))
+            return True, f"✅ Inscrit en **{role}**."
+
+        async def refresh_event(self, message_id):
+            self.refreshed.append(message_id)
+
+    armory, events = FakeArmory(), FakeEvents()
+    cogs = {"ArmoryCog": armory, "EventsCog": events}
+    bot = SimpleNamespace(
+        db=db, config=SimpleNamespace(timezone=PARIS, event_channel_ids=frozenset()), get_cog=cogs.get,
+        website=SimpleNamespace(guild_id=lambda: 42),
+    )
+    bridge = WebBridge(bot)
+    raug, other = WebUser(1, "Raug"), WebUser(2, "Autre")
+
+    async def scenario():
+        assert (await bridge.armory_lookup(1, "Gr0mmash"))["status"] == "invalid"
+        assert (await bridge.armory_lookup(1, "gro"))["status"] == "not_found"
+        found = await bridge.armory_lookup(1, "grommash hurlenfer")
+        assert found["status"] == "found" and found["class"] == "Guerrier" and found["race"] == "Orc"
+        assert [r for r, _ in found["roles"]] == ["tank", "dps"] and found["level"] == 34
+        await bridge.armory_lookup(1, "Grommash Hurlenfer")  # même perso : réponse gardée en mémoire
+        assert armory.lookups == 2
+
+        with pytest.raises(ActionError, match="ne peut pas être Heal"):
+            await bridge.add_character(raug, "grommash hurlenfer", "heal")
+        with pytest.raises(ActionError, match="introuvable"):
+            await bridge.add_character(raug, "Inconnu Total", None)
+        text = await bridge.add_character(raug, "grommash hurlenfer", "tank")
+        assert "Grommash Hurlenfer" in text and "niveau 34" in text and armory.applied == ["Grommash Hurlenfer"]
+        grom = db.get_characters(1)[0]
+        assert (grom.wow_class, grom.race, grom.source, grom.preferred_role) == ("guerrier", "orc", SOURCE_WEB, "tank")
+        assert db.guild_characters(42)[0].id == grom.id  # le joueur compte comme membre du serveur
+        with pytest.raises(ActionError, match="déjà un perso"):
+            await bridge.add_character(raug, "Grommash Hurlenfer", None)
+        assert (await bridge.armory_lookup(1, "grommash hurlenfer"))["status"] == "duplicate"
+
+        db.create_event(Event(9, 42, 7, 2, "Deadmines", "dungeon", None, int(time.time()) + 3600,
+                              {"tank": 1, "heal": 1, "dps": 3}))
+        db.create_event(Event(10, 99, 7, 2, "Ailleurs", "dungeon", None, int(time.time()) + 3600,
+                              {"tank": 1, "heal": 1, "dps": 3}))
+        with pytest.raises(ActionError, match="Choisis le perso"):
+            await bridge.signup(raug, 9, "tank", None)
+        with pytest.raises(ActionError, match="ne peut pas être Heal"):
+            await bridge.signup(raug, 9, "heal", grom.id)
+        with pytest.raises(ActionError, match="pas à toi"):
+            await bridge.signup(other, 9, "tank", grom.id)
+        with pytest.raises(ActionError, match="n'existe plus"):
+            await bridge.signup(raug, 10, "tank", grom.id)  # sortie d'un autre serveur
+        assert "Inscrit" in await bridge.signup(raug, 9, "tank", grom.id)
+        assert events.registered == [(9, "Raug", "tank", "Grommash Hurlenfer")] and events.refreshed == [9]
+        assert "plus de rôle préféré" in await bridge.set_role(raug, grom.id, None)
+        assert db.get_character(grom.id).preferred_role is None
+        with pytest.raises(ActionError, match="pas à toi"):
+            await bridge.delete_character(other, grom.id)
+        db.upsert_signup(9, 1, "tank", "Raug", grom.id)
+        assert "supprimé" in await bridge.delete_character(raug, grom.id)
+        assert db.get_characters(1) == [] and events.refreshed == [9, 9]
+
+    asyncio.run(scenario())
+    db.close()
+
+
+def test_nightly_cleanup_of_discord_characters(tmp_path):
+    """Nettoyage de nuit : seuls les persos Discord introuvables depuis plus de 2 jours partent (joueur prévenu)."""
+    import asyncio
+    import time
+    from types import SimpleNamespace
+
+    from wowplanner.cogs.armory import FullSyncReport
+    from wowplanner.cogs.sync import SyncCog
+    from wowplanner.db import SOURCE_WEB, Database
+
+    db = Database(tmp_path / "t.db")
+    old = db.add_character(1, "Vieux Perso", "mage", "humain")
+    web = db.add_character(1, "Site Perso", "mage", "humain", source=SOURCE_WEB)
+    fresh = db.add_character(2, "Tout Neuf", "mage", "humain")
+    db.add_character(3, "Bien Present", "mage", "humain")
+    with db.conn:
+        db.conn.execute("UPDATE characters SET created_at = ? WHERE id IN (?, ?)",
+                        (int(time.time()) - 3 * 86400, old.id, web.id))
+    by_id = {c.id: c for c in db.all_characters()}
+    dms = []
+
+    class FakeUser:
+        def __init__(self, user_id):
+            self.id = user_id
+
+        async def send(self, text):
+            dms.append((self.id, text))
+
+    bot = SimpleNamespace(
+        config=SimpleNamespace(timezone=PARIS, data_dir=tmp_path), db=db, get_cog=lambda name: None,
+        get_user=FakeUser,
+    )
+    cog = SyncCog(bot)
+    assert asyncio.run(cog._cleanup(False))[0] == "⏭️"  # persos pas relus : on ne touche à rien
+
+    missing = [by_id[old.id], by_id[web.id], by_id[fresh.id]]
+    cog._char_report = FullSyncReport(characters=4, found=0, not_found=3, unreachable=1, missing=missing)
+    icon, text = asyncio.run(cog._cleanup(False))
+    assert icon == "⚠️" and "annulé" in text and len(db.all_characters()) == 4  # personne trouvé : armurerie suspecte
+
+    cog._char_report = FullSyncReport(characters=4, found=1, not_found=3, missing=missing)
+    icon, text = asyncio.run(cog._cleanup(False))
+    assert icon == "✅" and "1 perso(s)" in text and "Vieux Perso" in text
+    assert sorted(c.name for c in db.all_characters()) == ["Bien Present", "Site Perso", "Tout Neuf"]
+    assert len(dms) == 1 and dms[0][0] == 1 and "Vieux Perso" in dms[0][1]
+    db.close()

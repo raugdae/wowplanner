@@ -2,9 +2,9 @@
 
 Bot Discord pour organiser des sorties donjon / raid sur **World of Warcraft: Forever**.
 
-- `/ajouter event` publie un message de sortie : instance, date, nombre de joueurs et places par rôle.
-- Les joueurs s'inscrivent avec les boutons sous le message : 🛡️ Tank, ⛑️ Heal, ⚔️ DPS, Se désinscrire.
-- Chaque joueur déclare ses persos (`/ajouter perso`). À l'inscription, le bot prend le perso capable de tenir le rôle, ou demande lequel s'il y en a plusieurs.
+- `/ajouter event` publie un message de sortie : instance, date, nombre de joueurs et places par rôle. On peut aussi créer la sortie **depuis le site** (page Sorties) : le bot poste le même message dans le salon Discord.
+- Les joueurs s'inscrivent avec les boutons sous le message : 🛡️ Tank, ⛑️ Heal, ⚔️ DPS, Se désinscrire. Ou depuis le site : les deux restent synchronisés.
+- Chaque joueur déclare ses persos (`/ajouter perso`, ou la page « Mes persos » du site, qui vérifie le nom dans l'armurerie pendant la saisie). À l'inscription, le bot prend le perso capable de tenir le rôle, ou demande lequel s'il y en a plusieurs.
 - Quand un rôle est complet, son bouton passe en gris et les nouvelles inscriptions sont refusées.
 - Chaque perso peut avoir un rôle préféré. Ses métiers et recettes sont lus dans l'armurerie Blizzard. Pour consulter les persos, métiers, recettes et donjons, il y a **le site web**. Côté Discord, `/liste battletags` donne les BattleTag de tout le monde.
 - 30 minutes avant le départ, chaque inscrit reçoit un rappel en MP.
@@ -26,7 +26,7 @@ Les commandes suivent la logique **verbe + catégorie** :
 | Commande | Rôle |
 |---|---|
 | `/ajouter event instance date heure [joueurs] [tanks] [heals] [dps] [description]` | Crée une sortie. L'instance se cherche par nom ou abréviation (`brd`, `ony`, `sm cath`…). |
-| `/ajouter perso nom [classe] [race] [role_prefere]` | Déclare un de tes persos. Seul le nom est obligatoire : classe et race sont lues dans l'armurerie si le perso y est (niveau 10+), sinon le bot les demande. La combinaison race/classe et le rôle préféré sont vérifiés. Pour corriger un perso : le supprimer et le recréer. |
+| `/ajouter perso nom [classe] [race] [role_prefere]` | Déclare un de tes persos. Seul le nom est obligatoire : classe et race sont lues dans l'armurerie si le perso y est (niveau 10+), sinon le bot les demande. La combinaison race/classe et le rôle préféré sont vérifiés. Un perso encore introuvable dans l'armurerie 2 jours après son ajout est retiré la nuit. Pour corriger un perso : le supprimer et le recréer (ou changer son rôle préféré sur le site). |
 | `/ajouter battletag tag` | Enregistre ton BattleTag (`Nom#1234`), ou remplace l'ancien. |
 | `/supprimer event sortie` | Annule la sortie après confirmation, et prévient les inscrits. Réservé à l'organisateur et aux modérateurs. |
 | `/supprimer inscrit sortie joueur` | Désinscrit un joueur d'**une** sortie. Choisis la sortie d'abord : le champ `joueur` ne propose que ses inscrits. Les autres sorties du joueur ne changent pas. Réservé à l'organisateur et aux modérateurs. |
@@ -100,17 +100,24 @@ Intégrations → WoW Planner → `/admin`*. Le bot revérifie la permission à 
 
 ### Synchro des données (nuit et `/admin sync`)
 
-Tout ce qui vient de l'extérieur est mis à jour au même endroit (`cogs/sync.py`), en 5 étapes :
+Tout ce qui vient de l'extérieur est mis à jour au même endroit (`cogs/sync.py`), en 6 étapes :
 1. la liste des donjons et raids (wiki) ;
 2. les priorités de stats (guide stillsixty) ;
 3. les arbres de talents (Blizzard) ;
 4. tous les persos déclarés : métiers, recettes, équipement, stats, talents, images (armurerie) ;
-5. les détails des recettes : noms français, composants, objets fabriqués (Blizzard).
+5. le **nettoyage** des persos ajoutés depuis Discord et toujours introuvables dans l'armurerie (voir plus bas) ;
+6. les détails des recettes : noms français, composants, objets fabriqués (Blizzard).
+
+**Nettoyage des persos introuvables** : un perso déclaré sur Discord (`/ajouter perso` ou `/admin ajouter perso`)
+que l'armurerie ne connaît toujours pas **2 jours après son ajout** est retiré, et son joueur est prévenu en MP.
+Les persos ajoutés depuis le site ne sont jamais retirés : ils ont été vérifiés dans l'armurerie à l'ajout.
+Garde-fou : si l'armurerie ne trouve aucun perso du tout (panne ?), rien n'est retiré.
+Seule une réponse « introuvable » compte : une armurerie qui ne répond pas ne retire rien.
 
 - **Chaque nuit à 4 h** (fuseau `TIMEZONE`), tout seul. Les talents ne sont redemandés que s'ils ont plus d'une semaine, et seules les recettes nouvelles sont demandées. Si le bot était éteint à 4 h (ou au premier lancement), la synchro est rattrapée au démarrage dès que la dernière a plus de 20 h. Le bilan est dans les logs.
 - **`/admin sync`** : la même chose tout de suite, mais en forçant les talents et **toutes** les recettes. L'avancement s'affiche étape par étape. Si ça dépasse 15 minutes, Discord ne permet plus de mettre à jour la réponse : le bilan arrive en MP.
 
-Une étape en échec n'empêche pas les suivantes, et on garde alors les anciennes données. Sans clés Blizzard, les étapes 3 à 5 sont sautées. Une seule synchro à la fois.
+Une étape en échec n'empêche pas les suivantes, et on garde alors les anciennes données. Sans clés Blizzard, les étapes 3 à 6 sont sautées. Une seule synchro à la fois.
 
 **Quotas Blizzard** : 100 requêtes par seconde et 36 000 par heure. Le bot fait au plus 5 requêtes en parallèle et marque une pause d'une seconde entre deux persos ; s'il reçoit malgré tout un refus pour excès de requêtes, il patiente puis réessaie. Ordre de grandeur pour un `/admin sync` : environ 550 requêtes pour les talents, 6 par perso, 2 par recette. Avec 50 persos et 1 000 recettes, ça fait environ 3 000 requêtes, moins de 10 % du quota horaire. La synchro de nuit en fait beaucoup moins (persos et recettes nouvelles seulement).
 
@@ -247,7 +254,8 @@ versionné).
 - **Recettes** : les recettes connues sont relues à chaque synchro. Leurs détails (nom français, composants, objet
   fabriqué) sont demandés une seule fois puis gardés en base ; `/admin sync` les redemande tous.
 - **Vérification à l'ajout** : `/ajouter perso` dit si le perso existe dans l'armurerie, et prévient si la classe ou
-  la race déclarée ne correspond pas. Jamais bloquant.
+  la race déclarée ne correspond pas. Pas bloquant sur Discord, mais un perso encore introuvable après 2 jours est
+  retiré par la synchro de nuit. Sur le site (« Mes persos »), le perso **doit** exister dans l'armurerie.
 
 **Limites** (l'API n'est pas documentée officiellement pour Forever) : un perso n'apparaît qu'à partir du **niveau
 10**, après une déconnexion, parfois avec plusieurs heures de retard. Les persos s'y adressent sans serveur, par
@@ -268,9 +276,22 @@ spé et l'image, puis enregistre chaque réponse brute dans `data/armory_probe/*
 
 ## Site web (facultatif)
 
-Un petit site en lecture seule, pour parcourir les persos et les métiers du serveur. Il peut être réservé aux
-membres du Discord (voir « Connexion avec Discord » plus bas) :
+Le site du serveur, pour parcourir les persos et les métiers, et (une fois connecté avec Discord) organiser les
+sorties et gérer ses persos. Il peut être réservé aux membres du Discord (voir « Connexion avec Discord » plus bas) :
 
+- **Sorties** : les prochaines sorties avec les inscrits par rôle, comme le message Discord. Connecté, on peut
+  **s'inscrire** (choix du perso, puis du rôle ; seuls les rôles que le perso peut tenir sont actifs), changer de
+  rôle ou de perso, se désinscrire, et **créer une sortie** (instance à chercher dans la liste ou nom libre, date,
+  heure, composition, description). L'organisateur et les modérateurs (permission « Gérer les messages » ou « Gérer
+  les événements » dans le salon) peuvent **annuler** la sortie (les inscrits sont prévenus sur Discord) ou
+  **retirer un inscrit**. Tout passe par le bot : le message de la sortie est mis à jour dans le salon, comme après
+  un clic sur ses boutons ; rappel en MP et salon vocal fonctionnent pareil. Ce qui est fait sur Discord apparaît
+  sur le site au rechargement de la page. Une sortie créée depuis le site est postée dans le salon de
+  `EVENT_CHANNEL_IDS` (au choix s'il y en a plusieurs), sinon dans celui de la dernière sortie ;
+- **Mes persos** (connecté) : tes persos, avec leur rôle préféré modifiable et un bouton pour les supprimer, et
+  l'ajout d'un perso. Dès 3 lettres tapées, le nom est **vérifié dans l'armurerie** pendant la saisie (classe, race
+  et niveau affichés, rôles proposés selon la classe) ; le bouton « Ajouter » ne s'active que pour un perso trouvé.
+  L'armurerie ne sait pas chercher un nom partiel : c'est le nom exact (prénom et nom) qui est vérifié ;
 - **Persos** : tableau de tous les persos (classe, race, rôles, métiers et niveaux), recherche et filtres par classe,
   rôle ou métier ;
 - **fiche d'un perso** : façon fiche du jeu, son **équipement** autour de son rendu en pied (icônes, infobulles,
@@ -296,9 +317,13 @@ membres du Discord (voir « Connexion avec Discord » plus bas) :
   persos du serveur du bon niveau, la vignette Blizzard et un lien vers la carte détaillée du guide Warcraft Tavern.
   Les fiches sont dans `wowplanner/dungeon_guides.py` (noms français officiels des boss quand Blizzard les donne).
 
-**Aucune info personnelle** : ni pseudo Discord, ni identifiant, ni BattleTag, et rien qui relie deux persos au même
-joueur. Le site lit la même base que le bot (dans le même conteneur), donc il est toujours à jour. Il montre les persos
-du serveur `GUILD_ID` (ou du seul serveur connu du bot).
+**Infos personnelles** : ni identifiant Discord, ni BattleTag. Seule la page Sorties montre le pseudo des inscrits
+et de l'organisateur, comme le message de la sortie sur Discord. Le site lit la même base que le bot (dans le même
+conteneur), donc il est toujours à jour. Il montre les persos du serveur `GUILD_ID` (ou du seul serveur connu du bot).
+
+**Sécurité des formulaires** : chaque action (inscription, création, suppression…) porte un jeton propre au joueur
+connecté, et le site refuse les envois venus d'un autre site. Les actions demandent la connexion Discord : sans
+`DISCORD_CLIENT_SECRET`, le site reste en lecture seule.
 
 ### Connexion avec Discord
 
@@ -306,7 +331,7 @@ Avec `DISCORD_CLIENT_SECRET` renseigné, le site est **réservé aux membres du 
 
 | Pages | Sans connexion | Connecté (membre du serveur) |
 |---|---|---|
-| Persos, fiches persos, Métiers, recettes | page « Réservé aux membres » avec un bouton de connexion | ✅ |
+| Sorties, Mes persos, Persos, fiches persos, Métiers, recettes | page « Réservé aux membres » avec un bouton de connexion | ✅ |
 | Donjons et fiches des donjons | ✅ sans les persos du serveur | ✅ avec les persos dans chaque tranche |
 
 - **Connexion** : bouton « Se connecter avec Discord ». Discord demande d'autoriser le site à voir le pseudo, et rien d'autre (droit `identify` : ni serveurs, ni messages, ni e-mail). Le bot vérifie ensuite que la personne est membre du serveur. Pas besoin de l'intent « membres » : c'est une simple requête à l'API.
@@ -361,7 +386,9 @@ wowplanner/
   orders.py           règles des commandes (recettes commandables, droits, composants)
   recipes.py          recettes : recherche, regroupement, composants dépliés
   web.py              site web (persos, métiers, recettes, donjons)
+  webmember.py        site : sorties et « Mes persos » (formulaires, vérification dans l'armurerie)
   webauth.py          connexion au site avec Discord (OAuth2, cookies signés)
+  cogs/webbridge.py   actions du site exécutées par le bot (sorties, persos)
   cogs/schedule.py    rappels en MP et salons vocaux temporaires
 tests/test_core.py
 ```

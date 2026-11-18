@@ -55,6 +55,7 @@ class WowPlannerBot(commands.Bot):
         await self.load_extension("wowplanner.cogs.sync")
         await self.load_extension("wowplanner.cogs.commands")  # après events et instances, qu'il appelle
         await self.load_extension("wowplanner.cogs.schedule")
+        await self.load_extension("wowplanner.cogs.webbridge")  # actions du site (sorties, persos)
 
         if self.config.web_port:
             if self._setup_web_auth():

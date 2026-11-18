@@ -151,6 +151,8 @@ class Event:
     reminder_sent: bool = False
     # None : pas encore créé · 0 : supprimé ou création impossible · >0 : ID du salon vocal
     voice_channel_id: int | None = None
+    # Pseudo de l'organisateur (pour le site, qui n'affiche pas les mentions Discord).
+    creator_name: str | None = None
 
     @property
     def size(self) -> int:
@@ -189,6 +191,13 @@ class Character:
     # Caractéristiques et objets portés, voir gear.parse_stats / gear.parse_equipment.
     stats: dict | None = None
     equipment: list | None = None
+    # Où le perso a été déclaré : « web » (vérifié dans l'armurerie à l'ajout), sinon Discord.
+    source: str | None = None
+    created_at: int | None = None
+
+
+# Persos ajoutés depuis le site (les autres viennent de Discord).
+SOURCE_WEB = "web"
 
 
 # Version du format des détails de recette ; une recette plus ancienne est redemandée à Blizzard.
@@ -273,6 +282,9 @@ class Database:
             self.conn.execute("ALTER TABLE events ADD COLUMN reminder_sent INTEGER NOT NULL DEFAULT 0")
         if "voice_channel_id" not in columns:
             self.conn.execute("ALTER TABLE events ADD COLUMN voice_channel_id INTEGER")
+        # v1.13 → v1.14 : sorties créées depuis le site.
+        if "creator_name" not in columns:
+            self.conn.execute("ALTER TABLE events ADD COLUMN creator_name TEXT")
         # v1.3 → v1.4 : synchro des métiers depuis l'armurerie.
         columns = {row["name"] for row in self.conn.execute("PRAGMA table_info(characters)")}
         if "armory_synced_at" not in columns:
@@ -280,6 +292,7 @@ class Database:
         # v1.5 → v1.6 : niveau et images du perso.
         for column in (
             "level INTEGER", "avatar_url TEXT", "render_url TEXT", "talents TEXT", "stats TEXT", "equipment TEXT",
+            "source TEXT",  # v1.13 → v1.14 : persos ajoutés depuis le site
         ):
             if column.split()[0] not in columns:
                 self.conn.execute(f"ALTER TABLE characters ADD COLUMN {column}")
@@ -319,20 +332,29 @@ class Database:
             created_at=row["created_at"],
             reminder_sent=bool(row["reminder_sent"]),
             voice_channel_id=row["voice_channel_id"],
+            creator_name=row["creator_name"],
         )
 
     def create_event(self, ev: Event) -> None:
         with self.conn:
             self.conn.execute(
                 """INSERT INTO events (message_id, guild_id, channel_id, creator_id, instance, kind, levels,
-                                       starts_at, tank_cap, heal_cap, dps_cap, description, cancelled, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                       starts_at, tank_cap, heal_cap, dps_cap, description, cancelled, created_at,
+                                       creator_name)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     ev.message_id, ev.guild_id, ev.channel_id, ev.creator_id, ev.instance, ev.kind, ev.levels,
                     ev.starts_at, ev.caps["tank"], ev.caps["heal"], ev.caps["dps"], ev.description,
-                    int(ev.cancelled), ev.created_at,
+                    int(ev.cancelled), ev.created_at, ev.creator_name,
                 ),
             )
+
+    def last_event_channel(self, guild_id: int) -> int | None:
+        """Salon de la dernière sortie créée sur le serveur (pour le site, sans EVENT_CHANNEL_IDS)."""
+        row = self.conn.execute(
+            "SELECT channel_id FROM events WHERE guild_id = ? ORDER BY created_at DESC LIMIT 1", (guild_id,)
+        ).fetchone()
+        return row["channel_id"] if row else None
 
     def get_event(self, message_id: int) -> Event | None:
         row = self.conn.execute("SELECT * FROM events WHERE message_id = ?", (message_id,)).fetchone()
@@ -442,6 +464,7 @@ class Database:
                 talents=json.loads(r["talents"]) if r["talents"] else None,
                 stats=json.loads(r["stats"]) if r["stats"] else None,
                 equipment=json.loads(r["equipment"]) if r["equipment"] else None,
+                source=r["source"], created_at=r["created_at"],
             )
             for r in rows
         ]
@@ -456,16 +479,22 @@ class Database:
         return characters
 
     def add_character(
-        self, user_id: int, name: str, wow_class: str, race: str, preferred_role: str | None = None
+        self, user_id: int, name: str, wow_class: str, race: str, preferred_role: str | None = None,
+        source: str | None = None,
     ) -> Character:
         """Lève sqlite3.IntegrityError si le joueur a déjà un perso de ce nom."""
+        now = int(time.time())
         with self.conn:
             cur = self.conn.execute(
-                """INSERT INTO characters (user_id, name, wow_class, race, preferred_role, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
-                (user_id, name, wow_class, race, preferred_role, int(time.time())),
+                """INSERT INTO characters (user_id, name, wow_class, race, preferred_role, created_at, source)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (user_id, name, wow_class, race, preferred_role, now, source),
             )
-        return Character(cur.lastrowid, user_id, name, wow_class, race, preferred_role)
+        return Character(cur.lastrowid, user_id, name, wow_class, race, preferred_role, source=source, created_at=now)
+
+    def set_preferred_role(self, character_id: int, role: str | None) -> None:
+        with self.conn:
+            self.conn.execute("UPDATE characters SET preferred_role = ? WHERE id = ?", (role, character_id))
 
     def get_characters(self, user_id: int) -> list[Character]:
         rows = self.conn.execute(

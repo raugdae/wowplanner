@@ -1,14 +1,15 @@
-"""Petit site web en lecture seule : persos, métiers, recettes et donjons du serveur.
+"""Site web du serveur : persos, métiers, recettes et donjons ; sorties et « Mes persos » dans webmember.py.
 
-Aucune info personnelle : ni pseudo Discord, ni identifiant Discord, ni BattleTag, et rien qui
-permette de relier deux persos au même joueur. Seuls les persos (nom, classe, race, rôles),
-leurs métiers et leurs recettes sont affichés.
+Pages de consultation : aucun identifiant Discord ni BattleTag. Les persos (nom, classe, race, rôles), leurs
+métiers et leurs recettes sont affichés ; seule la page Sorties montre le pseudo des inscrits, comme le
+message de la sortie sur Discord.
 
 Avec DISCORD_CLIENT_SECRET, le site est réservé aux membres du serveur Discord (connexion Discord,
-voir webauth.py), sauf les pages Donjons, publiques mais sans les persos du serveur.
+voir webauth.py), sauf les pages Donjons, publiques mais sans les persos du serveur. Les membres connectés
+peuvent alors créer des sorties, s'y inscrire et gérer leurs persos (actions exécutées par le bot).
 
-Servi par aiohttp dans le même processus que le bot (même base SQLite, lue seulement). Activé
-par WEB_PORT ; derrière Traefik en production (voir docker-compose.traefik.yml).
+Servi par aiohttp dans le même processus que le bot (même base SQLite). Activé par WEB_PORT ; derrière
+Traefik en production (voir docker-compose.traefik.yml).
 """
 from __future__ import annotations
 
@@ -446,6 +447,53 @@ tr[data-href] { cursor:pointer; }
   .dtile { width:100%; height:120px; }
   .dtile.none { display:none; }
 }
+/* Sorties et « Mes persos » (webmember.py). */
+.flash { border:1px solid var(--line); border-left:4px solid #5fd38d; background:var(--panel); border-radius:10px;
+  padding:10px 14px; margin:0 0 16px; }
+.flash.err { border-left-color:#ff6b6b; }
+.ev { margin:0 0 14px; padding:12px 16px 14px; }
+.ev.mine { border-color:var(--accent); }
+.ev-head { display:flex; gap:12px; align-items:flex-start; justify-content:space-between; flex-wrap:wrap; }
+.ev-head h3 { margin:0; font-size:19px; }
+.ev-head .muted { font-size:13px; }
+.ev-when { color:var(--accent); font-weight:600; }
+.ev-desc { margin:8px 0 0; padding:6px 10px; border-left:3px solid var(--line); color:var(--muted); white-space:pre-line; }
+.ev-roles { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:10px; margin:12px 0 0; }
+.ev-role { background:var(--panel2); border:1px solid var(--line); border-radius:8px; padding:6px 10px; }
+.ev-role h4 { margin:0 0 4px; font-size:14px; display:flex; gap:6px; }
+.ev-role h4 span { margin-left:auto; color:var(--muted); font-weight:400; }
+.ev-role.full h4 span { color:#5fd38d; }
+.ev-role ol { margin:0; padding:0 0 0 22px; }
+.ev-role li { padding:1px 0; }
+.ev-role li.me { font-weight:700; }
+.ev-role li.free { color:var(--muted); list-style:none; margin-left:-22px; }
+.ev-role li small { color:var(--muted); font-weight:400; }
+.ev-actions { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin:12px 0 0; }
+.ev-actions form { display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin:0; }
+.inline { display:inline; margin:0; }
+.act { background:var(--panel); color:var(--text); border:1px solid var(--line); border-radius:8px; padding:6px 10px;
+  font:inherit; cursor:pointer; }
+.act:hover:not(:disabled) { border-color:var(--accent); }
+.act.primary { border-color:var(--accent); color:var(--accent); font-weight:600; }
+.act.primary:hover:not(:disabled) { background:var(--accent); color:var(--bg); }
+.act.danger { border-color:#a94442; color:#ff8a8a; }
+.act.danger:hover:not(:disabled) { background:#a94442; color:#fff; }
+.act:disabled { opacity:.4; cursor:default; }
+.act.on { background:var(--accent); color:var(--bg); }
+.x { background:none; border:none; color:var(--muted); cursor:pointer; padding:0 4px; font:inherit; }
+.x:hover { color:#ff8a8a; }
+select.pick, .form input, .form select, .form textarea { background:var(--panel); color:var(--text);
+  border:1px solid var(--line); border-radius:8px; padding:7px 9px; font:inherit; }
+.form { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px 12px; align-items:end; }
+.form label { display:flex; flex-direction:column; gap:4px; font-size:13px; color:var(--muted); }
+.form .wide { grid-column:1 / -1; }
+.form textarea { min-height:60px; resize:vertical; }
+.form input:focus, .form select:focus, .form textarea:focus, select.pick:focus { border-color:var(--accent); outline:none; }
+.form .hint { font-size:12px; color:var(--muted); }
+.lookup { min-height:22px; font-size:14px; }
+.lookup.ok { color:#5fd38d; } .lookup.bad { color:#ff8a8a; } .lookup.wait { color:var(--muted); }
+.src-tag { font-size:11px; color:var(--muted); border:1px solid var(--line); border-radius:999px; padding:0 7px; }
+@media (max-width:600px) { .ev { padding:10px 12px; } }
 footer { color:var(--muted); font-size:12px; text-align:center; padding:24px; }
 @media (max-width:600px) { header .theme { margin-left:0; width:100%; } header select { width:100%; } }
 """
@@ -627,9 +675,13 @@ FOLD_BUTTONS = (
 
 
 def page(title: str, active: str, body: str, scripts: str = "") -> web.Response:
+    links = [("sorties", "/sorties", "Sorties"), ("persos", "/", "Persos"), ("metiers", "/metiers", "Métiers"),
+             ("donjons", "/donjons", "Donjons")]
+    viewer = _VIEWER.get()
+    if viewer is not None and viewer.user:
+        links.append(("mes-persos", "/mes-persos", "Mes persos"))
     nav = "".join(
-        f'<a href="{href}" class="{"active" if key == active else ""}">{label}</a>'
-        for key, href, label in (("persos", "/", "Persos"), ("metiers", "/metiers", "Métiers"), ("donjons", "/donjons", "Donjons"))
+        f'<a href="{href}" class="{"active" if key == active else ""}">{label}</a>' for key, href, label in links
     )
     themes = "".join(f'<option value="{k}">{esc(v)}</option>' for k, v in THEMES.items())
     document = f"""<!doctype html>
@@ -1088,6 +1140,11 @@ class WebSite:
         self._secret = b""
         self._is_member: Callable[[int], Awaitable[bool | None]] | None = None
         self._secure_cookies = True
+        # Actions des membres (sorties, persos), exécutées par le bot : voir cogs/webbridge.py et webmember.py.
+        self.actions: Any = None
+
+    def enable_actions(self, actions: Any) -> None:
+        self.actions = actions
 
     def enable_auth(
         self,
@@ -1586,7 +1643,10 @@ Forever : la carte détaillée est sur le guide.</p>
     # ------------------------------------------------------------ serveur
 
     def app(self) -> web.Application:
+        from .webmember import MemberPages  # importe ce module : chargé ici pour éviter l'import circulaire
+
         app = web.Application(middlewares=[self._auth_middleware])
+        MemberPages(self).register(app.router)
         app.router.add_get("/auth/login", self.auth_login)
         app.router.add_get("/auth/callback", self.auth_callback)
         app.router.add_get("/auth/logout", self.auth_logout)

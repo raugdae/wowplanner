@@ -43,6 +43,11 @@ NOT_FOUND_HELP = (
     "(parfois avec quelques heures de retard). Vérifie aussi l'orthographe du nom (prénom et nom)."
 )
 FIX_HINT = "Si c'est une erreur, supprime le perso et recrée-le."
+# Persos ajoutés depuis Discord et toujours introuvables : retirés par la synchro de nuit (voir cogs/sync.py).
+PURGE_GRACE_DAYS = 2
+PURGE_WARNING = (
+    f"S'il n'est toujours pas dans l'armurerie dans {PURGE_GRACE_DAYS} jours, il sera retiré automatiquement."
+)
 
 
 @dataclass
@@ -57,7 +62,7 @@ class SyncResult:
         if self.found is None:
             return "🔎 Armurerie injoignable pour l'instant, je réessaierai plus tard."
         if not self.found:
-            return f"🔎 Pas (encore) trouvé dans l'armurerie. {NOT_FOUND_HELP}"
+            return f"🔎 Pas (encore) trouvé dans l'armurerie. {NOT_FOUND_HELP}\n⚠️ {PURGE_WARNING}"
         sheet = self.sheet
         assert sheet is not None
         text = f"🔎 Trouvé dans l'armurerie : niveau {sheet.level}"
@@ -73,6 +78,8 @@ class FullSyncReport:
     found: int = 0
     not_found: int = 0
     unreachable: int = 0
+    # Persos que l'armurerie dit ne pas connaître (404), pour le nettoyage de nuit.
+    missing: list[Character] = field(default_factory=list)
 
 
 class ArmoryCog(commands.Cog):
@@ -186,8 +193,24 @@ class ArmoryCog(commands.Cog):
                 report.found += 1
             else:
                 report.not_found += 1
+                report.missing.append(character)
             await asyncio.sleep(SYNC_PAUSE_SECONDS)
         return report
+
+    async def lookup(self, name: str) -> tuple[ArmorySheet | None, bool | None]:
+        """Fiche seule (une requête, sans cache) : le perso existe-t-il ? Pour la vérification au fil de la frappe
+        sur le site. (fiche, trouvé ?) — trouvé vaut None si l'armurerie est désactivée ou injoignable."""
+        if self.client is None:
+            return None, None
+        try:
+            return ArmorySheet(await self.client.character(name)), True
+        except ArmoryError as exc:
+            if exc.status == 404:
+                return None, False
+            log.warning("Armurerie : %s", exc)
+        except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+            log.warning("Armurerie injoignable : %s", exc)
+        return None, None
 
     async def fetch_recipe_details(self, recipe_ids: list[int]) -> int:
         """Récupère nom français, composants et objet fabriqué (stats, effets) des recettes, une seule fois par

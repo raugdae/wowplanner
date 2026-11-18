@@ -196,47 +196,121 @@ class EventsCog(commands.Cog):
 
         missing = self._missing_perms(channel)
         if missing:
-            await interaction.response.send_message(
-                "Il me manque des permissions dans ce salon :\n" + "\n".join(f"• {m}" for m in missing),
-                ephemeral=True,
-            )
+            await interaction.response.send_message(self.missing_perms_text(missing), ephemeral=True)
             return
 
-        inst = self.instances.get(instance)
         try:
-            caps = resolve_composition(joueurs, inst.size if inst else None, tanks, heals, dps)
-            starts = parse_when(date, heure, self.bot.config.timezone)
+            ev = self.prepare_event(
+                interaction.guild.id, channel.id, interaction.user, instance, date, heure, joueurs, tanks, heals, dps,
+                description,
+            )
         except ValueError as exc:
             await interaction.response.send_message(f"⚠️ {exc}", ephemeral=True)
             return
 
         await interaction.response.defer(ephemeral=True, thinking=True)
+        try:
+            message = await self.publish_event(ev, channel)
+        except discord.HTTPException as exc:
+            log.exception("Création de sortie impossible")
+            await interaction.followup.send(f"⚠️ Impossible de créer la sortie : {exc}", ephemeral=True)
+            return
+        await interaction.followup.send(f"✅ Sortie créée : {message.jump_url}{self.size_warning(ev)}", ephemeral=True)
 
-        ev = Event(
+    # Partagé avec le site (cogs/webbridge.py).
+
+    @staticmethod
+    def missing_perms_text(missing: list[str]) -> str:
+        return "Il me manque des permissions dans ce salon :\n" + "\n".join(f"• {m}" for m in missing)
+
+    def prepare_event(
+        self,
+        guild_id: int,
+        channel_id: int,
+        creator: discord.abc.User,
+        instance: str,
+        date: str,
+        heure: str,
+        joueurs: int | None,
+        tanks: int | None,
+        heals: int | None,
+        dps: int | None,
+        description: str | None,
+    ) -> Event:
+        """Sortie prête à publier. Lève ValueError (message pour le joueur) si la saisie ne va pas."""
+        inst = self.instances.get(instance)
+        caps = resolve_composition(joueurs, inst.size if inst else None, tanks, heals, dps)
+        starts = parse_when(date, heure, self.bot.config.timezone)
+        return Event(
             message_id=0,
-            guild_id=interaction.guild.id,
-            channel_id=channel.id,
-            creator_id=interaction.user.id,
+            guild_id=guild_id,
+            channel_id=channel_id,
+            creator_id=creator.id,
             instance=inst.name if inst else instance.strip(),
             kind=inst.kind if inst else "custom",
             levels=inst.levels if inst else None,
             starts_at=int(starts.timestamp()),
             caps=caps,
             description=description,
+            creator_name=getattr(creator, "display_name", None),
         )
-        try:
-            message = await channel.send(embed=build_event_embed(ev, [], self.emojis), view=self._view_for(ev, []))
-            ev.message_id = message.id
-            self.db.create_event(ev)
-        except discord.HTTPException as exc:
-            log.exception("Création de sortie impossible")
-            await interaction.followup.send(f"⚠️ Impossible de créer la sortie : {exc}", ephemeral=True)
-            return
 
-        warn = ""
-        if inst and sum(caps.values()) > inst.size:
-            warn = f"\n⚠️ Attention : {inst.name} est limité à {inst.size} joueurs."
-        await interaction.followup.send(f"✅ Sortie créée : {message.jump_url}{warn}", ephemeral=True)
+    async def publish_event(self, ev: Event, channel: Messageable) -> discord.Message:
+        """Poste le message de la sortie et l'enregistre. Lève discord.HTTPException."""
+        message = await channel.send(embed=build_event_embed(ev, [], self.emojis), view=self._view_for(ev, []))
+        ev.message_id = message.id
+        self.db.create_event(ev)
+        return message
+
+    def size_warning(self, ev: Event) -> str:
+        inst = self.instances.get(ev.instance)
+        if inst and ev.size > inst.size:
+            return f"\n⚠️ Attention : {inst.name} est limité à {inst.size} joueurs."
+        return ""
+
+    def channel_problem(self, channel: object) -> str | None:
+        """Raison pour laquelle on ne peut pas poster de sortie dans ce salon (None si tout va bien)."""
+        if not isinstance(channel, Messageable) or getattr(channel, "guild", None) is None:
+            return "Ce salon ne peut pas recevoir de sorties."
+        allowed = self.bot.config.event_channel_ids
+        if allowed and channel.id not in allowed:
+            return "Les sorties ne se créent pas dans ce salon."
+        missing = self._missing_perms(channel)
+        return self.missing_perms_text(missing) if missing else None
+
+    async def can_manage(self, user_id: int, ev: Event) -> bool:
+        """Organisateur, ou membre qui peut gérer les messages / événements du salon de la sortie."""
+        if user_id == ev.creator_id:
+            return True
+        try:
+            channel = await self._channel(ev.channel_id)
+            guild = channel.guild
+            member = guild.get_member(user_id) or await guild.fetch_member(user_id)
+        except (discord.HTTPException, AttributeError):
+            return False
+        perms = channel.permissions_for(member)
+        return perms.manage_messages or perms.manage_events
+
+    async def leave(self, message_id: int, user_id: int) -> Event | None:
+        """Désinscrit le joueur et met le message à jour. Renvoie la sortie, ou None s'il n'était pas inscrit."""
+        async with self._locks[message_id]:
+            ev = self.db.get_event(message_id)
+            signed = ev is not None and any(s.user_id == user_id for s in self.db.get_signups(message_id))
+            if signed:
+                self.db.delete_signup(message_id, user_id)
+        if not signed:
+            return None
+        await self.refresh_event(message_id)
+        return ev
+
+    async def remove_signup(self, ev: Event, user_id: int) -> bool:
+        """Retire un inscrit d'une sortie (organisateur ou modo). False s'il n'y était pas."""
+        async with self._locks[ev.message_id]:
+            if not any(s.user_id == user_id for s in self.db.get_signups(ev.message_id)):
+                return False
+            self.db.delete_signup(ev.message_id, user_id)
+            await self._refresh(ev)
+        return True
 
     def instance_choices(self, current: str) -> list[app_commands.Choice[str]]:
         return [
@@ -287,17 +361,13 @@ class EventsCog(commands.Cog):
         ids = re.findall(r"\d{15,20}", joueur)
         user_id = int(ids[-1]) if ids else 0
         await interaction.response.defer(ephemeral=True)
-        async with self._locks[ev.message_id]:
-            signup = next((s for s in self.db.get_signups(ev.message_id) if s.user_id == user_id), None)
-            if signup is None:
-                await interaction.followup.send(
-                    f"Ce joueur n'est pas inscrit à **{ev.instance}** du <t:{ev.starts_at}:F>. "
-                    "Choisis-le dans la liste proposée (elle ne montre que les inscrits de cette sortie).",
-                    ephemeral=True,
-                )
-                return
-            self.db.delete_signup(ev.message_id, user_id)
-            await self._refresh(ev)
+        if not await self.remove_signup(ev, user_id):
+            await interaction.followup.send(
+                f"Ce joueur n'est pas inscrit à **{ev.instance}** du <t:{ev.starts_at}:F>. "
+                "Choisis-le dans la liste proposée (elle ne montre que les inscrits de cette sortie).",
+                ephemeral=True,
+            )
+            return
         await interaction.followup.send(
             f"<@{user_id}> a été désinscrit de **{ev.instance}** du <t:{ev.starts_at}:F> "
             "(ses autres sorties ne changent pas).",
@@ -435,6 +505,7 @@ class EventsCog(commands.Cog):
         if not signed:
             await interaction.response.send_message("Tu n'es pas inscrit à cette sortie.", ephemeral=True)
             return
+        # Réponse d'abord (moins de 3 s pour Discord), mise à jour du message ensuite.
         await interaction.response.send_message(f"Tu es désinscrit de **{ev.instance}**.", ephemeral=True)
         await self.refresh_event(message_id)
 
