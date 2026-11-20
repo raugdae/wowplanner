@@ -5,6 +5,7 @@ Calculs dans profit.py ; prix et catalogue des objets dans la base locale (cogs/
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
 from aiohttp import web
 
@@ -17,7 +18,7 @@ from .profit import (
 )
 from .recipes import normalize
 from .web import _VIEWER, esc
-from .webauction import COIN_HEADS, LIST_SCRIPT, AuctionPages, item_icon, item_name, money_cells, number
+from .webauction import COIN_HEADS, LIST_SCRIPT, MONEY_JS, AuctionPages, item_icon, item_name, money_cells, number
 
 # Au-delà, les recettes les moins rentables sont repliées.
 SHOWN_RECIPES = 40
@@ -127,31 +128,78 @@ Calculer avec ton stock</a>.</p>
 
     # ------------------------------------------------------------ calculatrice
 
-    def _stock_candidates(self, character: Character, recipes: list) -> list[tuple[str, list]]:
-        """Objets que le joueur peut avoir en stock, par groupe : ressources qu'il récolte (à son niveau), puis
-        composants de ses recettes (sauf ceux vendus par les marchands, achetés au besoin)."""
+    def _stock_candidates(self, character: Character, recipes: list) -> list[tuple[str, list[tuple[Any, int | None]]]]:
+        """Objets que le joueur peut avoir en stock, par groupe, avec le niveau de récolte s'il est connu :
+        ressources qu'il récolte (à son niveau), puis composants de ses recettes (sauf ceux vendus par les
+        marchands, achetés au besoin). Chaque groupe est trié par nom."""
         db = self.site.db
-        groups, seen = [], set()
+        groups: list[tuple[str, dict[int, int | None]]] = []
+        seen: set[int] = set()
         for key, skill in sorted(character.professions.items()):
             if key not in GATHERING:
                 continue
             subclass, skills, label = GATHERING[key]
-            rows = [r for r, _, ok in gathering_rows(db.ah_tradeskill_on_sale(subclass), skills, skill) if ok]
-            ids = [r["item_id"] for r in rows if r["item_id"] not in seen]
-            seen.update(ids)
-            if ids:
-                groups.append((f"{profession_label(key)} : {label.lower()}", ids))
-        reagents = sorted({
-            item_id for r in recipes for _, _, item_id in r.reagents or []
+            levels = {
+                r["item_id"]: required
+                for r, required, ok in gathering_rows(db.ah_tradeskill_on_sale(subclass), skills, skill)
+                if ok and r["item_id"] not in seen
+            }
+            seen.update(levels)
+            if levels:
+                groups.append((f"{profession_label(key)} : {label.lower()}", levels))
+        reagents = {
+            item_id: None for r in recipes for _, _, item_id in r.reagents or []
             if isinstance(item_id, int) and item_id not in VENDOR_REAGENTS and item_id not in seen
-        })
+        }
         if reagents:
             groups.append(("Composants de tes recettes", reagents))
-        items = db.ah_items_map({i for _, ids in groups for i in ids})
+        items = db.ah_items_map({i for _, levels in groups for i in levels})
         return [
-            (label, sorted((items[i] for i in ids if i in items), key=lambda row: normalize(row["name"])))
-            for label, ids in groups
+            (label, sorted(((items[i], lvl) for i, lvl in levels.items() if i in items),
+                           key=lambda pair: normalize(pair[0]["name"])))
+            for label, levels in groups
         ]
+
+    def _stock_table(self, character: Character, groups: list, inventory: dict[int, int]) -> str:
+        """Saisie du stock : un tableau par ligne d'objet, groupé par catégorie, avec la valeur brute calculée au
+        fil de la saisie (CALC_SCRIPT) ; les champs vides ne partent pas dans l'adresse de la page."""
+        lines, total = [], 0
+        for label, rows in groups:
+            lines.append(f'<tr class="grp"><th colspan="9">{esc(label)}</th></tr>')
+            for row, level in rows:
+                unit = raw_unit(row)
+                net = int(row["min_price"] * (1 - AH_CUT)) if row["min_price"] else None
+                vendor = row["sell_price"] or 0
+                best = "—" if not unit else "HdV" if (net or 0) >= vendor else "marchand"
+                qty = inventory.get(row["id"], 0)
+                total += unit * qty
+                value = esc(money_text(unit * qty)) if qty and unit else "—"
+                lines.append(
+                    f'<tr class="stock-row" data-unit="{unit}" data-name="{esc(normalize(row["name"]))}">'
+                    f'<td><a class="ah-name" href="/hdv/objet/{row["id"]}">{item_icon(row)}<span>{item_name(row)}'
+                    f'</span></a></td><td class="num hide-sm">{level if level is not None else "—"}</td>'
+                    f"{money_cells(net, row['id'] if net else None)}"
+                    f'<td class="num muted hide-sm">{esc(money_text(vendor)) if vendor else "—"}</td>'
+                    f'<td class="best">{best}</td>'
+                    f'<td class="qty"><input type="number" name="q{row["id"]}" min="0" max="{MAX_STOCK}" '
+                    f'inputmode="numeric" value="{qty or ""}" placeholder="0" aria-label="Stock : {esc(row["name"])}"></td>'
+                    f'<td class="num value">{value}</td></tr>'
+                )
+        return f"""<form method="get" action="/calculatrice" class="calc-form" data-perso="{character.id}">
+<input type="hidden" name="perso" value="{character.id}">
+<div class="filters calc-tools"><input type="search" class="calc-search" placeholder="Chercher une ressource…"
+autocomplete="off" aria-label="Chercher une ressource"><label class="fav-filter"><input type="checkbox"
+class="calc-mine"> Seulement ce que j'ai</label><button class="act primary">🧮 Calculer</button>
+<button type="button" class="act calc-clear">Vider</button></div>
+<div class="table-wrap ah-scroll"><table class="ah-table calc-table"><thead>
+<tr><th rowspan="2">Ressource</th><th rowspan="2" class="num hide-sm">Niv.</th>
+<th colspan="3" class="group">Prix HdV (net)</th><th rowspan="2" class="num hide-sm">Marchand</th>
+<th rowspan="2">Meilleure vente</th><th rowspan="2">Ton stock</th><th rowspan="2" class="num">Valeur brute</th></tr>
+<tr>{COIN_HEADS}</tr></thead>
+<tbody>{"".join(lines)}</tbody>
+<tfoot><tr><td colspan="8" class="num">Total si tout est vendu brut :</td>
+<td class="num calc-total">{esc(money_text(total)) if total else "—"}</td></tr></tfoot></table></div>
+</form>"""
 
     async def calculator_page(self, request: web.Request) -> web.Response:
         title = "Calculatrice HdV"
@@ -169,27 +217,13 @@ Calculer avec ton stock</a>.</p>
             if key.startswith("q") and key[1:].isdigit() and value.strip().isdigit():
                 inventory[int(key[1:])] = min(int(value), MAX_STOCK)
 
-        inputs = []
-        for label, rows in groups:
-            cells = "".join(
-                f'<label class="stock-item">{item_icon(row)}<span>{item_name(row)}'
-                f'<small>{esc(money_text(raw_unit(row))) if raw_unit(row) else "prix inconnu"} l\'unité</small></span>'
-                f'<input type="number" name="q{row["id"]}" min="0" max="{MAX_STOCK}" inputmode="numeric" '
-                f'value="{inventory.get(row["id"], "")}" placeholder="0"></label>'
-                for row in rows
-            )
-            inputs.append(f'<h3>{esc(label)}</h3><div class="stock-grid">{cells}</div>')
-        if not inputs:
+        if not any(rows for _, rows in groups):
             stock_form = (
                 '<p class="empty">Rien à saisir : ce perso ne récolte pas de ressource en vente à l\'HdV et ses recettes '
                 "n'utilisent pas de composant de l'HdV.</p>"
             )
         else:
-            stock_form = f"""<form method="get" action="/calculatrice" class="calc-form" data-perso="{character.id}">
-<input type="hidden" name="perso" value="{character.id}">
-{"".join(inputs)}
-<div class="calc-actions"><button class="act primary">🧮 Calculer</button>
-<button type="button" class="act calc-clear">Vider</button></div></form>"""
+            stock_form = self._stock_table(character, groups, inventory)
 
         result = ""
         if inventory:
@@ -371,30 +405,61 @@ document.querySelectorAll("button.show-more").forEach(b => b.addEventListener("c
 </script>
 """
 
-# Calculatrice : le stock saisi est gardé dans le navigateur (par perso), et seuls les champs remplis partent dans
-# l'adresse de la page.
+# Calculatrice : valeur brute de chaque ligne et total au fil de la saisie, recherche, « seulement ce que j'ai » ;
+# le stock est gardé dans le navigateur (par perso) et seuls les champs remplis partent dans l'adresse de la page.
 CALC_SCRIPT = """
 <script>
 (() => {
   const form = document.querySelector("form.calc-form");
   if (!form) return;
+""" + MONEY_JS + """
   const key = "wp-calc-" + form.dataset.perso;
-  const inputs = [...form.querySelectorAll("input[type=number]")];
+  const rows = [...form.querySelectorAll("tr.stock-row")];
+  const inputs = rows.map(r => r.querySelector("input[type=number]"));
+  const search = form.querySelector(".calc-search"), mine = form.querySelector(".calc-mine");
+  const total = form.querySelector(".calc-total");
+  const norm = s => s.normalize("NFD").replace(/[\\u0300-\\u036f]/g, "").toLowerCase();
+  function refresh() {
+    let sum = 0;
+    rows.forEach((row, i) => {
+      const qty = Math.max(0, parseInt(inputs[i].value, 10) || 0), unit = +row.dataset.unit;
+      sum += qty * unit;
+      row.querySelector(".value").textContent = qty && unit ? moneyText(qty * unit) : "—";
+    });
+    total.textContent = sum ? moneyText(sum) : "—";
+  }
+  function filter() {
+    const q = norm(search.value.trim());
+    rows.forEach((row, i) => {
+      row.hidden = (q && !row.dataset.name.includes(q)) || (mine.checked && !(parseInt(inputs[i].value, 10) > 0));
+    });
+    form.querySelectorAll("tr.grp").forEach(head => {
+      let next = head.nextElementSibling, visible = false;
+      while (next && !next.classList.contains("grp")) { if (!next.hidden) visible = true; next = next.nextElementSibling; }
+      head.hidden = !visible;
+    });
+  }
   if (!inputs.some(i => i.value)) {
     try {
       const saved = JSON.parse(localStorage.getItem(key) || "{}");
       inputs.forEach(i => { if (saved[i.name]) i.value = saved[i.name]; });
     } catch (e) {}
   }
+  inputs.forEach(i => i.addEventListener("input", () => { refresh(); if (mine.checked) filter(); }));
+  search.addEventListener("input", filter);
+  mine.addEventListener("change", filter);
   form.addEventListener("submit", () => {
     const data = {};
     inputs.forEach(i => { if (+i.value > 0) data[i.name] = i.value; else i.disabled = true; });
+    search.disabled = true;
     try { localStorage.setItem(key, JSON.stringify(data)); } catch (e) {}
   });
   form.querySelector(".calc-clear").addEventListener("click", () => {
     inputs.forEach(i => { i.value = ""; });
     try { localStorage.removeItem(key); } catch (e) {}
+    refresh(); filter();
   });
+  refresh();
 })();
 </script>
 """

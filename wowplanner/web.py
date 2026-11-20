@@ -539,15 +539,17 @@ tr[data-href] { cursor:pointer; }
 .ah-table details.parts summary { color:var(--muted); cursor:pointer; }
 .ah-table details.parts ul { margin:4px 0 0; padding-left:18px; }
 /* Calculatrice HdV (webprofit.py). */
-.stock-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(250px,1fr)); gap:6px 10px; }
-.stock-item { display:flex; align-items:center; gap:8px; background:var(--panel); border:1px solid var(--line);
-  border-radius:8px; padding:5px 8px; }
-.stock-item > span { flex:1; min-width:0; }
-.stock-item small { display:block; color:var(--muted); font-size:12px; }
-.stock-item input { width:84px; flex:none; background:var(--bg); color:var(--text); border:1px solid var(--line);
+.calc-tools { align-items:center; }
+.calc-table tr.grp th { background:var(--panel); color:var(--accent); text-transform:uppercase; letter-spacing:.05em;
+  font-size:12px; padding-top:12px; }
+.calc-table td.best { color:var(--muted); font-size:13px; white-space:nowrap; }
+.calc-table td.qty input { width:84px; background:var(--bg); color:var(--text); border:1px solid var(--line);
   border-radius:6px; padding:5px 6px; font:inherit; text-align:right; }
-.stock-item input:focus { border-color:var(--accent); outline:none; }
-.calc-actions { display:flex; gap:8px; margin:14px 0; }
+.calc-table td.qty input:focus { border-color:var(--accent); outline:none; }
+.calc-table td.value { white-space:nowrap; font-variant-numeric:tabular-nums; }
+.calc-table tfoot td { position:sticky; bottom:0; background:var(--panel2); font-weight:700;
+  box-shadow:inset 0 1px 0 var(--line); }
+@media (max-width:700px) { .hide-sm { display:none; } .calc-table td.qty input { width:64px; } }
 .verdict { font-size:16px; margin:10px 0; } .verdict.gain b { color:#5fd38d; }
 .calc-result .facts .fact b .gain, .calc-result .facts .fact b .loss { font-weight:700; }
 .ah-table .gap { width:14px; min-width:14px; padding:0; }

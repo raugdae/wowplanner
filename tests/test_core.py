@@ -2241,3 +2241,7 @@ def test_profit_page(tmp_path):
     status, text = got["calc"]
     assert status == 200 and "Fabriquer rapporte <b>74 pa</b>" in text and "+ 74 pa" in text
     assert 'value="10"' in text and "Chaque recette seule" in text
+    # Saisie en tableau : prix net, meilleure vente, valeur brute de la ligne et total (10 × 190 pc).
+    assert 'data-unit="190"' in text and '<td class="best">HdV</td>' in text
+    assert '<td class="num value">19 pa</td>' in text and '<td class="num calc-total">19 pa</td>' in text
+    assert '<tr class="grp"><th colspan="9">Herboristerie : herbes</th></tr>' in text
