@@ -97,6 +97,12 @@ class WowPlannerBot(commands.Bot):
             secure_cookies=cfg.web_url.startswith("https://"),
         )
         log.info("Site réservé aux membres du serveur (connexion Discord, retour sur %s)", oauth.redirect_uri)
+        if cfg.guest_key and cfg.guest_password:
+            if len(cfg.guest_key) < 16:
+                log.warning("GUEST_KEY trop courte (16 caractères minimum) : accès invité désactivé")
+            else:
+                self.website.enable_guest(cfg.guest_key, cfg.guest_password)
+                log.info("Accès invité activé (lien caché /auth/invite/…, lecture seule)")
         return True
 
     async def is_guild_member(self, user_id: int) -> bool | None:

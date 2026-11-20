@@ -34,6 +34,9 @@ class Config:
     # L'identifiant est celui de l'application du bot, sauf si DISCORD_CLIENT_ID le remplace.
     discord_client_id: str = ""
     discord_client_secret: str = ""
+    # Accès invité sans Discord (lecture seule) : lien caché /auth/invite/<GUEST_KEY> + GUEST_PASSWORD.
+    guest_key: str = ""
+    guest_password: str = ""
     # Hôtel des ventes suivi (numéro Blizzard, voir README) ; 0 = page Hôtel des ventes désactivée.
     auction_house_id: int = 0
     auction_ruleset: int = 1
@@ -81,6 +84,8 @@ def load_config() -> Config:
         web_url=public_url(os.getenv("WEB_URL", ""), os.getenv("WEB_DOMAIN", "")),
         discord_client_id=os.getenv("DISCORD_CLIENT_ID", "").strip(),
         discord_client_secret=os.getenv("DISCORD_CLIENT_SECRET", "").strip(),
+        guest_key=os.getenv("GUEST_KEY", "").strip(),
+        guest_password=os.getenv("GUEST_PASSWORD", "").strip(),
         auction_house_id=int(os.getenv("AUCTION_HOUSE_ID", "0").strip() or 0),
         auction_ruleset=int(os.getenv("AUCTION_RULESET", "1").strip() or 1),
     )

@@ -418,6 +418,20 @@ Avec `DISCORD_CLIENT_SECRET` renseigné, le site est **réservé aux membres du 
 4. Vérifie que `WEB_DOMAIN` (avec Traefik) ou `WEB_URL` est renseigné : c'est l'adresse de retour envoyée à Discord.
 5. Lance `docker compose up -d`. Les logs doivent afficher « Site réservé aux membres du serveur ».
 
+**Accès invité (sans Discord)** : pour montrer le site à quelqu'un qui n'est pas sur le serveur. Il ouvre un lien
+caché et entre un mot de passe, puis consulte tout le site **en lecture seule** : il n'a pas de persos ni de
+menu d'administration, et tout envoi de formulaire est refusé. Dans `.env` :
+
+```
+GUEST_KEY=une-longue-chaine-au-hasard   # 16 caractères minimum, ex. : python -c "import secrets; print(secrets.token_urlsafe(24))"
+GUEST_PASSWORD=le-mot-de-passe
+```
+
+- Le lien à donner est `https://wow.ton-domaine.fr/auth/invite/<GUEST_KEY>`. Il n'apparaît nulle part sur le site, et une clé fausse renvoie une page introuvable (404).
+- Changer `GUEST_PASSWORD` (puis redémarrer) déconnecte les invités déjà connectés. Vider l'une des deux variables désactive l'accès.
+- Au-delà de 10 mots de passe faux en 15 minutes, les essais sont refusés pendant un moment.
+- L'accès invité n'existe qu'avec la connexion Discord activée : sans `DISCORD_CLIENT_SECRET`, le site est de toute façon ouvert.
+
 L'identifiant de l'application est repris automatiquement du bot (`DISCORD_CLIENT_ID` ne sert que pour en utiliser une autre). Si le secret est renseigné mais pas l'adresse du site, le site **ne démarre pas** plutôt que de rester ouvert par erreur.
 
 **Avec Traefik** (réseau Docker externe partagé avec Traefik) : dans `.env`,

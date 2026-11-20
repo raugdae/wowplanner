@@ -1193,6 +1193,71 @@ def test_website_discord_login(tmp_path):
     assert got["kicked"][0] == 401
 
 
+def test_website_guest_access(tmp_path):
+    """Accès invité : lien caché (404 sans la bonne clé), mot de passe, lecture seule, révoqué si le mot de passe change."""
+    import asyncio
+
+    import aiohttp
+
+    from wowplanner.db import Database
+    from wowplanner.web import WebSite
+    from wowplanner.webauth import DiscordOAuth
+
+    db = Database(tmp_path / "t.db")
+    hollie = db.add_character(123, "Hollie Tétine", "pretre", "humain", "heal")
+    db.set_armory_look(hollie.id, 20, None, None, None, None, None)
+    db.touch_member(42, 123)
+
+    async def is_member(user_id):
+        raise AssertionError("pas de vérification Discord pour un invité")
+
+    site = WebSite(db, lambda: 42)
+    site.enable_auth(DiscordOAuth(None, "1", "s", "https://wow.fr/auth/callback"), b"k" * 32, is_member, secure_cookies=False)
+    key = "cle-secrete-assez-longue"
+    site.enable_guest(key, "motdepasse")
+    got = {}
+
+    async def scenario():
+        await site.start("127.0.0.1", 0)
+        port = next(iter(site._runner.sites))._server.sockets[0].getsockname()[1]
+        base = f"http://127.0.0.1:{port}"
+        async with aiohttp.ClientSession(cookie_jar=aiohttp.CookieJar(unsafe=True)) as s:
+            async def call(method, path, data=None):
+                async with s.request(method, base + path, data=data, allow_redirects=False) as resp:
+                    return resp.status, await resp.text(), resp.headers.get("Location", "")
+
+            got["login_page"] = await call("GET", "/")
+            got["wrong_key"] = await call("GET", "/auth/invite/mauvaise-cle-de-test")
+            got["wrong_key_post"] = await call("POST", "/auth/invite/mauvaise-cle-de-test", {"password": "motdepasse"})
+            got["form"] = await call("GET", f"/auth/invite/{key}")
+            got["bad_pass"] = await call("POST", f"/auth/invite/{key}", {"password": "faux"})
+            got["home_bad"] = await call("GET", "/")
+            got["good_pass"] = await call("POST", f"/auth/invite/{key}", {"password": "motdepasse"})
+            got["home"] = await call("GET", "/")
+            got["dungeons"] = await call("GET", "/donjons")
+            got["post"] = await call("POST", "/mes-persos", {"nom": "Intrus"})
+            site.enable_guest(key, "nouveau")  # mot de passe changé : session invalidée
+            got["revoked"] = await call("GET", "/")
+        await site.stop()
+
+    asyncio.run(scenario())
+    chars = [c.name for c in db.get_characters(0)]
+    db.close()
+
+    assert "/auth/invite" not in got["login_page"][1]  # le lien n'apparaît nulle part
+    assert got["wrong_key"][0] == 404 and got["wrong_key_post"][0] == 404
+    assert got["form"][0] == 200 and 'type="password"' in got["form"][1]
+    assert got["bad_pass"][0] == 401 and "incorrect" in got["bad_pass"][1]
+    assert got["home_bad"][0] == 401
+    assert got["good_pass"][0] == 302 and got["good_pass"][2] == "/"
+    status, text, _ = got["home"]
+    assert status == 200 and "Hollie Tétine" in text and "Invité" in text and "lecture seule" in text
+    assert "Administration" not in text
+    assert "Persos dans la tranche" in got["dungeons"][1]
+    assert got["post"][0] == 403 and "Lecture seule" in got["post"][1] and chars == []
+    assert got["revoked"][0] == 401
+
+
 def test_sync_steps_without_armory(tmp_path):
     """Synchro : chaque étape donne une ligne de bilan, une étape en échec n'arrête pas les suivantes."""
     import asyncio

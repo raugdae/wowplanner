@@ -30,6 +30,7 @@ class Viewer:
     path: str  # page demandée (pour y revenir après connexion)
     characters: list[Character] = field(default_factory=list)  # ses persos (menu du compte)
     admin: bool = False  # permission « Gérer le serveur » sur Discord
+    guest: bool = False  # accès invité (mot de passe, sans Discord) : lecture seule
 
 
 # Posé par le middleware de connexion le temps d'une requête ; None = connexion désactivée (site ouvert).
@@ -62,6 +63,10 @@ def _menu_html() -> str:
             f'<div class="account-zone">{login}<details class="usermenu"><summary aria-label="Menu">☰</summary>'
             f'<div class="menu-panel">{theme}</div></details></div>'
         )
+    if viewer.guest:
+        return f"""<div class="account-zone"><details class="usermenu"><summary>👤 Invité ▾</summary>
+<div class="menu-panel"><div class="menu-head">Connecté en <b>invité</b> (lecture seule)</div>
+{theme}<a class="menu-link" href="/auth/logout">Déconnexion</a></div></details></div>"""
     chars = sorted(viewer.characters, key=lambda c: (not c.favorite, c.name.lower()))
     links = "".join(
         f'<a class="menu-char" href="/perso/{c.id}">{avatar_html(c)}<span>{"⭐ " if c.favorite else ""}{esc(c.name)}'

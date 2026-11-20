@@ -15,11 +15,16 @@ Traefik en production (voir docker-compose.traefik.yml).
 """
 from __future__ import annotations
 
+import asyncio
+import hashlib
+import hmac
 import logging
 import secrets
 import time
+from collections import deque
 from pathlib import Path
 from typing import Any, Awaitable, Callable
+from urllib.parse import urlparse
 
 from aiohttp import web
 
@@ -52,6 +57,10 @@ log = logging.getLogger(__name__)
 # Pages visibles sans connexion (sans les persos du serveur).
 PUBLIC_PATHS = ("/donjons", "/donjon/", "/auth/", "/static/")
 
+# Accès invité : au-delà de 10 mots de passe faux en 15 minutes (tous visiteurs confondus), on refuse.
+GUEST_MAX_FAILURES = 10
+GUEST_FAIL_WINDOW = 15 * 60
+
 
 STYLESHEET = (Path(__file__).parent / "static" / "site.css").read_text(encoding="utf-8")
 
@@ -70,6 +79,22 @@ class WebSite:
         self.actions: Any = None
         # Hôtel des ventes suivi (AUCTION_HOUSE_ID) ; 0 = page Hôtel des ventes désactivée.
         self.auction_house = 0
+        # Accès invité (voir enable_guest) : clé du lien caché et mot de passe ; vides = désactivé.
+        self._guest_key = ""
+        self._guest_password = ""
+        self._guest_failures: deque[float] = deque()
+
+    def enable_guest(self, key: str, password: str) -> None:
+        """Accès en lecture seule sans Discord : lien /auth/invite/<key> (introuvable sans la clé) + mot de passe.
+        Changer le mot de passe déconnecte les invités déjà connectés."""
+        self._guest_key, self._guest_password = key, password
+
+    def _guest_print(self) -> str:
+        """Empreinte du mot de passe invité gardée dans la session : un autre mot de passe l'invalide."""
+        return hmac.new(self._secret, f"guest:{self._guest_password}".encode(), hashlib.sha256).hexdigest()[:16]
+
+    def _guest_ok(self, user: dict[str, Any]) -> bool:
+        return bool(self._guest_password) and secrets.compare_digest(str(user.get("g", "")), self._guest_print())
 
     def enable_actions(self, actions: Any) -> None:
         self.actions = actions
@@ -107,7 +132,10 @@ class WebSite:
 
         user = unsign(request.cookies.get(SESSION_COOKIE), self._secret)
         refresh = clear = False
-        if user is not None and time.time() - user.get("chk", 0) > MEMBER_RECHECK_SECONDS:
+        guest = bool(user and user.get("guest"))
+        if guest and not self._guest_ok(user):
+            user, guest, clear = None, False, True  # accès invité retiré ou mot de passe changé
+        if user is not None and not guest and time.time() - user.get("chk", 0) > MEMBER_RECHECK_SECONDS:
             # Revérification quotidienne : parti ou exclu du serveur → plus d'accès.
             member = await self._is_member(int(user["id"])) if self._is_member else None
             if member is False:
@@ -116,8 +144,8 @@ class WebSite:
                 user["chk"] = int(time.time())
                 refresh = True
 
-        viewer = Viewer(user, request.path_qs)
-        if user is not None:
+        viewer = Viewer(user, request.path_qs, guest=guest)
+        if user is not None and not guest:
             viewer.characters = self.db.get_characters(int(user["id"]))
             is_admin = getattr(self.actions, "is_admin", None)
             if is_admin is not None:
@@ -129,6 +157,10 @@ class WebSite:
         try:
             if user is None and not request.path.startswith(PUBLIC_PATHS):
                 response: web.StreamResponse = self._login_page(request.path_qs)
+            elif guest and request.method not in ("GET", "HEAD") and not request.path.startswith("/auth/"):
+                response = self._message_page(
+                    "Lecture seule", "L'accès invité permet de consulter le site, pas d'y faire des actions.", 403
+                )
             else:
                 response = await handler(request)
         finally:
@@ -201,6 +233,57 @@ Connecte-toi avec ton compte Discord : le site ne voit que ton pseudo.</p>
         response.del_cookie(STATE_COOKIE, path="/")
         return response
 
+    def _guest_page(self, error: str = "", status: int = 200) -> web.Response:
+        err = f'<p class="flash err" role="alert">{esc(error)}</p>' if error else ""
+        body = f"""<div class="login-box card">
+<h1 class="title">Accès invité</h1>
+<p class="sub">Consultation du site sans compte Discord (lecture seule).</p>{err}
+<form method="post" class="filters"><input type="password" name="password" placeholder="Mot de passe"
+ autocomplete="current-password" required autofocus aria-label="Mot de passe">
+<button class="btn" type="submit">Entrer</button></form></div>"""
+        response = page("Accès invité", "", body)
+        response.set_status(status)
+        return response
+
+    def _guest_key_ok(self, request: web.Request) -> bool:
+        key = request.match_info.get("key", "")
+        return bool(self._guest_key and self._guest_password and self.oauth is not None) and secrets.compare_digest(
+            key.encode(), self._guest_key.encode()
+        )
+
+    async def guest_form(self, request: web.Request) -> web.StreamResponse:
+        if not self._guest_key_ok(request):
+            raise web.HTTPNotFound()  # le lien n'existe pas pour qui n'a pas la clé
+        return self._guest_page()
+
+    async def guest_login(self, request: web.Request) -> web.StreamResponse:
+        if not self._guest_key_ok(request):
+            raise web.HTTPNotFound()
+        origin = request.headers.get("Origin")
+        if origin and urlparse(origin).netloc != request.host:
+            return self._guest_page("Formulaire envoyé depuis un autre site.", 403)
+        now = time.monotonic()
+        while self._guest_failures and now - self._guest_failures[0] > GUEST_FAIL_WINDOW:
+            self._guest_failures.popleft()
+        if len(self._guest_failures) >= GUEST_MAX_FAILURES:
+            return self._guest_page("Trop d'essais ratés, réessaie dans quelques minutes.", 429)
+        password = str((await request.post()).get("password", ""))
+        ok = secrets.compare_digest(
+            hashlib.sha256(password.encode()).digest(), hashlib.sha256(self._guest_password.encode()).digest()
+        )
+        if not ok:
+            self._guest_failures.append(now)
+            log.warning("Accès invité : mot de passe incorrect")
+            await asyncio.sleep(1)
+            return self._guest_page("Mot de passe incorrect.", 401)
+        response = self._redirect("/")
+        stamp = int(time.time())
+        self._set_session(response, {
+            "id": 0, "name": "Invité", "guest": True, "g": self._guest_print(), "chk": stamp, "exp": stamp + SESSION_SECONDS,
+        })
+        log.info("Connexion au site : invité")
+        return response
+
     async def auth_logout(self, request: web.Request) -> web.StreamResponse:
         response = self._redirect("/donjons")
         response.del_cookie(SESSION_COOKIE, path="/")
@@ -235,6 +318,8 @@ Connecte-toi avec ton compte Discord : le site ne voit que ton pseudo.</p>
         app.router.add_get("/auth/login", self.auth_login)
         app.router.add_get("/auth/callback", self.auth_callback)
         app.router.add_get("/auth/logout", self.auth_logout)
+        app.router.add_get("/auth/invite/{key}", self.guest_form)
+        app.router.add_post("/auth/invite/{key}", self.guest_login)
         GuildPages(self).register(app.router)
         app.router.add_get("/static/site.css", self.stylesheet)
         return app
