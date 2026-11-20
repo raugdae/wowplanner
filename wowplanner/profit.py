@@ -165,6 +165,14 @@ def raw_unit(row: Any) -> int:
     return max(net, row["sell_price"] or 0)
 
 
+def best_channel(row: Any) -> str | None:
+    """Où l'objet se vend le mieux : « hdv » (commission déduite) ou « marchand » ; None sans aucun prix."""
+    if row is None or raw_unit(row) == 0:
+        return None
+    net = int(row["min_price"] * (1 - AH_CUT)) if row["min_price"] else 0
+    return "hdv" if net >= (row["sell_price"] or 0) else "marchand"
+
+
 @dataclass
 class CraftStep:
     """Fabriquer `crafts` fois une recette avec son stock : ce que ça rapporte face à la vente brute du stock utilisé."""
@@ -176,6 +184,11 @@ class CraftStep:
     product_value: int  # vente des objets fabriqués (meilleure vente : HdV net ou marchand)
     buy_cost: int  # composants achetés au marchand (fioles…)
     used_value: int  # ce qu'aurait rapporté la vente brute du stock utilisé
+
+    @property
+    def channel(self) -> str | None:
+        """Où vendre les objets fabriqués : « hdv » ou « marchand » (voir best_channel)."""
+        return best_channel(self.product)
 
     @property
     def gain(self) -> int:

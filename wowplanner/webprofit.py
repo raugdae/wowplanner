@@ -13,8 +13,8 @@ from .auctions import money_text
 from .db import Character
 from .gamedata import is_primary, profession_label
 from .profit import (
-    AH_CUT, GATHERING, VENDOR_REAGENTS, CraftPlan, CraftStep, craft_plan, gathered_value, gathering_rows, raw_unit,
-    recipe_profits,
+    AH_CUT, GATHERING, VENDOR_REAGENTS, CraftPlan, CraftStep, best_channel, craft_plan, gathered_value, gathering_rows,
+    raw_unit, recipe_profits,
 )
 from .recipes import normalize
 from .web import _VIEWER, esc
@@ -24,6 +24,16 @@ from .webauction import COIN_HEADS, LIST_SCRIPT, MONEY_JS, AuctionPages, item_ic
 SHOWN_RECIPES = 40
 # Quantité maximale saisie par objet dans la calculatrice.
 MAX_STOCK = 100_000
+CHANNEL_LABELS = {"hdv": "HdV", "marchand": "Marchand"}
+
+
+def channel_tag(channel: str | None) -> str:
+    """Pastille « HdV » / « Marchand » : où l'argent est gagné ou dépensé."""
+    if channel not in CHANNEL_LABELS:
+        return ""
+    return f'<span class="chan {channel}">{CHANNEL_LABELS[channel]}</span>'
+
+
 # Précisions sur certaines récoltes.
 GATHERING_NOTES = {"peche": " (le niveau de pêche requis n'est pas connu par poisson)"}
 
@@ -164,18 +174,23 @@ Calculer avec ton stock</a>.</p>
         """Saisie du stock : un tableau par ligne d'objet, groupé par catégorie, avec la valeur brute calculée au
         fil de la saisie (CALC_SCRIPT) ; les champs vides ne partent pas dans l'adresse de la page."""
         lines, total = [], 0
-        for label, rows in groups:
-            lines.append(f'<tr class="grp"><th colspan="9">{esc(label)}</th></tr>')
+        for index, (label, rows) in enumerate(groups):
+            lines.append(
+                f'<tr class="grp" data-group="{index}"><th colspan="9"><button type="button" class="fold-toggle" '
+                f'aria-expanded="true"><span class="arrow">▾</span> {esc(label)} <span class="n">{len(rows)}</span>'
+                "</button></th></tr>"
+            )
             for row, level in rows:
                 unit = raw_unit(row)
                 net = int(row["min_price"] * (1 - AH_CUT)) if row["min_price"] else None
                 vendor = row["sell_price"] or 0
-                best = "—" if not unit else "HdV" if (net or 0) >= vendor else "marchand"
+                best = channel_tag(best_channel(row)) or "—"
                 qty = inventory.get(row["id"], 0)
                 total += unit * qty
                 value = esc(money_text(unit * qty)) if qty and unit else "—"
                 lines.append(
-                    f'<tr class="stock-row" data-unit="{unit}" data-name="{esc(normalize(row["name"]))}">'
+                    f'<tr class="stock-row" data-group="{index}" data-unit="{unit}" '
+                    f'data-name="{esc(normalize(row["name"]))}">'
                     f'<td><a class="ah-name" href="/hdv/objet/{row["id"]}">{item_icon(row)}<span>{item_name(row)}'
                     f'</span></a></td><td class="num hide-sm">{level if level is not None else "—"}</td>'
                     f"{money_cells(net, row['id'] if net else None)}"
@@ -185,9 +200,14 @@ Calculer avec ton stock</a>.</p>
                     f'inputmode="numeric" value="{qty or ""}" placeholder="0" aria-label="Stock : {esc(row["name"])}"></td>'
                     f'<td class="num value">{value}</td></tr>'
                 )
+        categories = "".join(
+            f'<option value="{index}">{esc(label)} ({len(rows)})</option>' for index, (label, rows) in enumerate(groups)
+        )
         return f"""<form method="get" action="/calculatrice" class="calc-form" data-perso="{character.id}">
 <input type="hidden" name="perso" value="{character.id}">
-<div class="filters calc-tools"><input type="search" class="calc-search" placeholder="Chercher une ressource…"
+<div class="filters calc-tools"><select class="calc-category" aria-label="Catégorie">
+<option value="">Toutes les catégories</option>{categories}</select>
+<input type="search" class="calc-search" placeholder="Chercher une ressource…"
 autocomplete="off" aria-label="Chercher une ressource"><label class="fav-filter"><input type="checkbox"
 class="calc-mine"> Seulement ce que j'ai</label><button class="act primary">🧮 Calculer</button>
 <button type="button" class="act calc-clear">Vider</button></div>
@@ -258,15 +278,21 @@ recettes (composants vendus par les marchands achetés au besoin), aux prix de {
         def steps_table(steps: list[CraftStep], first: str) -> str:
             rows = "".join(
                 f"<tr><td>{item_label(s)}</td><td class=\"num\">{number(s.crafts)}</td>"
-                f'<td class="num">{esc(money_text(s.product_value))}</td>'
-                f'<td class="num muted">{esc(money_text(s.buy_cost)) if s.buy_cost else "—"}</td>'
-                f'<td class="num muted">{esc(money_text(s.used_value))}</td><td class="num">{signed_money(s.gain)}</td></tr>'
+                f'<td class="num">+ {esc(money_text(s.product_value))} {channel_tag(s.channel)}</td>'
+                f'<td class="num">'
+                + (f'− {esc(money_text(s.buy_cost))} {channel_tag("marchand")}' if s.buy_cost else '<span class="muted">—</span>')
+                + f'</td><td class="num muted">{esc(money_text(s.used_value))}</td>'
+                f'<td class="num">{signed_money(s.gain)}</td></tr>'
                 for s in steps
             )
             return (
-                f'<div class="table-wrap"><table class="ah-table"><thead><tr><th>{first}</th>'
-                '<th class="num">Fabrications</th><th class="num">Vente des objets</th><th class="num">Achats marchand</th>'
-                '<th class="num">Stock utilisé (valeur brute)</th><th class="num">Gain vs vente brute</th></tr></thead>'
+                f'<div class="table-wrap"><table class="ah-table steps"><thead><tr><th>{first}</th>'
+                '<th class="num">Fabrications</th>'
+                '<th class="num" title="Les objets fabriqués, vendus là où ils rapportent le plus (HdV : commission déduite)">'
+                "Vente des objets fabriqués</th>"
+                '<th class="num" title="Composants que les marchands vendent (fioles, fils…)">Achats de composants</th>'
+                '<th class="num" title="Ce que ton stock utilisé aurait rapporté vendu brut">Stock utilisé, vendu brut</th>'
+                '<th class="num">Gain vs vente brute</th></tr></thead>'
                 f"<tbody>{rows}</tbody></table></div>"
             )
 
@@ -286,7 +312,8 @@ recettes (composants vendus par les marchands achetés au besoin), aux prix de {
             parts.append("<h3>Plan conseillé</h3>" + steps_table(plan.steps, "Fabriquer"))
             if plan.leftovers:
                 parts.append(
-                    f'<p class="muted">Puis vendre brut le reste du stock : {esc(money_text(plan.leftover_value))}.</p>'
+                    f'<p class="muted">Puis vendre brut le reste du stock, à l’HdV ou au marchand selon l’objet : '
+                    f"{esc(money_text(plan.leftover_value))}.</p>"
                 )
         if plan.options:
             parts.append(
@@ -428,17 +455,32 @@ CALC_SCRIPT = """
     });
     total.textContent = sum ? moneyText(sum) : "—";
   }
+  // Catégorie, recherche, « seulement ce que j'ai », et groupes repliés (gardés dans le navigateur, par perso).
+  const category = form.querySelector(".calc-category");
+  const foldKey = key + "-replies";
+  let folded = new Set();
+  try { folded = new Set(JSON.parse(localStorage.getItem(foldKey) || "[]")); } catch (e) {}
   function filter() {
-    const q = norm(search.value.trim());
+    const q = norm(search.value.trim()), shown = new Set();
     rows.forEach((row, i) => {
-      row.hidden = (q && !row.dataset.name.includes(q)) || (mine.checked && !(parseInt(inputs[i].value, 10) > 0));
+      const ok = (!category.value || row.dataset.group === category.value)
+        && (!q || row.dataset.name.includes(q))
+        && (!mine.checked || parseInt(inputs[i].value, 10) > 0);
+      if (ok) shown.add(row.dataset.group);
+      row.hidden = !ok || folded.has(row.dataset.group);
     });
     form.querySelectorAll("tr.grp").forEach(head => {
-      let next = head.nextElementSibling, visible = false;
-      while (next && !next.classList.contains("grp")) { if (!next.hidden) visible = true; next = next.nextElementSibling; }
-      head.hidden = !visible;
+      head.hidden = !shown.has(head.dataset.group);
+      head.querySelector("button").setAttribute("aria-expanded", String(!folded.has(head.dataset.group)));
     });
   }
+  form.querySelectorAll("tr.grp button").forEach(b => b.addEventListener("click", () => {
+    const group = b.closest("tr").dataset.group;
+    if (folded.has(group)) folded.delete(group); else folded.add(group);
+    try { localStorage.setItem(foldKey, JSON.stringify([...folded])); } catch (e) {}
+    filter();
+  }));
+  category.addEventListener("change", filter);
   if (!inputs.some(i => i.value)) {
     try {
       const saved = JSON.parse(localStorage.getItem(key) || "{}");
@@ -459,7 +501,7 @@ CALC_SCRIPT = """
     try { localStorage.removeItem(key); } catch (e) {}
     refresh(); filter();
   });
-  refresh();
+  refresh(); filter();
 })();
 </script>
 """

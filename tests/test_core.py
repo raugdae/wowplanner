@@ -2242,6 +2242,10 @@ def test_profit_page(tmp_path):
     assert status == 200 and "Fabriquer rapporte <b>74 pa</b>" in text and "+ 74 pa" in text
     assert 'value="10"' in text and "Chaque recette seule" in text
     # Saisie en tableau : prix net, meilleure vente, valeur brute de la ligne et total (10 × 190 pc).
-    assert 'data-unit="190"' in text and '<td class="best">HdV</td>' in text
+    assert 'data-unit="190"' in text and '<td class="best"><span class="chan hdv">HdV</span></td>' in text
     assert '<td class="num value">19 pa</td>' in text and '<td class="num calc-total">19 pa</td>' in text
-    assert '<tr class="grp"><th colspan="9">Herboristerie : herbes</th></tr>' in text
+    # Groupes repliables et filtre par catégorie.
+    assert '<tr class="grp" data-group="0">' in text and 'aria-expanded="true"><span class="arrow">▾</span> Herboristerie : herbes' in text
+    assert '<option value="0">Herboristerie : herbes (1)</option>' in text
+    # Résultat : où l'argent est gagné ou dépensé (potions vendues à l'HdV, fiole achetée au marchand).
+    assert '+ 95 pa <span class="chan hdv">HdV</span>' in text and '− 2 pa <span class="chan marchand">Marchand</span>' in text
