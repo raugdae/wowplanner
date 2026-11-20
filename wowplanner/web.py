@@ -82,12 +82,29 @@ class WebSite:
         # Accès invité (voir enable_guest) : clé du lien caché et mot de passe ; vides = désactivé.
         self._guest_key = ""
         self._guest_password = ""
+        self._guest_as = ""
         self._guest_failures: deque[float] = deque()
 
-    def enable_guest(self, key: str, password: str) -> None:
+    def enable_guest(self, key: str, password: str, as_who: str = "") -> None:
         """Accès en lecture seule sans Discord : lien /auth/invite/<key> (introuvable sans la clé) + mot de passe.
-        Changer le mot de passe déconnecte les invités déjà connectés."""
-        self._guest_key, self._guest_password = key, password
+        Changer le mot de passe déconnecte les invités déjà connectés.
+
+        `as_who` (identifiant Discord ou nom d'un perso) : l'invité voit le site comme ce joueur (ses persos, sa
+        rentabilité, ses favoris, l'administration s'il y a droit), toujours sans pouvoir rien modifier."""
+        self._guest_key, self._guest_password, self._guest_as = key, password, as_who.strip()
+
+    def _guest_user_id(self) -> int:
+        """Joueur dont l'invité emprunte le point de vue (0 = aucun). Relu à chaque page : suit les renommages."""
+        who = self._guest_as
+        if who.isdigit():
+            return int(who)
+        if who:
+            wanted = who.casefold()
+            for c in self.db.all_characters():
+                if c.name.casefold() == wanted:
+                    return c.user_id
+            log.warning("GUEST_AS : aucun perso nommé %r", who)
+        return 0
 
     def _guest_print(self) -> str:
         """Empreinte du mot de passe invité gardée dans la session : un autre mot de passe l'invalide."""
@@ -144,8 +161,10 @@ class WebSite:
                 user["chk"] = int(time.time())
                 refresh = True
 
+        if guest:
+            user = {**user, "id": self._guest_user_id()}
         viewer = Viewer(user, request.path_qs, guest=guest)
-        if user is not None and not guest:
+        if user is not None and int(user["id"]):
             viewer.characters = self.db.get_characters(int(user["id"]))
             is_admin = getattr(self.actions, "is_admin", None)
             if is_admin is not None:

@@ -420,7 +420,7 @@ Avec `DISCORD_CLIENT_SECRET` renseigné, le site est **réservé aux membres du 
 
 **Accès invité (sans Discord)** : pour montrer le site à quelqu'un qui n'est pas sur le serveur. Il ouvre un lien
 caché et entre un mot de passe, puis consulte tout le site **en lecture seule** : il n'a pas de persos ni de
-menu d'administration, et tout envoi de formulaire est refusé. Dans `.env` :
+menu d'administration (sauf avec `GUEST_AS`, ci-dessous), et tout envoi de formulaire est refusé. Dans `.env` :
 
 ```
 GUEST_KEY=une-longue-chaine-au-hasard   # 16 caractères minimum, ex. : python -c "import secrets; print(secrets.token_urlsafe(24))"
@@ -428,6 +428,7 @@ GUEST_PASSWORD=le-mot-de-passe
 ```
 
 - Le lien à donner est `https://wow.ton-domaine.fr/auth/invite/<GUEST_KEY>`. Il n'apparaît nulle part sur le site, et une clé fausse renvoie une page introuvable (404).
+- `GUEST_AS` (facultatif) : l'invité voit le site **comme ce joueur**, désigné par son identifiant Discord ou le nom d'un de ses persos (ex. `GUEST_AS=Hollie Tétine`). Il voit alors ses persos, sa rentabilité, ses favoris HdV et l'administration si ce joueur y a droit, toujours sans rien pouvoir modifier.
 - Changer `GUEST_PASSWORD` (puis redémarrer) déconnecte les invités déjà connectés. Vider l'une des deux variables désactive l'accès.
 - Au-delà de 10 mots de passe faux en 15 minutes, les essais sont refusés pendant un moment.
 - L'accès invité n'existe qu'avec la connexion Discord activée : sans `DISCORD_CLIENT_SECRET`, le site est de toute façon ouvert.

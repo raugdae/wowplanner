@@ -37,6 +37,8 @@ class Config:
     # Accès invité sans Discord (lecture seule) : lien caché /auth/invite/<GUEST_KEY> + GUEST_PASSWORD.
     guest_key: str = ""
     guest_password: str = ""
+    # L'invité voit le site comme ce joueur (identifiant Discord ou nom d'un de ses persos) ; vide = sans persos.
+    guest_as: str = ""
     # Hôtel des ventes suivi (numéro Blizzard, voir README) ; 0 = page Hôtel des ventes désactivée.
     auction_house_id: int = 0
     auction_ruleset: int = 1
@@ -86,6 +88,7 @@ def load_config() -> Config:
         discord_client_secret=os.getenv("DISCORD_CLIENT_SECRET", "").strip(),
         guest_key=os.getenv("GUEST_KEY", "").strip(),
         guest_password=os.getenv("GUEST_PASSWORD", "").strip(),
+        guest_as=os.getenv("GUEST_AS", "").strip(),
         auction_house_id=int(os.getenv("AUCTION_HOUSE_ID", "0").strip() or 0),
         auction_ruleset=int(os.getenv("AUCTION_RULESET", "1").strip() or 1),
     )

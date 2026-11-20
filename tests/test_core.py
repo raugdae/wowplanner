@@ -1196,6 +1196,7 @@ def test_website_discord_login(tmp_path):
 def test_website_guest_access(tmp_path):
     """Accès invité : lien caché (404 sans la bonne clé), mot de passe, lecture seule, révoqué si le mot de passe change."""
     import asyncio
+    from types import SimpleNamespace
 
     import aiohttp
 
@@ -1238,6 +1239,15 @@ def test_website_guest_access(tmp_path):
             got["post"] = await call("POST", "/mes-persos", {"nom": "Intrus"})
             site.enable_guest(key, "nouveau")  # mot de passe changé : session invalidée
             got["revoked"] = await call("GET", "/")
+            # Invité qui voit le site comme le joueur de « Hollie Tétine » (nom sans tenir compte de la casse).
+            async def is_admin(user_id):
+                return user_id == 123
+
+            site.actions = SimpleNamespace(is_admin=is_admin)
+            site.enable_guest(key, "autre", "hollie tétine")
+            await call("POST", f"/auth/invite/{key}", {"password": "autre"})
+            got["as_home"] = await call("GET", "/")
+            got["as_post"] = await call("POST", f"/mes-persos/{hollie.id}/supprimer", {})
         await site.stop()
 
     asyncio.run(scenario())
@@ -1256,6 +1266,10 @@ def test_website_guest_access(tmp_path):
     assert "Persos dans la tranche" in got["dungeons"][1]
     assert got["post"][0] == 403 and "Lecture seule" in got["post"][1] and chars == []
     assert got["revoked"][0] == 401
+    status, text, _ = got["as_home"]
+    assert status == 200 and 'href="/admin"' in text and f'class="menu-char" href="/perso/{hollie.id}"' in text
+    assert "lecture seule" in text
+    assert got["as_post"][0] == 403
 
 
 def test_sync_steps_without_armory(tmp_path):

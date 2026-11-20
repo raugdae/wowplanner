@@ -101,7 +101,7 @@ class WowPlannerBot(commands.Bot):
             if len(cfg.guest_key) < 16:
                 log.warning("GUEST_KEY trop courte (16 caractères minimum) : accès invité désactivé")
             else:
-                self.website.enable_guest(cfg.guest_key, cfg.guest_password)
+                self.website.enable_guest(cfg.guest_key, cfg.guest_password, cfg.guest_as)
                 log.info("Accès invité activé (lien caché /auth/invite/…, lecture seule)")
         return True
 

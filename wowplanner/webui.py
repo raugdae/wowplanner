@@ -63,10 +63,6 @@ def _menu_html() -> str:
             f'<div class="account-zone">{login}<details class="usermenu"><summary aria-label="Menu">☰</summary>'
             f'<div class="menu-panel">{theme}</div></details></div>'
         )
-    if viewer.guest:
-        return f"""<div class="account-zone"><details class="usermenu"><summary>👤 Invité ▾</summary>
-<div class="menu-panel"><div class="menu-head">Connecté en <b>invité</b> (lecture seule)</div>
-{theme}<a class="menu-link" href="/auth/logout">Déconnexion</a></div></details></div>"""
     chars = sorted(viewer.characters, key=lambda c: (not c.favorite, c.name.lower()))
     links = "".join(
         f'<a class="menu-char" href="/perso/{c.id}">{avatar_html(c)}<span>{"⭐ " if c.favorite else ""}{esc(c.name)}'
@@ -75,8 +71,9 @@ def _menu_html() -> str:
     ) or '<p class="muted">Aucun perso déclaré.</p>'
     admin = '<a class="menu-link" href="/admin">🛠️ Administration</a>' if viewer.admin else ""
     name = esc(viewer.user.get("name", "?"))
+    head = "Connecté en <b>invité</b> (lecture seule)" if viewer.guest else f"Connecté en tant que <b>{name}</b>"
     return f"""<div class="account-zone"><details class="usermenu"><summary>👤 {name} ▾</summary>
-<div class="menu-panel"><div class="menu-head">Connecté en tant que <b>{name}</b></div>
+<div class="menu-panel"><div class="menu-head">{head}</div>
 <div class="menu-sec"><small>Mes persos</small>{links}<a class="menu-link" href="/mes-persos">Gérer mes persos →</a>
 <a class="menu-link" href="/rentabilite">💰 Rentabilité de mes métiers</a>
 <a class="menu-link" href="/calculatrice">🧮 Calculatrice HdV</a></div>
