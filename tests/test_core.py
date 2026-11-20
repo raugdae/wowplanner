@@ -2335,7 +2335,8 @@ def test_auction_pages(tmp_path):
     data = re.search(r'<script type="application/json" class="chart-data">(.*?)</script>', text, re.S).group(1)
     import json
     assert len(json.loads(data)["points"]) == 9  # 72 h, un relevé toutes les 6 h (le plus ancien : 48 h)
-    assert 'class="price-chart sales-chart"' in text and text.count('<g class="bar') >= 29 + 24
+    assert text.count('<rect class="vol"') == 29 and len(json.loads(data)["sales"]) == 29  # ventes dans la courbe
+    assert 'class="price-chart sales-chart"' not in text and text.count('<g class="bar') == 24
     assert 'class="price-chart hours-chart"' in text and "Quand ça se vend" in text and "Vendus (24 h)" in text
     assert got["unknown"][0] == 404
     assert got["api"]["name"] == "Étoffe de lin" and len(got["api"]["points"]) == 9

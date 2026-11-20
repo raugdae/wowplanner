@@ -669,6 +669,10 @@ details.fold.hfaq > summary { text-transform:none; letter-spacing:0; font-size:1
 .price-chart g.bar.on .fill { fill:var(--accent); opacity:.95; }
 .price-chart g.bar.hot .fill { opacity:1; fill:#8fd0f5; }
 .price-chart g.bar.on.hot .fill { fill:var(--accent); }
-.sales-legend { margin-top:14px; justify-content:space-between; flex-wrap:wrap; }
+.price-chart rect.vol { fill:#5fa8d3; opacity:.7; }
+.price-chart rect.vol.hot { opacity:1; fill:#8fd0f5; }
+.price-chart .band-title { font-size:11px; }
+.chart-legend { flex-wrap:wrap; }
+.chart-tip i.kb { width:10px; height:10px; border:0; background:#5fa8d3; }
 .chart-legend i.kb { width:12px; height:10px; border:0; background:#5fa8d3; vertical-align:middle; }
 .small-note { font-size:12px; margin:6px 0 0; }

@@ -102,11 +102,17 @@ def _nice_step(span: float) -> float:
     return 10 * power
 
 
-def price_chart_svg(points: list[tuple[int, int, int, int, int]], days: int, tz: Any) -> str:
-    """Courbe du prix le plus bas (trait plein) et du prix médian (pointillé) : SVG sans bibliothèque, graduations
-    rondes, dates en bas ; la couche de survol (curseur + infobulle) est ajoutée par CHART_SCRIPT."""
-    width, height, left, right, top, bottom = 820, 300, 78, 16, 16, 34
-    plot_w, plot_h = width - left - right, height - top - bottom
+def price_chart_svg(points: list[tuple[int, int, int, int, int]], days: int, tz: Any,
+                    sales: list[tuple[int, int, int]] = ()) -> str:
+    """Courbe du prix le plus bas (trait plein) et du prix médian (pointillé) et, dessous sur le même axe du temps,
+    les ventes estimées en barres (par heure ; moyenne par heure pour les jours compactés). SVG sans bibliothèque,
+    graduations rondes ; la couche de survol (curseur commun + infobulle prix et ventes) est ajoutée par CHART_SCRIPT."""
+    with_sales = any(r[1] for r in sales)
+    width, left, right, top, bottom = 820, 78, 16, 16, 34
+    plot_w, plot_h = width - left - right, 250
+    band_gap, band_h = 32, 100 if with_sales else 0
+    band_top = top + plot_h + band_gap
+    height = top + plot_h + bottom + (band_gap + band_h if with_sales else 0)
     values = [p[1] for p in points] + [p[2] for p in points]
     low, high = min(values), max(values)
     step = _nice_step(high - low or high or 1)
@@ -117,7 +123,7 @@ def price_chart_svg(points: list[tuple[int, int, int, int, int]], days: int, tz:
     t0, t1 = points[0][0], points[-1][0]
     if t1 <= t0:
         t1 = t0 + 3600
-    x = lambda t: left + (t - t0) / (t1 - t0) * plot_w  # noqa: E731
+    x = lambda t: left + (min(max(t, t0), t1) - t0) / (t1 - t0) * plot_w  # noqa: E731
     y = lambda v: top + (1 - (v - y0) / (y1 - y0)) * plot_h  # noqa: E731
 
     grid = []
@@ -138,6 +144,31 @@ def price_chart_svg(points: list[tuple[int, int, int, int, int]], days: int, tz:
         anchor = "start" if i == 0 else "end" if i == count - 1 else "middle"
         labels.append(f'<text class="axis" x="{x(t):.1f}" y="{height - 10}" text-anchor="{anchor}">{text}</text>')
 
+    # Bande des ventes : barres d'une heure (ou d'un jour, ramenées à une moyenne par heure).
+    band, bars = "", []
+    if with_sales:
+        rates = [(ts, ts + (86400 if hours > 1 else 3600), sold, hours, sold / hours) for ts, sold, hours in sales]
+        vstep = max(_nice_step(max(r[4] for r in rates)), 1)
+        v1 = int(-(-max(r[4] for r in rates) // vstep) * vstep) or vstep
+        vy = lambda v: band_top + (1 - v / v1) * band_h  # noqa: E731
+        parts = [
+            f'<line class="grid" x1="{left}" x2="{width - right}" y1="{vy(v):.1f}" y2="{vy(v):.1f}"/>'
+            f'<text class="axis" x="{left - 8}" y="{vy(v) + 4:.1f}" text-anchor="end">{number(int(v))}</text>'
+            for v in (0, v1)
+        ]
+        parts.append(f'<text class="axis band-title" x="{left + 4}" y="{band_top - 6}">Ventes estimées par heure</text>')
+        for i, (start, stop, sold, hours, rate) in enumerate(rates):
+            if stop <= t0 or start >= t1 or not rate:
+                continue
+            bx, bw = x(start), x(stop) - x(start)
+            gap = min(1.0, bw / 4)
+            parts.append(
+                f'<rect class="vol" data-i="{i}" x="{bx + gap / 2:.1f}" y="{vy(rate):.1f}" width="{max(bw - gap, 0.6):.1f}" '
+                f'height="{max(vy(0) - vy(rate), 0):.1f}"/>'
+            )
+        band = "".join(parts)
+        bars = [[start, stop, sold, hours] for start, stop, sold, hours, _ in rates]
+
     def path(index: int) -> str:
         return "M" + " L".join(f"{x(p[0]):.1f},{y(p[index]):.1f}" for p in points)
 
@@ -147,16 +178,17 @@ def price_chart_svg(points: list[tuple[int, int, int, int, int]], days: int, tz:
         f'<circle class="s2" cx="{x(t0):.1f}" cy="{y(points[0][2]):.1f}" r="4"/>'
         if single else ""
     )
+    bottom_edge = band_top + band_h if with_sales else top + plot_h
     data = json.dumps({
         "x0": t0, "x1": t1, "y0": y0, "y1": y1, "left": left, "top": top, "w": plot_w, "h": plot_h,
-        "points": [[p[0], p[1], p[2], p[3]] for p in points],
+        "points": [[p[0], p[1], p[2], p[3]] for p in points], "sales": bars,
     })
     return f"""<div class="chart-wrap"><svg class="price-chart" viewBox="0 0 {width} {height}" role="img"
-aria-label="Courbe des prix, voir le tableau des relevés pour les valeurs">
-{"".join(grid)}{"".join(labels)}
+aria-label="Courbe des prix et ventes estimées, voir le tableau des relevés pour les valeurs">
+{"".join(grid)}{"".join(labels)}{band}
 <path class="s2" d="{path(2)}"/><path class="s1" d="{path(1)}"/>{dots}
-<g class="hover" hidden><line class="cross" y1="{top}" y2="{top + plot_h}"/><circle class="s2" r="5"/><circle class="s1" r="5"/></g>
-<rect class="hit" x="{left}" y="{top}" width="{plot_w}" height="{plot_h}"/>
+<g class="hover" hidden><line class="cross" y1="{top}" y2="{bottom_edge}"/><circle class="s2" r="5"/><circle class="s1" r="5"/></g>
+<rect class="hit" x="{left}" y="{top}" width="{plot_w}" height="{bottom_edge - top}"/>
 </svg><div class="chart-tip" hidden></div><script type="application/json" class="chart-data">{data.replace("</", "<" + chr(92) + "/")}</script></div>"""
 
 
@@ -198,27 +230,6 @@ def _bars_svg(css: str, label: str, bars: list[tuple[float, float, float, str, b
         )
     return f"""<div class="chart-wrap bars-wrap"><svg class="price-chart {css}" viewBox="0 0 {width} {height}" role="img"
 aria-label="{esc(label)}">{"".join(grid)}{ticks}{"".join(shapes)}</svg><div class="chart-tip" hidden></div></div>"""
-
-
-def sales_chart_svg(sales: list[tuple[int, int, int]], x0: int, x1: int, days: int, tz: Any) -> str:
-    """Ventes estimées sous la courbe des prix : vendus par heure (moyenne du jour pour les jours compactés)."""
-    bars = []
-    for ts, sold, hours in sales:
-        when = datetime.fromtimestamp(ts, tz)
-        day = f"{WEEKDAYS[when.weekday()]} {when:%d/%m}"
-        if hours > 1:
-            tip = f"{day} : ≈ {number(sold)} vendus dans la journée ({sold / hours:.1f} par heure en moyenne)"
-            bars.append((ts, ts + 86400, sold / hours, tip, False))
-        else:
-            tip = f"{day}, {when.hour}h–{(when.hour + 1) % 24}h : ≈ {number(sold)} vendu{'s' if sold > 1 else ''}"
-            bars.append((ts, ts + 3600, sold, tip, False))
-    axis = []
-    for i in range(6):
-        t = x0 + (x1 - x0) * i / 5
-        when = datetime.fromtimestamp(t, tz)
-        anchor = "start" if i == 0 else "end" if i == 5 else "middle"
-        axis.append((t, when.strftime("%H:%M" if days <= 1 else "%d/%m %Hh" if days <= 3 else "%d/%m"), anchor))
-    return _bars_svg("sales-chart", "Ventes estimées par heure", bars, x0, x1, axis)
 
 
 def hour_profile(sales: list[tuple[int, int, int]], tz: Any) -> tuple[list[float], int] | None:
@@ -353,8 +364,20 @@ CHART_SCRIPT = """
       c1.setAttribute("cx", px); c1.setAttribute("cy", Y(best[1]));
       c2.setAttribute("cx", px); c2.setAttribute("cy", Y(best[2]));
       hover.removeAttribute("hidden");
+      const t = d.x0 + (sx - d.left) / d.w * (d.x1 - d.x0);
+      const i = d.sales.findIndex(b => b[0] <= t && t < b[1]);
+      svg.querySelectorAll("rect.vol.hot").forEach(r => r.classList.remove("hot"));
+      let sold = "";
+      if (i >= 0) {
+        const [start, , n, hours] = d.sales[i];
+        const h = new Date(start * 1000).getHours();
+        svg.querySelector(`rect.vol[data-i="${i}"]`)?.classList.add("hot");
+        sold = hours > 1
+          ? `<div><i class="kb"></i>≈ ${n.toLocaleString("fr-FR")} vendus ce jour-là</div>`
+          : `<div><i class="kb"></i>≈ ${n.toLocaleString("fr-FR")} vendus entre ${h}h et ${(h + 1) % 24}h</div>`;
+      }
       tip.innerHTML = `<b>${fmt(best[0])}</b><div><i class="k1"></i>Plus bas : ${moneyText(best[1])}</div>
-        <div><i class="k2"></i>Médian : ${moneyText(best[2])}</div><div class="muted">${best[3]} en vente</div>`;
+        <div><i class="k2"></i>Médian : ${moneyText(best[2])}</div><div class="muted">${best[3]} en vente</div>${sold}`;
       tip.hidden = false;
       const left = px / vb.width * box.width;
       tip.style.left = Math.min(Math.max(left - 90, 0), box.width - 190) + "px";
@@ -362,7 +385,10 @@ CHART_SCRIPT = """
     const hit = svg.querySelector("rect.hit");
     hit.addEventListener("mousemove", move);
     hit.addEventListener("touchstart", e => move(e.touches[0]), {passive: true});
-    hit.addEventListener("mouseleave", () => { hover.setAttribute("hidden", ""); tip.hidden = true; });
+    hit.addEventListener("mouseleave", () => {
+      hover.setAttribute("hidden", ""); tip.hidden = true;
+      svg.querySelectorAll("rect.vol.hot").forEach(r => r.classList.remove("hot"));
+    });
   });
   // Barres des ventes : infobulle au survol (ou au toucher) d'une barre.
   document.querySelectorAll(".bars-wrap").forEach(wrap => {
@@ -556,17 +582,21 @@ autocomplete="off">
                 f'<span class="fact"><small>Plus haut ({esc(period_label)})</small>{money_html(max(lows))}</span>'
                 f'<span class="fact"><small>Médian moyen</small>{money_html(sum(meds) // len(meds))}</span></div>'
             )
-            chart = price_chart_svg(points, days, tz)
+            chart = price_chart_svg(points, days, tz, shown_sales)
+            sold_total = sum(r[1] for r in shown_sales)
             legend = (
                 '<div class="chart-legend"><span><i class="k1"></i>Prix le plus bas</span>'
-                '<span><i class="k2"></i>Prix médian</span></div>'
+                '<span><i class="k2"></i>Prix médian</span>'
+                + (f'<span><i class="kb"></i>Ventes estimées (≈ {number(sold_total)} sur la période)</span>'
+                   if sold_total else "")
+                + "</div>"
             )
             table_rows = "".join(
                 f"<tr><td>{datetime.fromtimestamp(t, tz):%d/%m %H:%M}</td>{money_cells(lo)}<td class=\"gap\"></td>"
                 f'{money_cells(med)}<td class="num split">{number(qty)}</td><td class="num">{number(n)}</td></tr>'
                 for t, lo, med, qty, n in reversed(points)
             )
-            history = f"""{stats}{legend}{chart}{self._sales_block(shown_sales, points, days, tz)}
+            history = f"""{stats}{legend}{chart}{self._sales_note(shown_sales)}
 <details class="fold"><summary>Tableau des relevés<span class="n">{len(points)}</span></summary><div class="fold-body">
 <div class="table-wrap ah-scroll"><table class="ah-table"><thead>
 <tr><th rowspan="2">Relevé</th><th colspan="3" class="group">Plus bas</th><th rowspan="2" class="gap"></th>
@@ -644,26 +674,19 @@ autocomplete="off">
         return self._render(request, title, "hdv", body, CHART_SCRIPT)
 
     @staticmethod
-    def _sales_block(sales: list[tuple[int, int, int]], points: list, days: int, tz: Any) -> str:
-        """Barres des ventes estimées, alignées sous la courbe des prix."""
+    def _sales_note(sales: list[tuple[int, int, int]]) -> str:
+        """Comment lire les ventes estimées (sous le graphique)."""
         if not sales:
             return ""
-        total = sum(r[1] for r in sales)
-        head = (
-            '<div class="chart-legend sales-legend"><span><i class="kb"></i>Ventes estimées par heure</span>'
-            f'<span>≈ {number(total)} vendus sur la période</span></div>'
+        if not any(r[1] for r in sales):
+            return '<p class="muted small-note">Aucune vente repérée sur la période.</p>'
+        return (
+            '<p class="muted small-note">Barres bleues : ventes estimées. Une annonce qui disparaît de l\'hôtel des '
+            "ventes bien avant la fin de sa durée a été achetée (ou, plus rarement, retirée par le vendeur) ; celles "
+            "qui allaient expirer ne sont pas comptées, le vrai chiffre est donc plutôt un peu plus haut. Au-delà de "
+            "7 jours, une barre par jour (moyenne par heure). Survole le graphique pour lire le prix et les ventes "
+            "d'une même heure.</p>"
         )
-        if not total:
-            return head + '<p class="muted">Aucune vente repérée sur la période.</p>'
-        x0 = points[0][0] if points else sales[0][0]
-        x1 = points[-1][0] if points and points[-1][0] > x0 else sales[-1][0] + 3600
-        note = (
-            '<p class="muted small-note">Estimation : une annonce qui disparaît de l\'hôtel des ventes bien avant la '
-            "fin de sa durée a été achetée (ou, plus rarement, retirée par le vendeur). Celles qui allaient expirer ne "
-            "sont pas comptées : le vrai chiffre est plutôt un peu plus haut. Au-delà de 7 jours, une barre par jour "
-            "(moyenne par heure).</p>"
-        )
-        return head + sales_chart_svg(sales, x0, x1, days, tz) + note
 
     # ============================================================ actions
 

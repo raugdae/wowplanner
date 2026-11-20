@@ -524,7 +524,7 @@ hôtel des ventes de l'Alliance. Les objets sont en couleur de qualité (gris, b
 l'utilisent ou le fabriquent.</p>
 {tip("Avant de vendre, regarde la courbe : si le prix est au plus bas de la semaine, attendre quelques jours peut rapporter plus.")}"""),
         Section("ventes", "Les ventes et les heures de demande", f"""
-<p>Sous la courbe des prix, des <b>barres bleues</b> montrent combien d'exemplaires se sont vendus chaque heure.
+<p>Dans le même graphique, sous la courbe des prix, des <b>barres bleues</b> montrent combien d'exemplaires se sont vendus chaque heure : survole le graphique pour lire le prix et les ventes d'une même heure.
 Plus haut sur la fiche, la case {ui('Vendus (24 h)')} donne le total de la dernière journée.</p>
 <p>Tout en bas, le graphique <b>« Quand ça se vend »</b> range les ventes par heure de la journée (moyenne sur la
 dernière semaine) : on voit d'un coup d'œil les heures où les acheteurs sont là. L'heure actuelle est en jaune.
