@@ -132,6 +132,28 @@ def recipe_profits(recipes: list, items: dict[int, Any]) -> tuple[list[RecipePro
     return results, without_item
 
 
+@dataclass(frozen=True)
+class GatheredValue:
+    """Ce que rapporte une ressource récoltée (rien à payer : la comparaison se fait avec le marchand)."""
+    net: int | None  # vente à l'HdV, commission déduite
+    vendor: int | None  # revente au marchand
+
+    @property
+    def gain(self) -> int | None:
+        """Ce que l'HdV rapporte de plus que le marchand (négatif : mieux vaut vendre au marchand)."""
+        return None if self.net is None else self.net - (self.vendor or 0)
+
+    @property
+    def margin(self) -> float | None:
+        gain = self.gain
+        return None if gain is None or not self.vendor else gain / self.vendor * 100
+
+
+def gathered_value(row: Any) -> GatheredValue:
+    net = int(row["min_price"] * (1 - AH_CUT)) if row["min_price"] else None
+    return GatheredValue(net, row["sell_price"] or None)
+
+
 def gathering_rows(rows: list, skills: dict[int, int], skill: int | None) -> list[tuple[Any, int | None, bool]]:
     """Ressources en vente (ah_tradeskill_on_sale) → [(ligne, niveau requis, récoltable maintenant)], les récoltables
     d'abord, puis par prix décroissant. Un niveau inconnu compte comme récoltable."""

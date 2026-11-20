@@ -10,7 +10,7 @@ from aiohttp import web
 
 from .auctions import money_text
 from .gamedata import is_primary, profession_label
-from .profit import AH_CUT, GATHERING, gathering_rows, recipe_profits
+from .profit import AH_CUT, GATHERING, gathered_value, gathering_rows, recipe_profits
 from .web import _VIEWER, esc
 from .webauction import COIN_HEADS, LIST_SCRIPT, AuctionPages, item_icon, item_name, money_cells, number
 
@@ -104,27 +104,33 @@ composants au prix le plus bas de l'HdV, ou au prix du marchand pour ceux qu'il 
         lines = []
         for row, required, reachable in rows:
             req = str(required) if required is not None else "?"
-            vendor = money_text(row["sell_price"]) if row["sell_price"] else "—"
+            value = gathered_value(row)
+            vendor = money_text(value.vendor) if value.vendor else "—"
+            margin = f"{value.margin:+.0f} %" if value.margin is not None else ""
             lines.append(
                 f'<tr class="{"" if reachable else "later"}"><td><a class="ah-name" href="/hdv/objet/{row["item_id"]}">'
                 f"{item_icon(row)}<span>{item_name(row)}</span></a></td>"
                 f'<td class="num">{req}</td>{money_cells(row["min_price"], row["item_id"])}<td class="gap"></td>'
-                f'{money_cells(row["median_price"])}<td class="num split">{number(row["quantity"])}</td>'
-                f'<td class="num muted">{esc(vendor)}</td></tr>'
+                f"{money_cells(value.net)}<td class=\"num split muted\">{esc(vendor)}</td>"
+                f'<td class="num">{signed_money(value.gain)}</td><td class="num">{esc(margin)}</td>'
+                f'<td class="num">{number(row["quantity"])}</td></tr>'
             )
         reachable = sum(1 for r in rows if r[2])
         table = (
             '<div class="table-wrap ah-scroll"><table class="ah-table"><thead>'
             '<tr><th rowspan="2">Ressource</th><th rowspan="2" class="num">Niveau</th>'
             '<th colspan="3" class="group">Prix le plus bas</th><th rowspan="2" class="gap"></th>'
-            '<th colspan="3" class="group">Prix médian</th><th rowspan="2" class="num split">Disponibles</th>'
-            '<th rowspan="2" class="num">Marchand</th></tr>'
+            '<th colspan="3" class="group">Vente HdV (net)</th><th rowspan="2" class="num split">Marchand</th>'
+            '<th rowspan="2" class="num">Gain vs marchand</th><th rowspan="2" class="num">Marge</th>'
+            '<th rowspan="2" class="num">En vente</th></tr>'
             f'<tr>{COIN_HEADS}{COIN_HEADS}</tr></thead><tbody>{"".join(lines)}</tbody></table></div>'
             if lines else '<p class="empty">Aucune de ces ressources n\'est en vente en ce moment.</p>'
         )
         return f"""<section class="card admin-sec"><h2>{esc(profession_label(key))}{esc(level)} · récolte</h2>
 <p class="muted">{esc(label)} en vente à l'HdV : {reachable} récoltable(s) à ton niveau (en premier, du plus cher au
-moins cher), les autres grisées.</p>{table}</section>"""
+moins cher), les autres grisées. Rien à payer pour une ressource récoltée : le gain et la marge comparent la vente à
+l'HdV (commission de {AH_CUT * 100:.0f} % déduite) à la revente au marchand ; un gain négatif veut dire qu'il vaut mieux
+la vendre au marchand.</p>{table}</section>"""
 
     # ------------------------------------------------------------ fabrication
 

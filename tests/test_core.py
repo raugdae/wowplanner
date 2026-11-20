@@ -2121,6 +2121,15 @@ def test_profit_computation():
     assert expensive.revenue == 5700 and expensive.missing == 1 and expensive.profit is None  # 2 × 3000 × 0,95
     assert results[2].revenue is None and results[2].vendor_value == 30
 
+    from wowplanner.profit import gathered_value
+
+    herb = gathered_value({"min_price": 200, "sell_price": 10})
+    assert (herb.net, herb.vendor, herb.gain, round(herb.margin)) == (190, 10, 180, 1800)
+    cheap = gathered_value({"min_price": 10, "sell_price": 25})  # mieux vaut le marchand
+    assert cheap.gain == -16 and round(cheap.margin) == -64
+    assert gathered_value({"min_price": None, "sell_price": 25}).gain is None
+    assert gathered_value({"min_price": 100, "sell_price": 0}).margin is None  # pas de prix marchand : pas de %
+
     rows = [{"item_id": 3356, "min_price": 900}, {"item_id": 2447, "min_price": 200}, {"item_id": 777777, "min_price": 50}]
     ordered = gathering_rows(rows, {2447: 1, 3356: 125}, 100)
     assert [(r[0]["item_id"], r[1], r[2]) for r in ordered] == [(2447, 1, True), (777777, None, True), (3356, 125, False)]
@@ -2186,3 +2195,5 @@ def test_profit_page(tmp_path):
     assert 'class="later"' in text and "Sang-royal" in text  # niveau 125 : pas encore récoltable (120)
     assert text.index("Pacifique</span></span></a>") < text.index("Sang-royal</span></span></a>")
     assert 'href="/rentabilite"' in text  # lien dans le menu du compte
+    # Récolte : Pacifique à 200 pc → 190 pc nets, revendu 10 pc au marchand → 180 pc de plus, marge de 1800 %.
+    assert "+ 1 pa 80 pc" in text and "+1800 %" in text and "Gain vs marchand" in text
