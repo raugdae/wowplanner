@@ -17,7 +17,7 @@ from .profit import (
     gathered_value, gathering_rows, out_of_reach, raw_unit, recipe_profits,
 )
 from .recipes import normalize
-from .web import _VIEWER, TABS_SCRIPT, esc
+from .webui import _VIEWER, TABS_SCRIPT, esc
 from .webauction import COIN_HEADS, LIST_SCRIPT, MONEY_JS, AuctionPages, item_icon, item_name, money_cells, number
 
 # Au-delà, les recettes les moins rentables sont repliées.

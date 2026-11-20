@@ -30,8 +30,9 @@ from .orders import MAX_QUANTITY, STATUS_LABELS, TRANSITIONS, allowed_actions
 from .orders import search as order_search
 from .recipes import normalize
 from .roles import LABELS, ROLES
-from .web import (
-    _VIEWER, CLASS_COLORS, FILTER_SCRIPT, QUALITY_COLORS, avatar_html, class_span, esc, login_url, page, recipe_card,
+from .webrecipes import recipe_card
+from .webui import (
+    _VIEWER, CLASS_COLORS, FILTER_SCRIPT, QUALITY_COLORS, avatar_html, class_span, esc, login_url, page,
 )
 from .webauth import unsign
 

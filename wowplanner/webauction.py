@@ -18,7 +18,7 @@ from aiohttp import web
 from .armory import icon_url
 from .auctions import money_parts, money_text
 from .recipes import normalize
-from .web import QUALITY_COLORS, esc
+from .webui import QUALITY_COLORS, esc
 from .webmember import MemberPages
 
 PAGE_SIZE = 50

@@ -1222,7 +1222,7 @@ def test_sync_steps_without_armory(tmp_path):
 
 
 def test_stat_tooltips():
-    from wowplanner.web import STAT_GROUPS, STAT_HELP, stat_tooltip
+    from wowplanner.webcharacter import STAT_GROUPS, STAT_HELP, stat_tooltip
 
     # Chaque caractéristique affichée a son explication.
     assert {key for _, rows in STAT_GROUPS for key, _, _ in rows if key != "power"} <= set(STAT_HELP)
@@ -1804,7 +1804,7 @@ def test_proficiency_rules():
 def test_crafted_gear_on_character_page(tmp_path):
     """Fiche perso : équipement fabricable par la guilde que le perso peut porter, comparé à ce qu'il porte."""
     from wowplanner.db import Crafter, GuildRecipe
-    from wowplanner.web import crafted_gear_html
+    from wowplanner.webcharacter import crafted_gear_html
     from wowplanner.db import Character
 
     def recipe(rid, name, cls, sub, slot, req, ilvl, stats=()):

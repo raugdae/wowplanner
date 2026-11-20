@@ -474,8 +474,13 @@ wowplanner/
   embeds.py            rendu du message de sortie sur Discord
 
   # Site web
-  web.py               serveur, connexion, mise en page, pages de consultation (Guilde, fiches, Métiers, Donjons)
+  web.py               serveur : connexion avec Discord, contrôle d'accès, routes, feuille de style
   webauth.py           connexion au site avec Discord (OAuth2, cookies signés)
+  webui.py             mise en page commune : en-tête, menu du compte, thèmes, scripts partagés
+  static/site.css      feuille de style (mise en cache par le navigateur)
+  webpages.py          Guilde, fiche d'un perso, Métiers, Donjons (consultation)
+  webcharacter.py      blocs de la fiche perso : équipement, stats, talents, équipement fabricable
+  webrecipes.py        cartes de recettes (Métiers, fiche perso, atelier)
   webmember.py         Sorties, Mes persos, Atelier, Administration (formulaires des membres)
   webauction.py        Hôtel des ventes (liste, favoris, fiche avec courbe des prix)
   webprofit.py         Rentabilité de mes métiers, Calculatrice HdV
