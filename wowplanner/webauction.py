@@ -108,7 +108,8 @@ def price_chart_svg(points: list[tuple[int, int, int, int, int]], days: int, tz:
     les ventes estimées en barres (par heure ; moyenne par heure pour les jours compactés). SVG sans bibliothèque,
     graduations rondes ; la couche de survol (curseur commun + infobulle prix et ventes) est ajoutée par CHART_SCRIPT."""
     with_sales = any(r[1] for r in sales)
-    width, left, right, top, bottom = 820, 78, 16, 16, 34
+    width, left, top, bottom = 820, 70, 16, 30
+    right = 52 if with_sales else 16  # échelle des ventes à droite
     plot_w, plot_h = width - left - right, 250
     band_gap, band_h = 32, 100 if with_sales else 0
     band_top = top + plot_h + band_gap
@@ -153,10 +154,11 @@ def price_chart_svg(points: list[tuple[int, int, int, int, int]], days: int, tz:
         vy = lambda v: band_top + (1 - v / v1) * band_h  # noqa: E731
         parts = [
             f'<line class="grid" x1="{left}" x2="{width - right}" y1="{vy(v):.1f}" y2="{vy(v):.1f}"/>'
-            f'<text class="axis" x="{left - 8}" y="{vy(v) + 4:.1f}" text-anchor="end">{number(int(v))}</text>'
-            for v in (0, v1)
+            f'<text class="axis vaxis" x="{width - right + 6}" y="{vy(v) + 3:.1f}">{number(int(v))}</text>'
+            for v in (0, v1 / 2, v1)
         ]
-        parts.append(f'<text class="axis band-title" x="{left + 4}" y="{band_top - 6}">Ventes estimées par heure</text>')
+        parts.append(f'<text class="axis band-title" x="{width - right}" y="{band_top - 8}" '
+                     'text-anchor="end">Ventes estimées par heure</text>')
         for i, (start, stop, sold, hours, rate) in enumerate(rates):
             if stop <= t0 or start >= t1 or not rate:
                 continue
