@@ -19,6 +19,7 @@ import base64
 import re
 import time
 from dataclasses import dataclass
+from email.utils import parsedate_to_datetime
 from typing import Any
 from urllib.parse import quote
 
@@ -118,6 +119,56 @@ class ArmoryClient:
                     return await resp.json()
             await asyncio.sleep(1 + attempt)
         raise AssertionError("unreachable")
+
+    async def get_dated(self, path: str, namespace: str) -> tuple[dict[str, Any], float | None]:
+        """Comme get(), plus la date de mise à jour des données (en-tête Last-Modified, timestamp unix)."""
+        token = await self.get_token()
+        url = f"{self.base_url}{path}"
+        params = {"namespace": f"{namespace}-{self.region}", "locale": self.locale}
+        for attempt in range(RATE_LIMIT_RETRIES + 1):
+            async with self.session.get(
+                url, params=params, headers={"Authorization": f"Bearer {token}"},
+                timeout=aiohttp.ClientTimeout(total=max(self.timeout, 60)),
+            ) as resp:
+                if resp.status == 429 and attempt < RATE_LIMIT_RETRIES:
+                    pass
+                elif resp.status != 200:
+                    raise ArmoryError(resp.status, f"{url}?namespace={params['namespace']}", (await resp.text())[:200])
+                else:
+                    modified = resp.headers.get("Last-Modified")
+                    stamp = None
+                    if modified:
+                        try:
+                            stamp = parsedate_to_datetime(modified).timestamp()
+                        except (TypeError, ValueError):
+                            stamp = None
+                    return await resp.json(), stamp
+            await asyncio.sleep(1 + attempt)
+        raise AssertionError("unreachable")
+
+    async def auctions(self, ruleset: int, house: int, commodities: bool) -> tuple[dict[str, Any], float | None]:
+        """Annonces d'un hôtel des ventes de Forever : objets uniques, ou ressources (prix à l'unité).
+
+        Forever n'a pas de royaumes dans l'API : les hôtels des ventes sont rangés sous les règles de jeu
+        (/data/wow/ruleset/{n}/auctions/ en donne la liste, la même pour toutes les règles)."""
+        path = f"/data/wow/ruleset/{ruleset}/auctions/{house}" + ("/commodities" if commodities else "")
+        return await self.get_dated(path, "dynamic-forever")
+
+    async def search_items(self, from_id: int) -> list[dict[str, Any]]:
+        """Jusqu'à 1000 objets de Forever d'identifiant >= from_id, par identifiant croissant (base des objets)."""
+        token = await self.get_token()
+        url = f"{self.base_url}/data/wow/search/item"
+        params = {
+            "namespace": f"static-forever-{self.region}", "orderby": "id", "_pageSize": "1000", "id": f"[{from_id},]",
+        }
+        async with self.session.get(
+            url, params=params, headers={"Authorization": f"Bearer {token}"},
+            timeout=aiohttp.ClientTimeout(total=max(self.timeout, 60)),
+        ) as resp:
+            if resp.status != 200:
+                raise ArmoryError(resp.status, url, (await resp.text())[:200])
+            payload = await resp.json()
+        return [r.get("data") or {} for r in payload.get("results") or []]
 
     async def character(self, name: str, endpoint: str = "") -> dict[str, Any]:
         """Fiche d'un perso (endpoint vide) ou une sous-ressource : « /statistics », « /professions »…"""

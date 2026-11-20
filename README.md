@@ -300,6 +300,13 @@ sorties et gérer ses persos. Il peut être réservé aux membres du Discord (vo
   sur Discord** avec ses boutons, comme depuis le panneau. « Mes commandes » liste celles reçues et passées, avec les
   mêmes actions (Accepter, Refuser, C'est prêt, Abandonner, Annuler) : l'autre partie est prévenue en MP et le MP de
   l'artisan se met à jour. Chaque recette des pages Métiers et chaque objet conseillé ont un lien « 🛒 Commander » ;
+- **Hôtel des ventes** (avec `AUCTION_HOUSE_ID`, voir plus bas) : tous les objets en vente avec leur prix le plus
+  bas et leur prix médian à l'unité, la quantité disponible, le nombre d'annonces et la variation sur 24 h ;
+  recherche par nom, filtre par type et sous-type (Artisanat · Tissu, Consommable · Potion, Artisanat ·
+  Enchantement…), tri, et **favoris** (☆ sur chaque ligne, case « Mes favoris »). Au survol d'un prix, une petite
+  **courbe des 7 derniers jours** ; un clic ouvre la **fiche de l'objet** : sa courbe sur 24 h, 3, 7, 30 ou 90 jours
+  (prix le plus bas en trait plein, médian en pointillé, valeurs au survol), le tableau des relevés, son prix chez le
+  marchand, qui le fabrique sur le serveur (avec « Commander ») et dans quelles recettes il sert ;
 - **Guilde** : tableau de tous les persos du serveur par ordre alphabétique (classe, race, rôles, métiers et
   niveaux), recherche et filtres par classe, rôle ou métier ;
 - **fiche d'un perso** : façon fiche du jeu, son **équipement** autour de son rendu en pied (icônes, infobulles,
@@ -348,6 +355,27 @@ conteneur), donc il est toujours à jour. Il montre les persos du serveur `GUILD
 **Sécurité des formulaires** : chaque action (inscription, création, suppression…) porte un jeton propre au joueur
 connecté, et le site refuse les envois venus d'un autre site. Les actions demandent la connexion Discord : sans
 `DISCORD_CLIENT_SECRET`, le site reste en lecture seule.
+
+### Hôtel des ventes
+
+Il faut les clés Blizzard (voir « Armurerie WoW Forever ») et, dans `.env`, le numéro de l'hôtel des ventes à
+suivre : `AUCTION_HOUSE_ID=111` (hôtel de l'Alliance de notre serveur). Sans lui, la page est désactivée.
+
+Forever n'a pas de royaumes dans l'API : les hôtels des ventes sont rangés sous les « règles de jeu »
+(`/data/wow/ruleset/{n}/auctions/`, la même liste pour toutes les règles), 15 au total : Alliance 110, 111, 112,
+119, 123 ; Horde 113, 114, 115, 120, 124 ; Flots noirs (neutre) 116, 117, 118, 121, 125. Pour trouver le sien : mettre
+un objet en vente à un prix reconnaissable et chercher dans quel hôtel il apparaît.
+
+- **Relevés** : toutes les 20 minutes, le bot demande les deux listes de Blizzard (objets uniques et ressources,
+  environ 1 Mo chacune, mises à jour à peu près toutes les heures) et enregistre un relevé quand elles ont changé.
+  Si l'API ne répond pas, la page garde les derniers prix connus (et le signale au bout de 3 h).
+- **Base locale des objets** : tout le catalogue de Forever (nom, type, qualité, prix chez le marchand) est lu au
+  premier démarrage par la recherche d'objets de l'API (environ 30 requêtes de 1 000 objets), relu chaque semaine,
+  et complété objet par objet pour les nouveautés. Les icônes arrivent petit à petit (300 par relevé, les plus
+  vendus d'abord).
+- **Historique** : un relevé par heure pendant 7 jours, puis un par jour (plus bas prix du jour, moyennes) jusqu'à
+  90 jours. Compter quelques dizaines de Mo dans la base pour ~7 000 objets.
+- **Quotas** : 2 requêtes toutes les 20 minutes, plus le catalogue et les icônes : très loin des 36 000 par heure.
 
 ### Connexion avec Discord
 
@@ -412,6 +440,9 @@ wowplanner/
   recipes.py          recettes : recherche, regroupement, composants dépliés
   web.py              site web (persos, métiers, recettes, donjons)
   webmember.py        site : sorties et « Mes persos » (formulaires, vérification dans l'armurerie)
+  webauction.py       site : hôtel des ventes (liste, favoris, fiche avec courbe des prix)
+  auctions.py         hôtel des ventes : agrégation des annonces, prix, base des objets
+  cogs/auctions.py    relevé des prix de l'hôtel des ventes (toutes les 20 min)
   webauth.py          connexion au site avec Discord (OAuth2, cookies signés)
   cogs/webbridge.py   actions du site exécutées par le bot (sorties, persos)
   cogs/schedule.py    rappels en MP et salons vocaux temporaires

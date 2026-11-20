@@ -1887,3 +1887,201 @@ def test_orders_shared_with_site(tmp_path):
     asyncio.run(scenario())
     assert sent and sent[0][0] == me and "accepté" in sent[0][1]
     db.close()
+
+
+def test_auction_aggregate_and_money():
+    from wowplanner.auctions import aggregate, money_text, parse_search_item
+
+    points = aggregate([
+        {"item": {"id": 2589}, "quantity": 20, "unit_price": 30},
+        {"item": {"id": 2589}, "quantity": 5, "unit_price": 25},
+        {"item": {"id": 2589}, "quantity": 100, "unit_price": 40},
+        {"item": {"id": 8499}, "quantity": 1, "buyout": 150000},
+        {"item": {"id": 8499}, "quantity": 1, "buyout": 180000},
+        {"item": {"id": 9999}, "quantity": 1, "bid": 500},  # enchère seule : ignorée
+    ])
+    linen = points[2589]
+    assert (linen.min_price, linen.median_price, linen.quantity, linen.listings) == (25, 40, 125, 3)
+    assert points[8499].min_price == 150000 and points[8499].listings == 2 and 9999 not in points
+    assert money_text(150000) == "15 po" and money_text(1234567) == "123 po 45 pa 67 pc"
+    assert money_text(10050) == "1 po 50 pc" and money_text(0) == "0 pc" and money_text(12345678) == "1 234 po 56 pa 78 pc"
+    item = parse_search_item({
+        "id": 8499, "name": {"fr_FR": "Minuscule jeune dragonnet cramoisi", "en_US": "Tiny Crimson Whelpling"},
+        "quality": {"type": "COMMON"}, "item_class": {"id": 15, "name": {"fr_FR": "Divers"}},
+        "item_subclass": {"id": 2, "name": {"fr_FR": "Familier"}}, "sell_price": 0, "is_stackable": False,
+    })
+    assert item.name == "Minuscule jeune dragonnet cramoisi" and item.search == "minuscule jeune dragonnet cramoisi"
+    assert (item.class_name, item.subclass_name, item.stackable) == ("Divers", "Familier", False)
+    assert parse_search_item({"id": 1}) is None
+
+
+def test_auction_db_history_and_listing(tmp_path):
+    from wowplanner.auctions import ItemRecord, PricePoint
+    from wowplanner.db import Database
+
+    db = Database(tmp_path / "t.db")
+    db.upsert_ah_items([
+        ItemRecord(2589, "Étoffe de lin", "COMMON", 7, "Artisanat", 5, "Tissu", 5, 0, 13, True),
+        ItemRecord(8499, "Minuscule jeune dragonnet cramoisi", "COMMON", 15, "Divers", 2, "Familier", 30, 0, 0, False),
+    ])
+    day = 86400
+    now = 1_800_000_000 // day * day + 12 * 3600
+    db.store_ah_snapshot(now - day, {2589: PricePoint(40, 45, 100, 3)})
+    db.store_ah_snapshot(now, {2589: PricePoint(30, 35, 200, 5), 8499: PricePoint(150000, 150000, 1, 1)})
+    assert db.ah_snapshot_time() == now
+    rows, total = db.ah_listing()
+    assert total == 2 and [r["name"] for r in rows] == ["Étoffe de lin", "Minuscule jeune dragonnet cramoisi"]
+    assert rows[0]["min_price_24h"] == 40  # variation sur 24 h
+    assert [r["item_id"] for r in db.ah_listing(query="lin")[0]] == [2589]
+    assert [r["item_id"] for r in db.ah_listing(query="dragonnet")[0]] == [8499]
+    assert [r["item_id"] for r in db.ah_listing(class_id=15)[0]] == [8499]
+    assert [r["item_id"] for r in db.ah_listing(sort="-prix")[0]] == [8499, 2589]
+    assert db.ah_classes()[0][1] in ("Artisanat", "Divers")
+    assert db.toggle_ah_favorite(7, 8499) is True and db.ah_favorite_ids(7) == {8499}
+    assert [r["item_id"] for r in db.ah_listing(favorites_of=7)[0]] == [8499]
+    assert db.toggle_ah_favorite(7, 8499) is False and db.ah_favorite_ids(7) == set()
+    assert db.ah_item(2589)["min_price"] == 30 and db.ah_item(424242) is None
+
+    # Historique : au-delà de 7 jours, un relevé par jour ; au-delà de 90 jours, plus rien.
+    old = now - 10 * day
+    for hour, price in ((1, 50), (2, 20), (3, 80)):
+        db.store_ah_snapshot(old // day * day + hour * 3600, {2589: PricePoint(price, price + 10, 10, 1)})
+    db.store_ah_snapshot(now - 100 * day, {2589: PricePoint(1, 1, 1, 1)})
+    db.store_ah_snapshot(now, {2589: PricePoint(30, 35, 200, 5), 8499: PricePoint(150000, 150000, 1, 1)})
+    db.compact_ah_prices(now)
+    history = db.ah_history(2589, now - 200 * day)
+    assert history[0][:3] == (old // day * day, 20, 60)  # plus bas prix du jour, médiane moyenne
+    assert all(h[0] >= now - 90 * day for h in history) and len(history) == 3
+    assert db.get_setting("x") is None
+    db.set_setting("x", "1")
+    assert db.get_setting("x") == "1"
+    db.close()
+
+
+def test_auction_cog_refresh(tmp_path):
+    """Relevé : nouvelles données enregistrées une fois, catalogue des objets, objets inconnus complétés."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from wowplanner.cogs.auctions import AuctionCog
+    from wowplanner.db import Database
+
+    db = Database(tmp_path / "t.db")
+    calls = {"auctions": 0, "search": 0, "item": 0}
+
+    class FakeClient:
+        locale = "fr_FR"
+
+        async def auctions(self, ruleset, house, commodities):
+            calls["auctions"] += 1
+            if commodities:
+                return {"auctions": [{"item": {"id": 2589}, "quantity": 20, "unit_price": 30}]}, 1_800_000_000.0
+            return {"auctions": [{"item": {"id": 777}, "quantity": 1, "buyout": 5000}]}, 1_800_000_100.0
+
+        async def search_items(self, from_id):
+            calls["search"] += 1
+            return [{"id": 2589, "name": {"fr_FR": "Étoffe de lin"}, "item_class": {"id": 7, "name": {"fr_FR": "Artisanat"}}}]
+
+        async def item(self, item_id):
+            calls["item"] += 1
+            return {"id": item_id, "name": "Épée inconnue", "item_class": {"id": 2, "name": "Arme"}}
+
+    class FakeArmory:
+        available = True
+        client = FakeClient()
+
+        async def fetch_item_icons(self, ids):
+            db.set_item_icons({i: f"https://render.worldofwarcraft.com/eu/icons/56/{i}.jpg" for i in ids})
+
+    bot = SimpleNamespace(
+        db=db, config=SimpleNamespace(auction_house_id=111, auction_ruleset=1),
+        get_cog=lambda name: FakeArmory() if name == "ArmoryCog" else None,
+    )
+    cog = AuctionCog(bot)
+    assert asyncio.run(cog.refresh()) == "2 objets relevés"
+    assert db.ah_snapshot_time() == 1_800_000_100 // 3600 * 3600
+    assert db.ah_item(777)["name"] == "Épée inconnue" and db.ah_item(2589)["name"] == "Étoffe de lin"
+    assert db.ah_listing()[0][0]["icon"].startswith("https://")
+    assert asyncio.run(cog.refresh()) == "pas de nouvelles données"
+    assert calls["search"] == 1 and calls["item"] == 1  # catalogue lu une fois, objet inconnu demandé une fois
+    db.close()
+
+
+def test_auction_pages(tmp_path):
+    """Page Hôtel des ventes : liste, recherche, favoris (JSON), fiche avec courbe, historique pour le survol."""
+    import asyncio
+    import re
+    import time
+
+    import aiohttp
+
+    from wowplanner.auctions import ItemRecord, PricePoint
+    from wowplanner.db import Database
+    from wowplanner.web import WebSite
+    from wowplanner.webauth import SESSION_COOKIE, DiscordOAuth, sign
+
+    db = Database(tmp_path / "t.db")
+    db.upsert_ah_items([
+        ItemRecord(2589, "Étoffe de lin", "COMMON", 7, "Artisanat", 5, "Tissu", 5, 0, 13, True),
+        ItemRecord(8499, "Minuscule jeune dragonnet cramoisi", "COMMON", 15, "Divers", 2, "Familier", 30, 0, 0, False),
+    ])
+    now = int(time.time()) // 3600 * 3600
+    for h in range(48, -1, -6):
+        db.store_ah_snapshot(now - h * 3600, {2589: PricePoint(30 + h, 40 + h, 200, 5),
+                                              8499: PricePoint(150000, 150000, 1, 1)})
+
+    class FakeOAuth(DiscordOAuth):
+        async def fetch_user(self, code):
+            raise AssertionError("pas utilisé")
+
+    async def is_member(user_id):
+        return True
+
+    site = WebSite(db, lambda: 42)
+    secret = b"k" * 32
+    site.enable_auth(FakeOAuth(None, "1", "s", "https://wow.fr/auth/callback"), secret, is_member, secure_cookies=False)
+    site.auction_house = 111
+    stamp = int(time.time())
+    session = sign({"id": 5, "name": "Raug", "chk": stamp, "exp": stamp + 3600}, secret)
+    got = {}
+
+    async def scenario():
+        await site.start("127.0.0.1", 0)
+        port = next(iter(site._runner.sites))._server.sockets[0].getsockname()[1]
+        base = f"http://127.0.0.1:{port}"
+        async with aiohttp.ClientSession(cookie_jar=aiohttp.CookieJar(unsafe=True), cookies={SESSION_COOKIE: session}) as s:
+            async def get(path):
+                async with s.get(base + path, allow_redirects=False) as resp:
+                    return resp.status, await resp.text()
+            got["list"] = await get("/hdv")
+            got["search"] = await get("/hdv?q=dragonnet")
+            token = re.search(r'name="csrf" value="([0-9a-f]+)"', got["list"][1]).group(1)
+            async with s.post(base + "/hdv/favori/8499", data={"csrf": token},
+                              headers={"Accept": "application/json"}) as resp:
+                got["fav"] = resp.status, await resp.json()
+            async with s.post(base + "/hdv/favori/2589", data={}, headers={"Accept": "application/json"}) as resp:
+                got["fav_no_token"] = resp.status
+            got["favs"] = await get("/hdv?favoris=1")
+            got["item"] = await get("/hdv/objet/2589?periode=3j")
+            got["unknown"] = await get("/hdv/objet/424242")
+            async with s.get(base + "/api/hdv/2589/historique?jours=7") as resp:
+                got["api"] = await resp.json()
+        await site.stop()
+
+    asyncio.run(scenario())
+    db.close()
+
+    status, text = got["list"]
+    assert status == 200 and "Étoffe de lin" in text and "dragonnet cramoisi" in text and "n° 111" in text
+    assert 'class="mg">15</span>' in text  # 15 po
+    assert 'data-item="2589"' in text and "▼" in text  # moins cher qu'il y a 24 h
+    assert "Étoffe de lin" not in got["search"][1] and "dragonnet" in got["search"][1]
+    assert got["fav"] == (200, {"favorite": True}) and got["fav_no_token"] == 403
+    assert "dragonnet" in got["favs"][1] and "Étoffe de lin" not in got["favs"][1]
+    status, text = got["item"]
+    assert status == 200 and 'class="price-chart"' in text and "Cours sur 3 jours" in text
+    data = re.search(r'<script type="application/json" class="chart-data">(.*?)</script>', text, re.S).group(1)
+    import json
+    assert len(json.loads(data)["points"]) == 9  # 72 h, un relevé toutes les 6 h (le plus ancien : 48 h)
+    assert got["unknown"][0] == 404
+    assert got["api"]["name"] == "Étoffe de lin" and len(got["api"]["points"]) == 9

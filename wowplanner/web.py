@@ -515,6 +515,49 @@ tr[data-href] { cursor:pointer; }
 .only-up .gear-item:not([data-up="1"]) { display:none; }
 .only-up .gear-group:not(:has(.gear-item[data-up="1"])) { display:none; }
 .order-link { color:var(--accent) !important; font-weight:600; }
+/* Hôtel des ventes (webauction.py). Pièces : or, argent, cuivre, chacune suivie de son unité. */
+.money { white-space:nowrap; font-variant-numeric:tabular-nums; }
+.money span + span { margin-left:4px; }
+.money .mg::after { content:" po"; color:#e6b422; } .money .ms::after { content:" pa"; color:#b8c2cc; }
+.money .mc::after { content:" pc"; color:#c8794a; }
+.ah-filters select, .ah-filters input[type=search] { min-width:0; }
+.fav-filter { display:flex; gap:6px; align-items:center; color:var(--muted); cursor:pointer; white-space:nowrap; }
+.fav-filter input { accent-color:var(--accent); }
+.ah-table td { vertical-align:middle; }
+.ah-name { display:flex; align-items:center; gap:10px; }
+.ah-name small { display:block; color:var(--muted); font-size:12px; }
+.ah-icon { width:30px; height:30px; border-radius:6px; border:1px solid var(--line); flex:none; background:var(--panel2); }
+.ah-icon.none { display:inline-block; }
+a.price { text-decoration:underline dotted rgba(127,127,127,.6); text-underline-offset:3px; }
+.chg.up { color:#ff8a8a; } .chg.down { color:#5fd38d; }
+.pager { display:flex; gap:10px; align-items:center; justify-content:center; margin:14px 0; }
+.spark-pop { position:absolute; z-index:50; width:280px; background:rgba(10,13,22,.97); color:#eee;
+  border:1px solid #6a5a32; border-radius:8px; padding:8px 10px; box-shadow:0 6px 22px rgba(0,0,0,.65); font-size:13px; }
+.spark-title { font-weight:600; margin-bottom:4px; }
+.spark { width:100%; height:auto; display:block; }
+.spark path, .price-chart path { fill:none; stroke-width:2; stroke-linejoin:round; stroke-linecap:round; }
+.spark .s1, .price-chart .s1 { stroke:var(--accent); } .spark circle.s1, .price-chart circle.s1 { fill:var(--accent); }
+.spark .s2, .price-chart .s2 { stroke:#9fb3d9; stroke-dasharray:5 4; }
+.price-chart circle.s2 { fill:#9fb3d9; stroke:none; }
+.price-chart circle { stroke:var(--panel); stroke-width:2; }
+.spark-legend, .chart-legend { display:flex; gap:14px; color:var(--muted); font-size:12px; margin:4px 0; }
+.spark-legend i, .chart-legend i, .chart-tip i { display:inline-block; width:16px; height:0; margin-right:5px;
+  vertical-align:middle; border-top:2px solid var(--accent); }
+.spark-legend i.k2, .chart-legend i.k2, .chart-tip i.k2 { border-top:2px dashed #9fb3d9; }
+.spark-range { color:#bbb; font-size:12px; }
+.chart-wrap { position:relative; background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:8px; }
+.price-chart { width:100%; height:auto; display:block; }
+.price-chart .grid { stroke:var(--line); stroke-width:1; }
+.price-chart .axis { fill:var(--muted); font-size:12px; }
+.price-chart .cross { stroke:var(--muted); stroke-width:1; stroke-dasharray:3 3; }
+.price-chart .hit { fill:transparent; cursor:crosshair; }
+.chart-tip { position:absolute; top:8px; width:190px; background:rgba(10,13,22,.97); color:#eee; border:1px solid #6a5a32;
+  border-radius:8px; padding:6px 9px; font-size:12px; pointer-events:none; }
+.ah-head { display:flex; gap:14px; align-items:center; margin-bottom:10px; }
+.ah-head .ah-icon { width:52px; height:52px; border-radius:10px; }
+.ah-head h1 { display:flex; align-items:center; gap:8px; }
+.period-tabs { display:flex; gap:6px; flex-wrap:wrap; margin:0 0 10px; }
+.period-tabs .act { text-decoration:none; }
 /* Atelier. */
 .order-grid { display:grid; grid-template-columns:minmax(0, 1fr) minmax(0, 1.4fr); gap:14px; align-items:start; }
 @media (max-width:760px) { .order-grid { grid-template-columns:1fr; } }
@@ -778,7 +821,8 @@ FOLD_BUTTONS = (
 
 def page(title: str, active: str, body: str, scripts: str = "") -> web.Response:
     links = [("sorties", "/sorties", "Sorties"), ("persos", "/", "Guilde"), ("metiers", "/metiers", "Métiers"),
-             ("atelier", "/atelier", "Atelier"), ("donjons", "/donjons", "Donjons")]
+             ("atelier", "/atelier", "Atelier"), ("hdv", "/hdv", "Hôtel des ventes"),
+             ("donjons", "/donjons", "Donjons")]
     nav = "".join(
         f'<a href="{href}" class="{"active" if key == active else ""}">{label}</a>' for key, href, label in links
     )
@@ -1343,6 +1387,8 @@ class WebSite:
         self._secure_cookies = True
         # Actions des membres (sorties, persos), exécutées par le bot : voir cogs/webbridge.py et webmember.py.
         self.actions: Any = None
+        # Hôtel des ventes suivi (AUCTION_HOUSE_ID) ; 0 = page Hôtel des ventes désactivée.
+        self.auction_house = 0
 
     def enable_actions(self, actions: Any) -> None:
         self.actions = actions
@@ -1867,10 +1913,13 @@ Forever : la carte détaillée est sur le guide.</p>
     # ------------------------------------------------------------ serveur
 
     def app(self) -> web.Application:
-        from .webmember import MemberPages  # importe ce module : chargé ici pour éviter l'import circulaire
+        # Importent ce module : chargés ici pour éviter l'import circulaire.
+        from .webauction import AuctionPages
+        from .webmember import MemberPages
 
         app = web.Application(middlewares=[self._auth_middleware])
         MemberPages(self).register(app.router)
+        AuctionPages(self).register_auction(app.router)
         app.router.add_get("/auth/login", self.auth_login)
         app.router.add_get("/auth/callback", self.auth_callback)
         app.router.add_get("/auth/logout", self.auth_logout)

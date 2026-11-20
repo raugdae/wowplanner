@@ -131,6 +131,52 @@ CREATE TABLE IF NOT EXISTS talent_trees (
     fetched_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_orders_crafter ON orders (crafter_user_id);
+
+-- Hôtel des ventes (voir auctions.py) : base locale des objets de Forever (recherche d'objets de l'API).
+CREATE TABLE IF NOT EXISTS ah_items (
+    id             INTEGER PRIMARY KEY,
+    name           TEXT    NOT NULL,
+    search         TEXT    NOT NULL,
+    quality        TEXT,
+    class_id       INTEGER,
+    class_name     TEXT,
+    subclass_id    INTEGER,
+    subclass_name  TEXT,
+    level          INTEGER,
+    required_level INTEGER,
+    sell_price     INTEGER,
+    stackable      INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_ah_items_class ON ah_items (class_id, subclass_id);
+-- Dernier relevé de chaque objet en vente (gardé si l'API ne répond plus : le site montre alors ces prix-là).
+CREATE TABLE IF NOT EXISTS ah_latest (
+    item_id      INTEGER PRIMARY KEY,
+    ts           INTEGER NOT NULL,
+    min_price    INTEGER NOT NULL,
+    median_price INTEGER NOT NULL,
+    quantity     INTEGER NOT NULL,
+    listings     INTEGER NOT NULL
+);
+-- Historique des prix : un relevé par heure pendant 7 jours, puis un par jour (ts à minuit UTC).
+CREATE TABLE IF NOT EXISTS ah_prices (
+    item_id      INTEGER NOT NULL,
+    ts           INTEGER NOT NULL,
+    min_price    INTEGER NOT NULL,
+    median_price INTEGER NOT NULL,
+    quantity     INTEGER NOT NULL,
+    listings     INTEGER NOT NULL,
+    PRIMARY KEY (item_id, ts)
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS ah_favorites (
+    user_id INTEGER NOT NULL,
+    item_id INTEGER NOT NULL,
+    PRIMARY KEY (user_id, item_id)
+);
+-- Petits réglages persistants (date des dernières données de l'hôtel des ventes…).
+CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 """
 
 
@@ -800,6 +846,181 @@ class Database:
         for r in rows:
             result.setdefault(r["recipe_id"], []).append(Crafter(r["id"], r["name"], r["user_id"], r["wow_class"]))
         return result
+
+    # --------------------------------------------------------------- réglages
+
+    def get_setting(self, key: str) -> str | None:
+        row = self.conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+        return row["value"] if row else None
+
+    def set_setting(self, key: str, value: str) -> None:
+        with self.conn:
+            self.conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
+
+    # ---------------------------------------------------------- hôtel des ventes
+
+    def upsert_ah_items(self, items: list) -> None:
+        """Objets de la base locale (auctions.ItemRecord), remplacés s'ils existent déjà."""
+        with self.conn:
+            self.conn.executemany(
+                """INSERT OR REPLACE INTO ah_items (id, name, search, quality, class_id, class_name, subclass_id,
+                                                  subclass_name, level, required_level, sell_price, stackable)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                [
+                    (i.id, i.name, i.search, i.quality, i.class_id, i.class_name, i.subclass_id, i.subclass_name,
+                     i.level, i.required_level, i.sell_price, int(i.stackable))
+                    for i in items
+                ],
+            )
+
+    def ah_item_count(self) -> int:
+        return self.conn.execute("SELECT COUNT(*) FROM ah_items").fetchone()[0]
+
+    def ah_unknown_items(self, limit: int) -> list[int]:
+        """Objets en vente absents de la base locale (nouveaux objets, à demander un par un)."""
+        rows = self.conn.execute(
+            """SELECT l.item_id FROM ah_latest l LEFT JOIN ah_items i ON i.id = l.item_id
+               WHERE i.id IS NULL ORDER BY l.item_id LIMIT ?""",
+            (limit,),
+        )
+        return [r[0] for r in rows]
+
+    def ah_missing_icons(self, limit: int) -> list[int]:
+        rows = self.conn.execute(
+            """SELECT l.item_id FROM ah_latest l LEFT JOIN item_icons ic ON ic.item_id = l.item_id
+               WHERE ic.item_id IS NULL ORDER BY l.listings DESC LIMIT ?""",
+            (limit,),
+        )
+        return [r[0] for r in rows]
+
+    def store_ah_snapshot(self, ts: int, points: dict) -> None:
+        """Relevé complet (objet → auctions.PricePoint) : historique, et remplace la liste des objets en vente."""
+        rows = [(item_id, ts, p.min_price, p.median_price, p.quantity, p.listings) for item_id, p in points.items()]
+        with self.conn:
+            self.conn.executemany(
+                """INSERT OR REPLACE INTO ah_prices (item_id, ts, min_price, median_price, quantity, listings)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                rows,
+            )
+            self.conn.execute("DELETE FROM ah_latest")
+            self.conn.executemany(
+                """INSERT INTO ah_latest (item_id, ts, min_price, median_price, quantity, listings)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                rows,
+            )
+
+    def compact_ah_prices(self, now: int, hourly_days: int = 7, keep_days: int = 90) -> None:
+        """Au-delà de `hourly_days`, un relevé par jour (plus bas prix du jour, moyennes du reste) ; au-delà de
+        `keep_days`, plus rien."""
+        cutoff = (now - hourly_days * 86400) // 86400 * 86400
+        with self.conn:
+            self.conn.execute(
+                """INSERT OR REPLACE INTO ah_prices (item_id, ts, min_price, median_price, quantity, listings)
+                   SELECT item_id, ts / 86400 * 86400, MIN(min_price), CAST(AVG(median_price) AS INTEGER),
+                          CAST(AVG(quantity) AS INTEGER), CAST(AVG(listings) AS INTEGER)
+                   FROM ah_prices WHERE ts < ? AND ts % 86400 != 0 GROUP BY item_id, ts / 86400""",
+                (cutoff,),
+            )
+            self.conn.execute("DELETE FROM ah_prices WHERE ts < ? AND ts % 86400 != 0", (cutoff,))
+            self.conn.execute("DELETE FROM ah_prices WHERE ts < ?", (now - keep_days * 86400,))
+
+    def ah_snapshot_time(self) -> int | None:
+        row = self.conn.execute("SELECT MAX(ts) FROM ah_latest").fetchone()
+        return row[0] if row and row[0] else None
+
+    def ah_classes(self) -> list[tuple[int, str, list[tuple[int, str, int]]]]:
+        """Types des objets en vente : [(classe, nom, [(sous-classe, nom, nombre d'objets)])], par nombre décroissant."""
+        rows = self.conn.execute(
+            """SELECT i.class_id, i.class_name, i.subclass_id, i.subclass_name, COUNT(*) AS n
+               FROM ah_latest l JOIN ah_items i ON i.id = l.item_id
+               WHERE i.class_id IS NOT NULL GROUP BY i.class_id, i.subclass_id"""
+        ).fetchall()
+        classes: dict[int, tuple[str, list[tuple[int, str, int]]]] = {}
+        for r in rows:
+            name, subs = classes.setdefault(r["class_id"], (r["class_name"] or "?", []))
+            if r["subclass_id"] is not None:
+                subs.append((r["subclass_id"], r["subclass_name"] or "?", r["n"]))
+        result = [(cid, name, sorted(subs, key=lambda s: -s[2])) for cid, (name, subs) in classes.items()]
+        return sorted(result, key=lambda c: -sum(s[2] for s in c[2]))
+
+    _AH_SORTS = {
+        "nom": "COALESCE(i.search, '~') ASC, l.item_id",
+        "prix": "l.min_price ASC", "-prix": "l.min_price DESC",
+        "quantite": "l.quantity DESC", "annonces": "l.listings DESC",
+    }
+
+    def ah_listing(
+        self, query: str = "", class_id: int | None = None, subclass_id: int | None = None,
+        favorites_of: int | None = None, sort: str = "nom", limit: int = 50, offset: int = 0,
+        item_ids: list[int] | None = None,
+    ) -> tuple[list[sqlite3.Row], int]:
+        """Objets en vente filtrés (recherche déjà normalisée, type, favoris), avec le prix d'il y a 24 h.
+        Renvoie (lignes de la page, nombre total)."""
+        where, args = ["1"], []
+        if query:
+            where.append("i.search LIKE ?")
+            args.append(f"%{query}%")
+        if class_id is not None:
+            where.append("i.class_id = ?")
+            args.append(class_id)
+        if subclass_id is not None:
+            where.append("i.subclass_id = ?")
+            args.append(subclass_id)
+        if favorites_of is not None:
+            where.append("l.item_id IN (SELECT item_id FROM ah_favorites WHERE user_id = ?)")
+            args.append(favorites_of)
+        if item_ids is not None:
+            where.append(f"l.item_id IN ({','.join('?' * len(item_ids)) or 'NULL'})")
+            args.extend(item_ids)
+        joins = "FROM ah_latest l LEFT JOIN ah_items i ON i.id = l.item_id"
+        condition = " AND ".join(where)
+        total = self.conn.execute(f"SELECT COUNT(*) {joins} WHERE {condition}", args).fetchone()[0]
+        rows = self.conn.execute(
+            f"""SELECT l.*, i.name, i.quality, i.class_name, i.subclass_name, ic.url AS icon,
+                       (SELECT p.min_price FROM ah_prices p WHERE p.item_id = l.item_id AND p.ts <= l.ts - 86400
+                        ORDER BY p.ts DESC LIMIT 1) AS min_price_24h
+                {joins} LEFT JOIN item_icons ic ON ic.item_id = l.item_id
+                WHERE {condition}
+                ORDER BY {self._AH_SORTS.get(sort, self._AH_SORTS['nom'])} LIMIT ? OFFSET ?""",
+            [*args, limit, offset],
+        ).fetchall()
+        return rows, total
+
+    def ah_item(self, item_id: int) -> sqlite3.Row | None:
+        """Un objet (base locale, dernier relevé s'il est en vente, icône)."""
+        return self.conn.execute(
+            """SELECT x.item_id, i.name, i.quality, i.class_id, i.class_name, i.subclass_name, i.level,
+                      i.required_level, i.sell_price, l.ts, l.min_price, l.median_price, l.quantity, l.listings,
+                      ic.url AS icon
+               FROM (SELECT ? AS item_id) x
+               LEFT JOIN ah_items i ON i.id = x.item_id LEFT JOIN ah_latest l ON l.item_id = x.item_id
+               LEFT JOIN item_icons ic ON ic.item_id = x.item_id
+               WHERE i.id IS NOT NULL OR l.item_id IS NOT NULL""",
+            (item_id,),
+        ).fetchone()
+
+    def ah_history(self, item_id: int, since: int) -> list[tuple[int, int, int, int, int]]:
+        """[(ts, prix mini, médiane, quantité, annonces)] depuis `since`, du plus ancien au plus récent."""
+        rows = self.conn.execute(
+            """SELECT ts, min_price, median_price, quantity, listings FROM ah_prices
+               WHERE item_id = ? AND ts >= ? ORDER BY ts""",
+            (item_id, since),
+        )
+        return [tuple(r) for r in rows]
+
+    def ah_favorite_ids(self, user_id: int) -> set[int]:
+        return {r[0] for r in self.conn.execute("SELECT item_id FROM ah_favorites WHERE user_id = ?", (user_id,))}
+
+    def toggle_ah_favorite(self, user_id: int, item_id: int) -> bool:
+        """Ajoute ou retire un favori ; renvoie True s'il est désormais en favori."""
+        with self.conn:
+            removed = self.conn.execute(
+                "DELETE FROM ah_favorites WHERE user_id = ? AND item_id = ?", (user_id, item_id)
+            ).rowcount
+            if removed:
+                return False
+            self.conn.execute("INSERT INTO ah_favorites (user_id, item_id) VALUES (?, ?)", (user_id, item_id))
+        return True
 
     # ---------------------------------------------------------------- commandes
 
