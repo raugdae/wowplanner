@@ -163,12 +163,12 @@ html { scrollbar-color:color-mix(in srgb, var(--accent) 45%, var(--line)) var(--
 ::-webkit-scrollbar-corner { background:transparent; }
 body { margin:0; color:var(--text); min-height:100vh;
        background:radial-gradient(ellipse 90% 50% at 50% 0, var(--glow), transparent 70%) fixed, var(--bg);
-       font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+       font:15px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
 a { color:inherit; text-decoration:none; }
 a:hover { text-decoration:underline; }
 .title { font-family:"Cinzel","Trajan Pro","Palatino Linotype",Palatino,"Book Antiqua",Georgia,serif; }
 header { background:linear-gradient(180deg,var(--head1),var(--head2)); border-bottom:2px solid var(--accent);
-         box-shadow:0 2px 12px rgba(0,0,0,.45); padding:10px 16px; display:flex; gap:20px; align-items:center;
+         box-shadow:0 2px 12px rgba(0,0,0,.45); padding:10px clamp(16px, 3vw, 40px); display:flex; gap:20px; align-items:center;
          flex-wrap:wrap; position:sticky; top:0; z-index:5; }
 header .brand { font-weight:700; color:var(--accent); font-size:19px; letter-spacing:.04em; }
 header .brand::before { content:var(--crest); margin-right:8px; }
@@ -202,11 +202,11 @@ header .account.login { color:var(--text); border:1px solid var(--accent); borde
 header select { background:rgba(0,0,0,.25); color:var(--text); border:1px solid var(--accent); border-radius:8px;
                 padding:5px 8px; font:inherit; font-size:13px; }
 header select option { background:var(--panel); }
-main { max-width:1200px; margin:0 auto; padding:20px 16px 48px; }
+main { max-width:1680px; margin:0 auto; padding:26px clamp(16px, 3vw, 40px) 56px; }
 h1 { margin:0 0 4px; font-size:28px; }
-h2 { margin:28px 0 10px; font-size:19px; color:var(--accent); }
-.sub { color:var(--muted); margin:0 0 16px; }
-.filters { display:flex; gap:8px; flex-wrap:wrap; margin:12px 0 16px; }
+h2 { margin:32px 0 12px; font-size:20px; color:var(--accent); }
+.sub { color:var(--muted); margin:0 0 18px; max-width:120ch; }
+.filters { display:flex; gap:10px; flex-wrap:wrap; margin:14px 0 18px; }
 .filters input, .filters select, .filters button { background:var(--panel); color:var(--text);
   border:1px solid var(--line); border-radius:8px; padding:8px 10px; font:inherit; }
 .filters input { flex:1 1 220px; }
@@ -214,7 +214,7 @@ h2 { margin:28px 0 10px; font-size:19px; color:var(--accent); }
 .filters button:hover, .filters input:focus, .filters select:focus { border-color:var(--accent); outline:none; }
 .table-wrap { overflow-x:auto; border:1px solid var(--line); border-radius:10px; background:var(--panel); }
 table { width:100%; border-collapse:collapse; }
-th, td { text-align:left; padding:9px 12px; border-bottom:1px solid var(--line); vertical-align:top; }
+th, td { text-align:left; padding:11px 14px; border-bottom:1px solid var(--line); vertical-align:top; }
 th { background:var(--panel2); color:var(--accent); font-weight:600; font-size:13px; white-space:nowrap; }
 tr:last-child td { border-bottom:none; }
 tbody tr:hover { background:var(--panel2); }
@@ -554,6 +554,10 @@ tr[data-href] { cursor:pointer; }
 .calc-table tr.grp th { background:var(--panel); color:var(--accent); text-transform:uppercase; letter-spacing:.05em;
   font-size:12px; padding-top:12px; }
 .calc-table td.best { color:var(--muted); font-size:13px; white-space:nowrap; }
+.calc-table tr.out td { opacity:.6; }
+.out-tag { color:#e6c35c; cursor:help; white-space:nowrap; }
+.bonus { margin-left:4px; color:var(--accent); font-weight:700; cursor:help; }
+.bonus:focus { outline:2px solid var(--accent); outline-offset:2px; border-radius:3px; }
 .calc-table .fold-toggle { background:none; border:none; color:inherit; font:inherit; text-transform:inherit;
   letter-spacing:inherit; cursor:pointer; padding:0; display:flex; gap:8px; align-items:center; }
 .calc-table .fold-toggle .arrow { display:inline-block; transition:transform .15s; }
@@ -662,7 +666,7 @@ select.pick, .form input, .form select, .form textarea { background:var(--panel)
 .src-tag { font-size:11px; color:var(--muted); border:1px solid var(--line); border-radius:999px; padding:0 7px; }
 @media (max-width:600px) { .ev { padding:10px 12px; } }
 footer { color:var(--muted); font-size:12px; text-align:center; padding:24px; }
-@media (max-width:600px) { header nav { flex-wrap:wrap; gap:10px; } }
+@media (max-width:600px) { header nav { flex-wrap:wrap; gap:10px; } th, td { padding:9px 10px; } }
 """
 
 # Appliqué dans <head> pour éviter un flash du thème par défaut.

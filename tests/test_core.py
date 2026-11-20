@@ -2126,6 +2126,13 @@ def test_profit_computation():
     assert gathered_value({"min_price": None, "sell_price": 25}).gain is None
     assert gathered_value({"min_price": 100, "sell_price": 0}).margin is None  # pas de prix marchand : pas de %
 
+    from wowplanner.profit import gather_requirement, out_of_reach
+
+    assert gather_requirement(8838) == ("herboristerie", 230) and gather_requirement(929) is None
+    assert out_of_reach(8838, {"herboristerie": 120}) and not out_of_reach(8838, {"herboristerie": 230})
+    assert out_of_reach(2770, {"herboristerie": 300})  # minerai sans le minage
+    assert not out_of_reach(929, {}) and not out_of_reach(8838, {"herboristerie": None})  # inconnu : jamais exclu
+
     rows = [{"item_id": 3356, "min_price": 900}, {"item_id": 2447, "min_price": 200}, {"item_id": 777777, "min_price": 50}]
     ordered = gathering_rows(rows, {2447: 1, 3356: 125}, 100)
     assert [(r[0]["item_id"], r[1], r[2]) for r in ordered] == [(2447, 1, True), (777777, None, True), (3356, 125, False)]
@@ -2182,13 +2189,16 @@ def test_profit_page(tmp_path):
     db.touch_member(42, me)
     hollie = db.add_character(me, "Hollie Tétine", "pretre", "humain", "heal")
     db.replace_professions(hollie.id, {"alchimie": 150, "herboristerie": 120})
-    db.replace_character_recipes(hollie.id, {"alchimie": [(1, "Minor Healing Potion")]})
+    db.replace_character_recipes(hollie.id, {"alchimie": [(1, "Minor Healing Potion"), (2, "Swiftness Potion")]})
     db.set_recipe_details(1, "Potion de soins mineure", [(1, "Pacifique", 2447), (1, "Fiole vide", 3371)], 929, 1.0)
+    db.set_recipe_details(2, "Potion de rapidité", [(1, "Chardonnier", 2452), (1, "Soleillette", 8838)], 2459, 1.0)
     db.upsert_ah_items([
         ItemRecord(929, "Potion de soins mineure", "COMMON", 0, "Consommable", 1, "Potion", 5, 1, 50, True, 200),
         ItemRecord(2447, "Pacifique", "COMMON", 7, "Artisanat", 9, "Herbes", 5, 0, 10, True, 40),
         ItemRecord(3356, "Sang-royal", "COMMON", 7, "Artisanat", 9, "Herbes", 25, 0, 30, True, 120),
         ItemRecord(3371, "Fiole vide", "COMMON", 7, "Artisanat", 11, "Autre", 1, 0, 1, True, 20),
+        ItemRecord(2452, "Chardonnier", "COMMON", 7, "Artisanat", 9, "Herbes", 15, 0, 15, True, 60),
+        ItemRecord(8838, "Soleillette", "COMMON", 7, "Artisanat", 9, "Herbes", 46, 0, 60, True, 240),
     ])
     db.store_ah_snapshot(int(time.time()) // 3600 * 3600, {
         929: PricePoint(1000, 1100, 12, 3), 2447: PricePoint(200, 210, 50, 4), 3356: PricePoint(900, 950, 8, 2),
@@ -2240,6 +2250,10 @@ def test_profit_page(tmp_path):
     # Calculatrice : stock à saisir = herbes récoltables à son niveau (pas le Sang-royal, niveau 125).
     status, text = got["calc_empty"]
     assert status == 200 and 'name="q2447"' in text and 'name="q3356"' not in text and "Résultat" not in text
+    # Composants des recettes : Soleillette (Herboristerie 230) hors de portée à 120, Chardonnier obtenu en bonus.
+    assert 'data-out="1" data-name="soleillette"' in text and 'data-out="0" data-name="chardonnier"' in text
+    assert "Hors de ta compétence : Herboristerie 230 requis" in text and "Masquer ce qui est hors de ma compétence" in text
+    assert 'class="bonus"' in text and "Chance de loot" in text
     # 10 Pacifique : vendus bruts 10 × 190 pc = 19 pa ; en potions : 10 × (950 − 20 de fiole) = 93 pa → 74 pa de plus.
     status, text = got["calc"]
     assert status == 200 and "Fabriquer rapporte <b>74 pa</b>" in text and "+ 74 pa" in text

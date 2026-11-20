@@ -13,8 +13,8 @@ from .auctions import money_text
 from .db import Character
 from .gamedata import is_primary, profession_label
 from .profit import (
-    AH_CUT, GATHERING, VENDOR_REAGENTS, CraftPlan, CraftStep, best_channel, craft_plan, gathered_value, gathering_rows,
-    raw_unit, recipe_profits,
+    AH_CUT, BONUS_LOOT, GATHERING, VENDOR_REAGENTS, CraftPlan, CraftStep, best_channel, craft_plan, gather_requirement,
+    gathered_value, gathering_rows, out_of_reach, raw_unit, recipe_profits,
 )
 from .recipes import normalize
 from .web import _VIEWER, TABS_SCRIPT, esc
@@ -25,6 +25,15 @@ SHOWN_RECIPES = 40
 # Quantité maximale saisie par objet dans la calculatrice.
 MAX_STOCK = 100_000
 CHANNEL_LABELS = {"hdv": "HdV", "marchand": "Marchand"}
+
+
+def bonus_mark(item_id: int) -> str:
+    """Astérisque avec infobulle pour une ressource obtenue en bonus (chance de loot), vide sinon."""
+    source = BONUS_LOOT.get(item_id)
+    if source is None:
+        return ""
+    text = f"Chance de loot : pas de nœud à lui, s'obtient parfois en bonus {source}."
+    return f'<span class="bonus" tabindex="0" title="{esc(text)}" aria-label="{esc(text)}">*</span>'
 
 
 def channel_tag(channel: str | None) -> str:
@@ -179,7 +188,7 @@ Calculer avec ton stock</a>.</p>
     def _stock_table(self, character: Character, groups: list, inventory: dict[int, int]) -> str:
         """Saisie du stock : un tableau par ligne d'objet, groupé par catégorie, avec la valeur brute calculée au
         fil de la saisie (CALC_SCRIPT) ; les champs vides ne partent pas dans l'adresse de la page."""
-        lines, total = [], 0
+        lines, total, any_out = [], 0, False
         for index, (label, rows) in enumerate(groups):
             lines.append(
                 f'<tr class="grp" data-group="{index}"><th colspan="9"><button type="button" class="fold-toggle" '
@@ -194,11 +203,20 @@ Calculer avec ton stock</a>.</p>
                 qty = inventory.get(row["id"], 0)
                 total += unit * qty
                 value = esc(money_text(unit * qty)) if qty and unit else "—"
+                requirement = gather_requirement(row["id"])
+                if level is None and requirement is not None:
+                    level = requirement[1]
+                out = out_of_reach(row["id"], character.professions)
+                any_out = any_out or out
+                level_cell = str(level) if level is not None else "—"
+                if out and requirement is not None:
+                    why = f"Hors de ta compétence : {profession_label(requirement[0])} {requirement[1]} requis"
+                    level_cell = f'<span class="out-tag" title="{esc(why)}">{level_cell} ⚠</span>'
                 lines.append(
-                    f'<tr class="stock-row" data-group="{index}" data-unit="{unit}" '
-                    f'data-name="{esc(normalize(row["name"]))}">'
+                    f'<tr class="stock-row{" out" if out else ""}" data-group="{index}" data-unit="{unit}" '
+                    f'data-out="{int(out)}" data-name="{esc(normalize(row["name"]))}">'
                     f'<td><a class="ah-name" href="/hdv/objet/{row["id"]}">{item_icon(row)}<span>{item_name(row)}'
-                    f'</span></a></td><td class="num hide-sm">{level if level is not None else "—"}</td>'
+                    f'</span></a>{bonus_mark(row["id"])}</td><td class="num hide-sm">{level_cell}</td>'
                     f"{money_cells(net, row['id'] if net else None)}"
                     f'<td class="num muted hide-sm">{esc(money_text(vendor)) if vendor else "—"}</td>'
                     f'<td class="best">{best}</td>'
@@ -209,13 +227,18 @@ Calculer avec ton stock</a>.</p>
         categories = "".join(
             f'<option value="{index}">{esc(label)} ({len(rows)})</option>' for index, (label, rows) in enumerate(groups)
         )
+        skill_box = (
+            '<label class="fav-filter" title="Ressources que ce perso ne peut pas récolter lui-même : métier absent ou '
+            'niveau trop bas"><input type="checkbox" class="calc-skill"> Masquer ce qui est hors de ma compétence</label>'
+            if any_out else ""
+        )
         return f"""<form method="get" action="/calculatrice" class="calc-form" data-perso="{character.id}">
 <input type="hidden" name="perso" value="{character.id}">
 <div class="filters calc-tools"><select class="calc-category" aria-label="Catégorie">
 <option value="">Toutes les catégories</option>{categories}</select>
 <input type="search" class="calc-search" placeholder="Chercher une ressource…"
 autocomplete="off" aria-label="Chercher une ressource"><label class="fav-filter"><input type="checkbox"
-class="calc-mine"> Seulement ce que j'ai</label><button class="act primary">🧮 Calculer</button>
+class="calc-mine"> Seulement ce que j'ai</label>{skill_box}<button class="act primary">🧮 Calculer</button>
 <button type="button" class="act calc-clear">Vider</button></div>
 <div class="table-wrap ah-scroll"><table class="ah-table calc-table"><thead>
 <tr><th rowspan="2">Ressource</th><th rowspan="2" class="num hide-sm">Niv.</th>
@@ -350,7 +373,7 @@ recettes (composants vendus par les marchands achetés au besoin), aux prix de {
             margin = f"{value.margin:+.0f} %" if value.margin is not None else ""
             lines.append(
                 f'<tr class="{"" if reachable else "later"}"><td><a class="ah-name" href="/hdv/objet/{row["item_id"]}">'
-                f"{item_icon(row)}<span>{item_name(row)}</span></a></td>"
+                f"{item_icon(row)}<span>{item_name(row)}</span></a>{bonus_mark(row['item_id'])}</td>"
                 f'<td class="num">{req}</td>{money_cells(row["min_price"], row["item_id"])}<td class="gap"></td>'
                 f"{money_cells(value.net)}<td class=\"num split muted\">{esc(vendor)}</td>"
                 f'<td class="num">{signed_money(value.gain)}</td><td class="num">{esc(margin)}</td>'
@@ -462,7 +485,7 @@ CALC_SCRIPT = """
     total.textContent = sum ? moneyText(sum) : "—";
   }
   // Catégorie, recherche, « seulement ce que j'ai », et groupes repliés (gardés dans le navigateur, par perso).
-  const category = form.querySelector(".calc-category");
+  const category = form.querySelector(".calc-category"), skill = form.querySelector(".calc-skill");
   const foldKey = key + "-replies";
   let folded = new Set();
   try { folded = new Set(JSON.parse(localStorage.getItem(foldKey) || "[]")); } catch (e) {}
@@ -471,7 +494,8 @@ CALC_SCRIPT = """
     rows.forEach((row, i) => {
       const ok = (!category.value || row.dataset.group === category.value)
         && (!q || row.dataset.name.includes(q))
-        && (!mine.checked || parseInt(inputs[i].value, 10) > 0);
+        && (!mine.checked || parseInt(inputs[i].value, 10) > 0)
+        && (!skill || !skill.checked || row.dataset.out !== "1");
       if (ok) shown.add(row.dataset.group);
       row.hidden = !ok || folded.has(row.dataset.group);
     });
@@ -487,6 +511,13 @@ CALC_SCRIPT = """
     filter();
   }));
   category.addEventListener("change", filter);
+  if (skill) {
+    try { skill.checked = localStorage.getItem("wp-calc-skill") === "1"; } catch (e) {}
+    skill.addEventListener("change", () => {
+      try { localStorage.setItem("wp-calc-skill", skill.checked ? "1" : ""); } catch (e) {}
+      filter();
+    });
+  }
   if (!inputs.some(i => i.value)) {
     try {
       const saved = JSON.parse(localStorage.getItem(key) || "{}");

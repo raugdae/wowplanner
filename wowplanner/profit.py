@@ -41,6 +41,17 @@ SKINNING_SKILL = {
     2934: 1, 2318: 1, 783: 1, 2319: 100, 4232: 100, 4234: 150, 4235: 150, 4304: 200, 8169: 200, 8170: 250, 8171: 250,
 }
 
+# Ressources sans nœud à elles : obtenues parfois en bonus en récoltant autre chose (chance de loot).
+BONUS_LOOT: dict[int, str] = {
+    2452: "en cueillant du Mage royal ou de l'Églantine",  # Chardonnier
+    8153: "en cueillant certaines herbes de haut niveau",  # Vignesang
+    774: "en minant certains filons", 818: "en minant certains filons", 1210: "en minant certains filons",
+    1705: "en minant certains filons", 1206: "en minant certains filons", 1529: "en minant certains filons",
+    7909: "en minant certains filons", 3864: "en minant certains filons", 7910: "en minant certains filons",
+    12361: "en minant certains filons", 12799: "en minant certains filons", 12364: "en minant certains filons",
+    12800: "en minant certains filons", 11382: "en minant du sombrefer",  # gemmes, Sang de la montagne
+}
+
 # Métier de récolte → (sous-type « Artisanat » des ressources, niveaux connus, libellé).
 GATHERING: dict[str, tuple[int, dict[int, int], str]] = {
     "herboristerie": (9, HERB_SKILL, "Herbes"),
@@ -48,6 +59,27 @@ GATHERING: dict[str, tuple[int, dict[int, int], str]] = {
     "depecage": (6, SKINNING_SKILL, "Cuirs et peaux"),
     "peche": (8, {}, "Poissons et viandes"),
 }
+
+
+def gather_requirement(item_id: int) -> tuple[str, int] | None:
+    """(métier de récolte, niveau requis) d'une ressource connue, sinon None."""
+    for profession, (_, skills, _) in GATHERING.items():
+        if item_id in skills:
+            return profession, skills[item_id]
+    return None
+
+
+def out_of_reach(item_id: int, professions: dict[str, int | None]) -> bool:
+    """Ressource que le perso ne peut pas récolter lui-même : métier absent, ou niveau trop bas. Une ressource
+    inconnue des tables (ou un niveau de métier inconnu) n'est jamais « hors compétence »."""
+    requirement = gather_requirement(item_id)
+    if requirement is None:
+        return False
+    profession, level = requirement
+    if profession not in professions:
+        return True
+    skill = professions[profession]
+    return skill is not None and level > skill
 
 
 @dataclass
