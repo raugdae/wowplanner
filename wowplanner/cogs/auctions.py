@@ -31,6 +31,8 @@ POLL_MINUTES = 20
 # Catalogue complet des objets : relu chaque semaine (nouveaux objets des patchs).
 CATALOG_MAX_AGE = 7 * 24 * 3600
 CATALOG_MAX_PAGES = 200  # garde-fou : 200 000 objets
+# Contenu du catalogue ; un nouveau numéro fait tout relire au prochain relevé. 2 : prix d'achat marchand.
+CATALOG_VERSION = "2"
 # Par relevé : objets inconnus demandés un par un, et icônes.
 UNKNOWN_PER_RUN = 100
 ICONS_PER_RUN = 300
@@ -118,7 +120,8 @@ class AuctionCog(commands.Cog):
     async def _catalog(self, client) -> None:
         """Catalogue complet des objets de Forever, une fois au départ puis chaque semaine."""
         last = float(self.db.get_setting("ah_catalog_at") or 0)
-        if self.db.ah_item_count() and time.time() - last < CATALOG_MAX_AGE:
+        current = self.db.get_setting("ah_catalog_version") == CATALOG_VERSION
+        if current and self.db.ah_item_count() and time.time() - last < CATALOG_MAX_AGE:
             return
         from_id, total = 1, 0
         for _ in range(CATALOG_MAX_PAGES):
@@ -136,6 +139,7 @@ class AuctionCog(commands.Cog):
             from_id = max(ids) + 1
             await asyncio.sleep(0.2)
         self.db.set_setting("ah_catalog_at", str(int(time.time())))
+        self.db.set_setting("ah_catalog_version", CATALOG_VERSION)
         log.info("Catalogue des objets de Forever : %d objets", total)
 
     async def _unknown_items(self, client) -> None:

@@ -91,6 +91,10 @@ class ItemRecord:
     required_level: int | None
     sell_price: int | None
     stackable: bool
+    # Prix d'achat chez un marchand (pour `purchase_quantity` objets). Blizzard le donne aussi pour des objets
+    # qu'aucun marchand ne vend : voir profit.VENDOR_REAGENTS.
+    purchase_price: int | None = None
+    purchase_quantity: int = 1
 
     @property
     def search(self) -> str:
@@ -117,7 +121,7 @@ def parse_search_item(data: dict[str, Any], locale: str = "fr_FR") -> ItemRecord
         number(item_class.get("id")), _localized(item_class.get("name"), locale),
         number(subclass.get("id")), _localized(subclass.get("name"), locale),
         number(data.get("level")), number(data.get("required_level")), number(data.get("sell_price")),
-        bool(data.get("is_stackable")),
+        bool(data.get("is_stackable")), number(data.get("purchase_price")), number(data.get("purchase_quantity")) or 1,
     )
 
 

@@ -2087,3 +2087,102 @@ def test_auction_pages(tmp_path):
     assert len(json.loads(data)["points"]) == 9  # 72 h, un relevé toutes les 6 h (le plus ancien : 48 h)
     assert got["unknown"][0] == 404
     assert got["api"]["name"] == "Étoffe de lin" and len(got["api"]["points"]) == 9
+
+
+def test_profit_computation():
+    """Rentabilité : vente nette (commission 5 %), composants HdV ou marchand, recettes sans prix en dernier."""
+    from wowplanner.db import GuildRecipe
+    from wowplanner.profit import gathering_rows, recipe_profits, reagent_price
+
+    def item(min_price=None, sell=None, purchase=None, qty=1):
+        return {"min_price": min_price, "sell_price": sell, "purchase_price": purchase, "purchase_quantity": qty,
+                "quantity": 12 if min_price else None}
+
+    items = {
+        929: item(1000, sell=50), 2447: item(200, purchase=40), 3371: item(500, purchase=20),
+        4596: item(None, sell=30), 5555: item(3000), 2320: item(None, purchase=100, qty=5),
+    }
+    assert reagent_price(3371, items) == (20, "marchand")  # vendu par les marchands : moins cher qu'à l'HdV
+    assert reagent_price(2447, items) == (200, "hdv")  # pas vendu par les marchands : prix de l'HdV
+    assert reagent_price(2320, items) == (20, "marchand")  # 100 pc les 5
+    assert reagent_price(4596, items) == (None, None) and reagent_price(None, items) == (None, None)
+    recipes = [
+        GuildRecipe(1, "Potion de soins mineure", [(1, "Pacifique", 2447), (1, "Fiole vide", 3371)], [], 929, 1.0),
+        GuildRecipe(2, "Enchantement de brassards", [(1, "Poussière", 10940)], [], None),
+        GuildRecipe(3, "Potion hors vente", [(1, "Pacifique", 2447)], [], 4596, 1.0),
+        GuildRecipe(4, "Objet cher", [(2, "Inconnu", 999)], [], 5555, 2.0),
+    ]
+    results, without_item = recipe_profits(recipes, items)
+    assert without_item == 1 and [r.recipe_id for r in results] == [1, 4, 3]
+    potion = results[0]
+    assert (potion.revenue, potion.cost, potion.profit, potion.vendor_value) == (950, 220, 730, 50)
+    assert round(potion.margin) == 332 and potion.available == 12
+    expensive = results[1]
+    assert expensive.revenue == 5700 and expensive.missing == 1 and expensive.profit is None  # 2 × 3000 × 0,95
+    assert results[2].revenue is None and results[2].vendor_value == 30
+
+    rows = [{"item_id": 3356, "min_price": 900}, {"item_id": 2447, "min_price": 200}, {"item_id": 777777, "min_price": 50}]
+    ordered = gathering_rows(rows, {2447: 1, 3356: 125}, 100)
+    assert [(r[0]["item_id"], r[1], r[2]) for r in ordered] == [(2447, 1, True), (777777, None, True), (3356, 125, False)]
+
+
+def test_profit_page(tmp_path):
+    import asyncio
+    import time
+
+    import aiohttp
+
+    from wowplanner.auctions import ItemRecord, PricePoint
+    from wowplanner.db import Database
+    from wowplanner.web import WebSite
+    from wowplanner.webauth import SESSION_COOKIE, DiscordOAuth, sign
+
+    db = Database(tmp_path / "t.db")
+    me = 5
+    db.touch_member(42, me)
+    hollie = db.add_character(me, "Hollie Tétine", "pretre", "humain", "heal")
+    db.replace_professions(hollie.id, {"alchimie": 150, "herboristerie": 120})
+    db.replace_character_recipes(hollie.id, {"alchimie": [(1, "Minor Healing Potion")]})
+    db.set_recipe_details(1, "Potion de soins mineure", [(1, "Pacifique", 2447), (1, "Fiole vide", 3371)], 929, 1.0)
+    db.upsert_ah_items([
+        ItemRecord(929, "Potion de soins mineure", "COMMON", 0, "Consommable", 1, "Potion", 5, 1, 50, True, 200),
+        ItemRecord(2447, "Pacifique", "COMMON", 7, "Artisanat", 9, "Herbes", 5, 0, 10, True, 40),
+        ItemRecord(3356, "Sang-royal", "COMMON", 7, "Artisanat", 9, "Herbes", 25, 0, 30, True, 120),
+        ItemRecord(3371, "Fiole vide", "COMMON", 7, "Artisanat", 11, "Autre", 1, 0, 1, True, 20),
+    ])
+    db.store_ah_snapshot(int(time.time()) // 3600 * 3600, {
+        929: PricePoint(1000, 1100, 12, 3), 2447: PricePoint(200, 210, 50, 4), 3356: PricePoint(900, 950, 8, 2),
+    })
+
+    class FakeOAuth(DiscordOAuth):
+        async def fetch_user(self, code):
+            raise AssertionError("pas utilisé")
+
+    async def is_member(user_id):
+        return True
+
+    site = WebSite(db, lambda: 42)
+    secret = b"k" * 32
+    site.enable_auth(FakeOAuth(None, "1", "s", "https://wow.fr/auth/callback"), secret, is_member, secure_cookies=False)
+    site.auction_house = 111
+    stamp = int(time.time())
+    session = sign({"id": me, "name": "Raug", "chk": stamp, "exp": stamp + 3600}, secret)
+    got = {}
+
+    async def scenario():
+        await site.start("127.0.0.1", 0)
+        port = next(iter(site._runner.sites))._server.sockets[0].getsockname()[1]
+        async with aiohttp.ClientSession(cookie_jar=aiohttp.CookieJar(unsafe=True), cookies={SESSION_COOKIE: session}) as s:
+            async with s.get(f"http://127.0.0.1:{port}/rentabilite") as resp:
+                got["page"] = resp.status, await resp.text()
+        await site.stop()
+
+    asyncio.run(scenario())
+    db.close()
+    status, text = got["page"]
+    assert status == 200 and "Hollie Tétine" in text and "Alchimie" in text and "Herboristerie" in text
+    assert "Potion de soins mineure" in text and "+ 7 pa 30 pc" in text  # 950 − (200 + 20)
+    assert "(marchand)" in text and "(HdV)" in text  # fiole au prix du marchand, pacifique au prix de l'HdV
+    assert 'class="later"' in text and "Sang-royal" in text  # niveau 125 : pas encore récoltable (120)
+    assert text.index("Pacifique</span></span></a>") < text.index("Sang-royal</span></span></a>")
+    assert 'href="/rentabilite"' in text  # lien dans le menu du compte

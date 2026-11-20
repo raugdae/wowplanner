@@ -99,7 +99,8 @@ def _menu_html() -> str:
     name = esc(viewer.user.get("name", "?"))
     return f"""<div class="account-zone"><details class="usermenu"><summary>👤 {name} ▾</summary>
 <div class="menu-panel"><div class="menu-head">Connecté en tant que <b>{name}</b></div>
-<div class="menu-sec"><small>Mes persos</small>{links}<a class="menu-link" href="/mes-persos">Gérer mes persos →</a></div>
+<div class="menu-sec"><small>Mes persos</small>{links}<a class="menu-link" href="/mes-persos">Gérer mes persos →</a>
+<a class="menu-link" href="/rentabilite">💰 Rentabilité de mes métiers</a></div>
 {theme}{admin}<a class="menu-link" href="/auth/logout">Déconnexion</a></div></details></div>"""
 
 CLASS_COLORS = {
@@ -535,6 +536,12 @@ tr[data-href] { cursor:pointer; }
 .ah-table th.coin.mg { color:#e6b422; } .ah-table th.coin.ms { color:#b8c2cc; } .ah-table th.coin.mc { color:#c8794a; }
 .ah-table td.coin.mg { font-weight:600; }
 .ah-table td.coin .zero { opacity:.35; }
+/* Rentabilité (webprofit.py). */
+.ah-table tr.later { opacity:.5; }
+.gain { color:#5fd38d; font-weight:600; white-space:nowrap; } .loss { color:#ff8a8a; white-space:nowrap; }
+.ah-table details.parts { margin-top:2px; font-size:12px; }
+.ah-table details.parts summary { color:var(--muted); cursor:pointer; }
+.ah-table details.parts ul { margin:4px 0 0; padding-left:18px; }
 .ah-table .gap { width:14px; min-width:14px; padding:0; }
 .ah-name { display:flex; align-items:center; gap:10px; }
 .ah-name small { display:block; color:var(--muted); font-size:12px; }
@@ -1928,10 +1935,12 @@ Forever : la carte détaillée est sur le guide.</p>
         # Importent ce module : chargés ici pour éviter l'import circulaire.
         from .webauction import AuctionPages
         from .webmember import MemberPages
+        from .webprofit import ProfitPages
 
         app = web.Application(middlewares=[self._auth_middleware])
         MemberPages(self).register(app.router)
         AuctionPages(self).register_auction(app.router)
+        ProfitPages(self).register_profit(app.router)
         app.router.add_get("/auth/login", self.auth_login)
         app.router.add_get("/auth/callback", self.auth_callback)
         app.router.add_get("/auth/logout", self.auth_logout)

@@ -307,6 +307,19 @@ sorties et gérer ses persos. Il peut être réservé aux membres du Discord (vo
   **courbe des 7 derniers jours** ; un clic ouvre la **fiche de l'objet** : sa courbe sur 24 h, 3, 7, 30 ou 90 jours
   (prix le plus bas en trait plein, médian en pointillé, valeurs au survol), le tableau des relevés, son prix chez le
   marchand, qui le fabrique sur le serveur (avec « Commander ») et dans quelles recettes il sert ;
+- **Rentabilité de mes métiers** (menu du compte, et lien depuis l'hôtel des ventes) : pour un de ses persos, ce que
+  rapportent ses métiers aux prix de l'hôtel des ventes.
+  - *Fabrication* (alchimie, forge, couture, cuisine…) : chaque recette connue, de la plus rentable à la moins
+    rentable : vente à l'HdV au prix le plus bas actuel, commission de 5 % déduite ; coût des composants (prix le plus
+    bas de l'HdV, ou prix du marchand pour ceux qu'il vend : fioles, fils, teintures, flux, sel, épices…, liste dans
+    `wowplanner/profit.py`) ; bénéfice et marge ; revente au marchand pour comparer ; quantité déjà en vente pour
+    juger de la concurrence ; détail des composants. Les enchantements, qui ne créent pas d'objet, ne sont pas comptés.
+  - *Récolte* (herboristerie, minage, dépeçage, pêche) : les ressources de ce type en vente à l'HdV, celles
+    récoltables au niveau du perso d'abord (du plus cher au moins cher), avec le niveau requis (valeurs de Classic,
+    « ? » pour les ressources propres à Forever) et la revente au marchand.
+
+  Blizzard donne un prix d'achat « marchand » même pour des objets qu'aucun marchand ne vend : seuls les composants
+  de la liste sont comptés au prix du marchand ;
 - **Guilde** : tableau de tous les persos du serveur par ordre alphabétique (classe, race, rôles, métiers et
   niveaux), recherche et filtres par classe, rôle ou métier ;
 - **fiche d'un perso** : façon fiche du jeu, son **équipement** autour de son rendu en pied (icônes, infobulles,
@@ -442,6 +455,8 @@ wowplanner/
   webmember.py        site : sorties et « Mes persos » (formulaires, vérification dans l'armurerie)
   webauction.py       site : hôtel des ventes (liste, favoris, fiche avec courbe des prix)
   auctions.py         hôtel des ventes : agrégation des annonces, prix, base des objets
+  profit.py           rentabilité des métiers (recettes, récolte, prix des marchands)
+  webprofit.py        site : page « Rentabilité de mes métiers »
   cogs/auctions.py    relevé des prix de l'hôtel des ventes (toutes les 20 min)
   webauth.py          connexion au site avec Discord (OAuth2, cookies signés)
   cogs/webbridge.py   actions du site exécutées par le bot (sorties, persos)

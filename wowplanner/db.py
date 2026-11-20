@@ -354,6 +354,11 @@ class Database:
         ):
             if column.split()[0] not in columns:
                 self.conn.execute(f"ALTER TABLE recipes ADD COLUMN {column}")
+        # v1.17 → v1.18 : prix d'achat chez les marchands (page Rentabilité).
+        columns = {row["name"] for row in self.conn.execute("PRAGMA table_info(ah_items)")}
+        for column in ("purchase_price INTEGER", "purchase_quantity INTEGER NOT NULL DEFAULT 1"):
+            if column.split()[0] not in columns:
+                self.conn.execute(f"ALTER TABLE ah_items ADD COLUMN {column}")
         # Les joueurs déjà inscrits à des sorties sont membres du serveur de ces sorties.
         self.conn.execute(
             """INSERT OR IGNORE INTO guild_members (guild_id, user_id)
@@ -864,14 +869,42 @@ class Database:
         with self.conn:
             self.conn.executemany(
                 """INSERT OR REPLACE INTO ah_items (id, name, search, quality, class_id, class_name, subclass_id,
-                                                  subclass_name, level, required_level, sell_price, stackable)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                                  subclass_name, level, required_level, sell_price, stackable,
+                                                  purchase_price, purchase_quantity)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 [
                     (i.id, i.name, i.search, i.quality, i.class_id, i.class_name, i.subclass_id, i.subclass_name,
-                     i.level, i.required_level, i.sell_price, int(i.stackable))
+                     i.level, i.required_level, i.sell_price, int(i.stackable), i.purchase_price, i.purchase_quantity)
                     for i in items
                 ],
             )
+
+    def ah_items_map(self, item_ids: set[int] | list[int]) -> dict[int, sqlite3.Row]:
+        """Objets du catalogue (nom, qualité, prix marchands, icône) avec leur dernier prix à l'HdV s'il est en
+        vente (min_price, median_price, quantity, listings ; NULL sinon)."""
+        ids = sorted({i for i in item_ids if isinstance(i, int)})
+        result: dict[int, sqlite3.Row] = {}
+        for start in range(0, len(ids), 500):  # limite de paramètres de SQLite
+            chunk = ids[start:start + 500]
+            rows = self.conn.execute(
+                f"""SELECT i.*, l.min_price, l.median_price, l.quantity, l.listings, ic.url AS icon
+                    FROM ah_items i LEFT JOIN ah_latest l ON l.item_id = i.id
+                    LEFT JOIN item_icons ic ON ic.item_id = i.id
+                    WHERE i.id IN ({','.join('?' * len(chunk))})""",
+                chunk,
+            )
+            result.update({r["id"]: r for r in rows})
+        return result
+
+    def ah_tradeskill_on_sale(self, subclass_id: int) -> list[sqlite3.Row]:
+        """Matières premières (artisanat, ce sous-type) en vente à l'HdV, avec prix marchand de revente."""
+        return self.conn.execute(
+            """SELECT l.*, i.name, i.quality, i.sell_price, ic.url AS icon
+               FROM ah_latest l JOIN ah_items i ON i.id = l.item_id
+               LEFT JOIN item_icons ic ON ic.item_id = l.item_id
+               WHERE i.class_id = 7 AND i.subclass_id = ? ORDER BY l.min_price DESC""",
+            (subclass_id,),
+        ).fetchall()
 
     def ah_item_count(self) -> int:
         return self.conn.execute("SELECT COUNT(*) FROM ah_items").fetchone()[0]

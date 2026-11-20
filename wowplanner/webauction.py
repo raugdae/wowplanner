@@ -414,7 +414,8 @@ autocomplete="off">
         body = f"""
 <h1 class="title">Hôtel des ventes</h1>
 <p class="sub">Prix de l'hôtel des ventes de l'Alliance (n° {self.house}), relevés toutes les heures · {fresh} ·
-{number(total)} objet(s). Prix à l'unité ; survole un prix pour son cours sur 7 jours, clique pour le détail.</p>
+{number(total)} objet(s). Prix à l'unité ; survole un prix pour son cours sur 7 jours, clique pour le détail.
+💰 <a href="/rentabilite">Ce que rapportent tes métiers</a>.</p>
 {filters}
 {table}
 {nav}"""
