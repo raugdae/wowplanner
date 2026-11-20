@@ -473,6 +473,17 @@ puis `docker compose up -d --build`. `docker-compose.traefik.yml` ajoute les lab
 sur le port interne 8080. Sans Docker : `WEB_PORT=8080` dans `.env`, et `WEB_URL=https://…` (adresse publique) pour
 que le bot renvoie vers le site dans ses messages ; avec Traefik, `WEB_DOMAIN` suffit.
 
+### Conditions d'utilisation et confidentialité
+
+Pages publiques `/conditions` et `/confidentialite`, liées en pied de chaque page. Les textes sont dans
+`wowplanner/weblegal.py` : à mettre à jour (avec la date `UPDATED`) dès que le site enregistre de nouvelles données
+ou change de fonctionnement. Dans le portail développeur Discord (onglet **General Information**), renseigner
+**Terms of Service URL** et **Privacy Policy URL** avec ces deux adresses.
+
+## Licence
+
+Code sous licence MIT (voir `LICENSE`). Projet de fans, sans lien avec Blizzard Entertainment ni WoW Forever.
+
 ## Structure
 
 ```
@@ -526,6 +537,7 @@ wowplanner/
   webauction.py        Hôtel des ventes (liste, favoris, fiche avec courbe des prix)
   webprofit.py         Rentabilité de mes métiers, Calculatrice HdV
   webhelp.py           page d'aide (chapitres, captures annotées, recherche)
+  weblegal.py          conditions d'utilisation et politique de confidentialité
   static/aide/         captures de la page d'aide (+ shots.json : tailles et repères)
 tools/aide/            base et site de démonstration, prise des captures de l'aide (Playwright)
 tests/test_core.py

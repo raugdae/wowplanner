@@ -322,7 +322,8 @@ def page(title: str, active: str, body: str, scripts: str = "") -> web.Response:
 <title>{esc(title)} · WoW Planner</title>{THEME_BOOT}<link rel="stylesheet" href="/static/site.css?v={__version__}"></head>
 <body><header><a class="brand title" href="/">WoW Planner</a><nav>{nav}</nav>{_menu_html()}</header>
 <main>{body}</main>
-<footer>Données des persos déclarés sur le Discord, complétées par l'armurerie Blizzard (WoW Forever).</footer>
+<footer>Données des persos déclarés sur le Discord, complétées par l'armurerie Blizzard (WoW Forever).
+<nav class="foot-links"><a href="/conditions">Conditions d'utilisation</a> · <a href="/confidentialite">Confidentialité</a> · <a href="/aide">Aide</a></nav></footer>
 {THEME_SCRIPT}{MENU_SCRIPT}{scripts}</body></html>"""
     return web.Response(text=document, content_type="text/html")
 

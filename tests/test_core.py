@@ -1318,7 +1318,8 @@ def test_help_page(tmp_path):
         base = f"http://127.0.0.1:{port}"
         async with aiohttp.ClientSession() as s:
             for key, path in (("anon", "/aide"), ("img", "/static/aide/sortie.webp"), ("bad", "/static/aide/..%2Fweb.py"),
-                              ("png", "/static/aide/sortie.png"), ("login", "/")):
+                              ("png", "/static/aide/sortie.png"), ("login", "/"),
+                              ("cgu", "/conditions"), ("privacy", "/confidentialite")):
                 async with s.get(base + path) as resp:
                     got[key] = (resp.status, await resp.read(), resp.headers.get("Content-Type", ""))
         async with aiohttp.ClientSession(cookies={SESSION_COOKIE: admin_cookie}) as s:
@@ -1339,6 +1340,12 @@ def test_help_page(tmp_path):
     assert got["img"][0] == 200 and got["img"][2] == "image/webp" and got["img"][1][:4] == b"RIFF"
     assert got["bad"][0] == 404 and got["png"][0] == 404
     assert "/aide#debut-connexion" in got["login"][1].decode()  # lien d'aide sur la page de connexion
+    # Conditions et confidentialité : publiques, liées en pied de page (y compris sur la page de connexion).
+    for key, needle in (("cgu", "Droit applicable"), ("privacy", "Tes droits")):
+        status, body, _ = got[key]
+        assert status == 200 and needle in body.decode() and "Raugdae" in body.decode()
+    for key in ("anon", "login", "cgu"):
+        assert 'href="/conditions"' in got[key][1].decode() and 'href="/confidentialite"' in got[key][1].decode()
     status, text = got["admin"]
     assert status == 200 and 'data-ch="admin"' in text and "La page Administration" in text
 
