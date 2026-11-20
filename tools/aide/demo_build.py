@@ -98,6 +98,13 @@ async def main():
             rows.append((r["item_id"], ts, p.min_price, p.median_price, p.quantity, p.listings))
         db.conn.executemany("INSERT OR REPLACE INTO ah_prices VALUES (?, ?, ?, ?, ?, ?)", rows)
     db.conn.commit()
+    # Ventes estimées simulées : plus de ventes le soir, presque rien la nuit.
+    for hours_ago in range(1, 24 * 7):
+        ts = now - hours_ago * 3600
+        hour = datetime.fromtimestamp(ts, TZ).hour
+        demand = 0.15 + max(0.0, math.sin((hour - 9) / 15 * math.pi)) * (1.6 if 19 <= hour <= 22 else 1)
+        db.store_ah_sales(ts, {r["item_id"]: int(r["quantity"] * 0.03 * demand * rng.uniform(0.5, 1.5)) for r in latest})
+    db.compact_ah_sales(now + 86400)
 
     for name in ("Étoffe de lin", "Étoffe de laine", "Minerai de cuivre", "Pacifique", "Feuillargent", "Peau légère"):
         row = db.conn.execute("SELECT id FROM ah_items WHERE name = ?", (name,)).fetchone()

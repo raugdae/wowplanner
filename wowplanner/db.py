@@ -172,6 +172,19 @@ CREATE TABLE IF NOT EXISTS ah_favorites (
     item_id INTEGER NOT NULL,
     PRIMARY KEY (user_id, item_id)
 );
+-- Ventes estimées (voir auctions.estimate_sales) : quantité vendue par objet et par heure (7 jours), puis par jour.
+-- ah_sales_cover : heures où l'estimation a pu se faire (hours = 1 par heure, nombre d'heures couvertes par jour) ;
+-- un objet sans ligne pour une heure couverte n'a rien vendu.
+CREATE TABLE IF NOT EXISTS ah_sales (
+    item_id INTEGER NOT NULL,
+    ts      INTEGER NOT NULL,
+    sold    INTEGER NOT NULL,
+    PRIMARY KEY (item_id, ts)
+) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS ah_sales_cover (
+    ts    INTEGER PRIMARY KEY,
+    hours INTEGER NOT NULL
+);
 -- Petits réglages persistants (date des dernières données de l'hôtel des ventes…).
 CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
@@ -956,6 +969,50 @@ class Database:
             )
             self.conn.execute("DELETE FROM ah_prices WHERE ts < ? AND ts % 86400 != 0", (cutoff,))
             self.conn.execute("DELETE FROM ah_prices WHERE ts < ?", (now - keep_days * 86400,))
+
+    def store_ah_sales(self, ts: int, sold: dict[int, int]) -> None:
+        """Ventes estimées sur l'heure `ts` (plusieurs relevés dans la même heure s'additionnent)."""
+        with self.conn:
+            self.conn.executemany(
+                """INSERT INTO ah_sales (item_id, ts, sold) VALUES (?, ?, ?)
+                   ON CONFLICT (item_id, ts) DO UPDATE SET sold = sold + excluded.sold""",
+                [(item_id, ts, n) for item_id, n in sold.items() if n > 0],
+            )
+            self.conn.execute("INSERT OR IGNORE INTO ah_sales_cover (ts, hours) VALUES (?, 1)", (ts,))
+
+    def compact_ah_sales(self, now: int, hourly_days: int = 7, keep_days: int = 90) -> None:
+        """Au-delà de `hourly_days`, une ligne par jour (somme des heures) ; au-delà de `keep_days`, plus rien."""
+        cutoff = (now - hourly_days * 86400) // 86400 * 86400
+        days = [r[0] for r in self.conn.execute(
+            "SELECT DISTINCT ts / 86400 * 86400 FROM ah_sales_cover WHERE ts < ? AND ts % 86400 != 0", (cutoff,)
+        )]
+        with self.conn:
+            for day in days:
+                span = (day, day + 86400)
+                self.conn.execute(
+                    """INSERT OR REPLACE INTO ah_sales (item_id, ts, sold)
+                       SELECT item_id, ?, SUM(sold) FROM ah_sales WHERE ts >= ? AND ts < ? GROUP BY item_id""",
+                    (day, *span),
+                )
+                self.conn.execute(
+                    """INSERT OR REPLACE INTO ah_sales_cover (ts, hours)
+                       SELECT ?, SUM(hours) FROM ah_sales_cover WHERE ts >= ? AND ts < ?""",
+                    (day, *span),
+                )
+                self.conn.execute("DELETE FROM ah_sales WHERE ts > ? AND ts < ?", span)
+                self.conn.execute("DELETE FROM ah_sales_cover WHERE ts > ? AND ts < ?", span)
+            self.conn.execute("DELETE FROM ah_sales WHERE ts < ?", (now - keep_days * 86400,))
+            self.conn.execute("DELETE FROM ah_sales_cover WHERE ts < ?", (now - keep_days * 86400,))
+
+    def ah_sales_history(self, item_id: int, since: int) -> list[tuple[int, int, int]]:
+        """[(ts, quantité vendue, heures couvertes)] depuis `since` : une ligne par heure (ou par jour au-delà de 7
+        jours) où l'estimation a pu se faire, 0 si rien ne s'est vendu."""
+        rows = self.conn.execute(
+            """SELECT c.ts, COALESCE(s.sold, 0), c.hours FROM ah_sales_cover c
+               LEFT JOIN ah_sales s ON s.item_id = ? AND s.ts = c.ts WHERE c.ts >= ? ORDER BY c.ts""",
+            (item_id, since),
+        )
+        return [tuple(r) for r in rows]
 
     def ah_snapshot_time(self) -> int | None:
         row = self.conn.execute("SELECT MAX(ts) FROM ah_latest").fetchone()

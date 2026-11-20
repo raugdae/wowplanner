@@ -2160,6 +2160,82 @@ def test_auction_cog_refresh(tmp_path):
     db.close()
 
 
+def test_auction_sales_estimate(tmp_path):
+    """Ventes estimées : annonces sûres disparues et ventes partielles comptées, expirations possibles ignorées ;
+    rangement par heure, couverture, passage à un par jour au-delà de 7 jours."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from wowplanner.auctions import estimate_sales, listing_state
+    from wowplanner.cogs.auctions import AuctionCog
+    from wowplanner.db import Database
+
+    def a(auction_id, item, qty, left="LONG"):
+        return {"id": auction_id, "item": {"id": item}, "quantity": qty, "time_left": left, "unit_price": 10}
+
+    before = listing_state([a(5, 100, 20), a(1, 100, 3), a(2, 100, 4, "VERY_LONG"), a(3, 200, 1, "SHORT"),
+                            a(4, 200, 7, "MEDIUM"), a(6, 300, 2)], 1000)
+    after = listing_state([a(5, 100, 15), a(6, 300, 2), a(9, 100, 50)], 4600)
+    # 100 : annonces 1 et 2 disparues (3 + 4) et 5 entamée (20 → 15) ; 200 : SHORT et MEDIUM ont pu expirer.
+    assert estimate_sales(before, after) == {100: 12}
+    assert list(before.ids) == [1, 2, 3, 4, 5, 6]
+
+    db = Database(tmp_path / "t.db")
+    day = 1_800_000_000 // 86400 * 86400
+    db.store_ah_sales(day + 3600, {100: 12})
+    db.store_ah_sales(day + 3600, {100: 3, 200: 1})  # deux relevés dans la même heure : additionnés
+    db.store_ah_sales(day + 7200, {})  # heure relevée sans aucune vente
+    assert db.ah_sales_history(100, 0) == [(day + 3600, 15, 1), (day + 7200, 0, 1)]
+    assert db.ah_sales_history(300, 0) == [(day + 3600, 0, 1), (day + 7200, 0, 1)]
+    db.compact_ah_sales(day + 8 * 86400)  # le jour passe à une ligne (somme, 2 heures couvertes)
+    assert db.ah_sales_history(100, 0) == [(day, 15, 2)] and db.ah_sales_history(200, 0) == [(day, 1, 2)]
+    db.compact_ah_sales(day + 8 * 86400)  # sans effet la deuxième fois
+    assert db.ah_sales_history(100, 0) == [(day, 15, 2)]
+    db.compact_ah_sales(day + 91 * 86400)
+    assert db.ah_sales_history(100, 0) == []
+
+    # Relevés successifs : une estimation à partir du deuxième, rangée dans l'heure du milieu de l'intervalle.
+    t0 = 1_800_003_000.0
+    snapshots = [(t0, [a(1, 100, 3), a(2, 100, 4)]), (t0 + 3600, [a(2, 100, 1)]), (t0 + 4 * 3600, [a(7, 100, 1)])]
+    state = {"i": 0}
+
+    class FakeClient:
+        locale = "fr_FR"
+
+        async def auctions(self, ruleset, house, commodities):
+            ts, auctions = snapshots[state["i"]]
+            return {"auctions": [] if commodities else auctions}, ts
+
+        async def search_items(self, from_id):
+            return []
+
+        async def item(self, item_id):
+            return {}
+
+    class FakeArmory:
+        available = True
+        client = FakeClient()
+
+        async def fetch_item_icons(self, ids):
+            pass
+
+    bot = SimpleNamespace(db=db, config=SimpleNamespace(auction_house_id=111, auction_ruleset=1),
+                          get_cog=lambda name: FakeArmory() if name == "ArmoryCog" else None)
+    cog = AuctionCog(bot)
+    assert asyncio.run(cog.refresh()) == "1 objets relevés"
+    state["i"] = 1
+    assert asyncio.run(cog.refresh()) == "1 objets relevés, 6 ventes estimées"
+    mid = int(t0 + 1800) // 3600 * 3600
+    assert db.ah_sales_history(100, mid) == [(mid, 6, 1)]
+    state["i"] = 2  # 3 h plus tard : des annonces LONG ont pu expirer, pas d'estimation
+    asyncio.run(cog.refresh())
+    assert len(db.ah_sales_history(100, mid)) == 1
+    # Après un redémarrage, le relevé déjà enregistré sert de point de départ.
+    cog = AuctionCog(bot)
+    assert asyncio.run(cog.refresh()) == "pas de nouvelles données" and cog._listing is not None
+    db.close()
+
+
 def test_auction_pages(tmp_path):
     """Page Hôtel des ventes : liste, recherche, favoris (JSON), fiche avec courbe, historique pour le survol."""
     import asyncio
@@ -2182,6 +2258,8 @@ def test_auction_pages(tmp_path):
     for h in range(48, -1, -6):
         db.store_ah_snapshot(now - h * 3600, {2589: PricePoint(30 + h, 40 + h, 200, 5),
                                               8499: PricePoint(150000, 150000, 1, 1)})
+    for h in range(1, 30):  # ventes estimées sur 29 heures : de quoi tracer la demande selon l'heure
+        db.store_ah_sales(now - h * 3600, {2589: 10 + h % 5})
 
     class FakeOAuth(DiscordOAuth):
         async def fetch_user(self, code):
@@ -2238,6 +2316,8 @@ def test_auction_pages(tmp_path):
     data = re.search(r'<script type="application/json" class="chart-data">(.*?)</script>', text, re.S).group(1)
     import json
     assert len(json.loads(data)["points"]) == 9  # 72 h, un relevé toutes les 6 h (le plus ancien : 48 h)
+    assert 'class="price-chart sales-chart"' in text and text.count('<g class="bar') >= 29 + 24
+    assert 'class="price-chart hours-chart"' in text and "Quand ça se vend" in text and "Vendus (24 h)" in text
     assert got["unknown"][0] == 404
     assert got["api"]["name"] == "Étoffe de lin" and len(got["api"]["points"]) == 9
 

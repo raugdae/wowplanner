@@ -522,7 +522,17 @@ hôtel des ventes de l'Alliance. Les objets sont en couleur de qualité (gris, b
 ])}
 <p>La fiche d'un objet montre aussi les derniers relevés, son prix chez le marchand, et les recettes du serveur qui
 l'utilisent ou le fabriquent.</p>
-{tip("Avant de vendre, regarde la courbe : si le prix est au plus bas de la semaine, attendre quelques jours peut rapporter plus.")}
+{tip("Avant de vendre, regarde la courbe : si le prix est au plus bas de la semaine, attendre quelques jours peut rapporter plus.")}"""),
+        Section("ventes", "Les ventes et les heures de demande", f"""
+<p>Sous la courbe des prix, des <b>barres bleues</b> montrent combien d'exemplaires se sont vendus chaque heure.
+Plus haut sur la fiche, la case {ui('Vendus (24 h)')} donne le total de la dernière journée.</p>
+<p>Tout en bas, le graphique <b>« Quand ça se vend »</b> range les ventes par heure de la journée (moyenne sur la
+dernière semaine) : on voit d'un coup d'œil les heures où les acheteurs sont là. L'heure actuelle est en jaune.
+Survole (ou touche) une barre pour lire le chiffre exact.</p>
+{note("Ce sont des <b>estimations</b> : Blizzard ne dit pas ce qui est vendu. Le site compare les annonces d'une heure "
+      "à l'autre : une annonce qui disparaît alors qu'il lui restait plusieurs heures a été achetée (ou, plus "
+      "rarement, retirée par son vendeur). Les annonces qui arrivaient à leur fin ne sont pas comptées.")}
+{tip("Pour vendre vite, mets tes annonces juste avant les heures où ça se vend le plus.")}
 {go("/hdv", "Ouvrir l'hôtel des ventes")}"""),
     ])
 

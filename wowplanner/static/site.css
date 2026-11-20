@@ -661,3 +661,14 @@ details.fold.hfaq > summary { text-transform:none; letter-spacing:0; font-size:1
 .legal-other { margin-top:30px; color:var(--muted); }
 .legal section a { color:var(--accent); text-decoration:underline; text-underline-offset:2px; }
 @media (max-width:600px) { .legal-toc ol { columns:1; } }
+
+/* Ventes estimées de l'hôtel des ventes (barres sous la courbe, demande selon l'heure) */
+.bars-wrap { margin-top:8px; }
+.price-chart g.bar .hitbar { fill:transparent; }
+.price-chart g.bar .fill { fill:#5fa8d3; opacity:.75; }
+.price-chart g.bar.on .fill { fill:var(--accent); opacity:.95; }
+.price-chart g.bar.hot .fill { opacity:1; fill:#8fd0f5; }
+.price-chart g.bar.on.hot .fill { fill:var(--accent); }
+.sales-legend { margin-top:14px; justify-content:space-between; flex-wrap:wrap; }
+.chart-legend i.kb { width:12px; height:10px; border:0; background:#5fa8d3; vertical-align:middle; }
+.small-note { font-size:12px; margin:6px 0 0; }

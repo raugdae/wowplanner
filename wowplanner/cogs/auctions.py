@@ -6,6 +6,8 @@
 - Base locale des objets : tout le catalogue de Forever (noms, types, qualité, prix chez le marchand) récupéré par la
   recherche d'objets de l'API (1000 objets par requête), puis complété objet par objet pour les nouveautés.
 - Icônes : demandées petit à petit (une requête par objet), les plus vendus d'abord.
+- Ventes estimées : à chaque nouveau relevé, comparaison des annonces avec le relevé précédent (gardé en mémoire ;
+  après un redémarrage, il faut deux relevés avant la première estimation). Voir auctions.estimate_sales.
 - Une fois par jour : l'historique au-delà de 7 jours est réduit à un relevé par jour, et effacé après 90 jours.
 """
 from __future__ import annotations
@@ -19,7 +21,10 @@ import aiohttp
 from discord.ext import commands, tasks
 
 from ..armory import ArmoryError
-from ..auctions import HOURLY_DAYS, KEEP_DAYS, aggregate, parse_item_detail, parse_search_item
+from ..auctions import (
+    HOURLY_DAYS, KEEP_DAYS, SALES_MAX_GAP, ListingState, aggregate, estimate_sales, listing_state, parse_item_detail,
+    parse_search_item,
+)
 
 if TYPE_CHECKING:
     from ..bot import WowPlannerBot
@@ -44,6 +49,7 @@ class AuctionCog(commands.Cog):
         self.bot = bot
         self.db = bot.db
         self._lock = asyncio.Lock()
+        self._listing: ListingState | None = None  # annonces du dernier relevé, pour estimer les ventes
 
     @property
     def armory(self) -> ArmoryCog | None:
@@ -105,17 +111,31 @@ class AuctionCog(commands.Cog):
         dates = [d for d in (items_date, goods_date) if d]
         stamp = max(dates) if dates else time.time()  # date des données chez Blizzard
         key = f"{int(items_date or 0)}:{int(goods_date or 0)}"
-        if items_date and goods_date and self.db.get_setting("ah_data_version") == key:
+        fresh = not (items_date and goods_date and self.db.get_setting("ah_data_version") == key)
+        if not fresh and self._listing is not None:
             return "pas de nouvelles données"
-        points = aggregate([*(items.get("auctions") or []), *(goods.get("auctions") or [])])
+        auctions = [*(items.get("auctions") or []), *(goods.get("auctions") or [])]
+        sales = self._estimate_sales(listing_state(auctions, stamp)) if auctions else ""
+        if not fresh:  # premier passage après un redémarrage : sert de point de départ aux ventes
+            return "pas de nouvelles données"
+        points = aggregate(auctions)
         if not points:
             log.warning("Hôtel des ventes %s : aucune annonce reçue, derniers prix gardés", house)
             return "aucune annonce reçue, derniers prix gardés"
         ts = int(stamp) // 3600 * 3600  # un relevé par heure au plus
         self.db.store_ah_snapshot(ts, points)
         self.db.set_setting("ah_data_version", key)
-        log.info("Hôtel des ventes %s : %d objets relevés", house, len(points))
-        return f"{len(points)} objets relevés"
+        log.info("Hôtel des ventes %s : %d objets relevés%s", house, len(points), sales)
+        return f"{len(points)} objets relevés{sales}"
+
+    def _estimate_sales(self, state: ListingState) -> str:
+        """Ventes depuis le relevé précédent, rangées dans l'heure du milieu de l'intervalle."""
+        before, self._listing = self._listing, state
+        if before is None or not 0 < state.ts - before.ts <= SALES_MAX_GAP:
+            return ""
+        sold = estimate_sales(before, state)
+        self.db.store_ah_sales(int((before.ts + state.ts) / 2) // 3600 * 3600, sold)
+        return f", {sum(sold.values())} ventes estimées"
 
     async def _catalog(self, client) -> None:
         """Catalogue complet des objets de Forever, une fois au départ puis chaque semaine."""
@@ -164,6 +184,7 @@ class AuctionCog(commands.Cog):
         if now - last < COMPACT_EVERY:
             return
         self.db.compact_ah_prices(now, HOURLY_DAYS, KEEP_DAYS)
+        self.db.compact_ah_sales(now, HOURLY_DAYS, KEEP_DAYS)
         self.db.set_setting("ah_compact_at", str(now))
 
 

@@ -421,6 +421,14 @@ un objet en vente à un prix reconnaissable et chercher dans quel hôtel il appa
   vendus d'abord).
 - **Historique** : un relevé par heure pendant 7 jours, puis un par jour (plus bas prix du jour, moyennes) jusqu'à
   90 jours. Compter quelques dizaines de Mo dans la base pour ~7 000 objets.
+- **Ventes estimées** : l'API ne donne pas les ventes. À chaque nouveau relevé, le bot compare les annonces avec
+  celles du relevé précédent (gardées en mémoire, quelques Mo) : une annonce au temps restant LONG ou VERY_LONG
+  (plus de 2 h) qui a disparu n'a pas pu expirer, elle a donc été achetée (ou annulée) ; une annonce dont la
+  quantité baisse a été achetée en partie. Les annonces SHORT et MEDIUM qui disparaissent sont ignorées, car elles
+  ont pu expirer : l'estimation est plutôt basse. Pas d'estimation si plus de 2 h séparent deux relevés, ni pour
+  le premier relevé après un redémarrage. Les ventes sont rangées par heure (table `ah_sales`, et `ah_sales_cover`
+  pour les heures où l'estimation a pu se faire), puis par jour au-delà de 7 jours. La fiche d'un objet en tire les
+  barres sous la courbe, « Vendus (24 h) » et la demande selon l'heure de la journée.
 - **Quotas** : 2 requêtes toutes les 20 minutes, plus le catalogue et les icônes : très loin des 36 000 par heure.
 
 ### Connexion avec Discord
@@ -534,7 +542,7 @@ wowplanner/
   webcharacter.py      blocs de la fiche perso : équipement, stats, talents, équipement fabricable
   webrecipes.py        cartes de recettes (Métiers, fiche perso, atelier)
   webmember.py         Sorties, Mes persos, Atelier, Administration (formulaires des membres)
-  webauction.py        Hôtel des ventes (liste, favoris, fiche avec courbe des prix)
+  webauction.py        Hôtel des ventes (liste, favoris, fiche avec courbe des prix et ventes estimées)
   webprofit.py         Rentabilité de mes métiers, Calculatrice HdV
   webhelp.py           page d'aide (chapitres, captures annotées, recherche)
   weblegal.py          conditions d'utilisation et politique de confidentialité
