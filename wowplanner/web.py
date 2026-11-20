@@ -150,6 +150,17 @@ STYLE = """
 }
 * { box-sizing:border-box; }
 [hidden] { display:none !important; }
+/* Barres de défilement aux couleurs du thème (page, tableaux, menus). Firefox : couleurs seulement ;
+   Chrome, Edge, Safari : barre fine et arrondie, qui s'allume à l'accent au survol. */
+html { scrollbar-color:color-mix(in srgb, var(--accent) 45%, var(--line)) var(--bg); }
+* { scrollbar-width:thin; }
+.table-wrap, .menu-panel, .ah-scroll { scrollbar-color:color-mix(in srgb, var(--accent) 45%, var(--line)) transparent; }
+::-webkit-scrollbar { width:10px; height:10px; }
+::-webkit-scrollbar-track { background:transparent; }
+::-webkit-scrollbar-thumb { background:color-mix(in srgb, var(--accent) 45%, var(--line)); border-radius:999px;
+  border:2px solid transparent; background-clip:padding-box; }
+::-webkit-scrollbar-thumb:hover { background:var(--accent); background-clip:padding-box; }
+::-webkit-scrollbar-corner { background:transparent; }
 body { margin:0; color:var(--text); min-height:100vh;
        background:radial-gradient(ellipse 90% 50% at 50% 0, var(--glow), transparent 70%) fixed, var(--bg);
        font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }

@@ -2233,6 +2233,9 @@ def test_profit_page(tmp_path):
     # Récolte : Pacifique à 200 pc → 190 pc nets, revendu 10 pc au marchand → 180 pc de plus, marge de 1800 %.
     assert "+ 1 pa 80 pc" in text and "+1800 %" in text and "Gain vs marchand" in text
     assert 'href="/calculatrice"' in text
+    # Un onglet par métier, avec le niveau ; récolte et fabrication dans le panneau du métier.
+    assert '<button type="button" data-tab="alchimie">Alchimie<span class="n">150</span></button>' in text
+    assert '<div data-panel="herboristerie">' in text and text.index('data-panel="alchimie"') < text.index("fabrication")
 
     # Calculatrice : stock à saisir = herbes récoltables à son niveau (pas le Sang-royal, niveau 125).
     status, text = got["calc_empty"]

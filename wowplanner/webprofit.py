@@ -17,7 +17,7 @@ from .profit import (
     raw_unit, recipe_profits,
 )
 from .recipes import normalize
-from .web import _VIEWER, esc
+from .web import _VIEWER, TABS_SCRIPT, esc
 from .webauction import COIN_HEADS, LIST_SCRIPT, MONEY_JS, AuctionPages, item_icon, item_name, money_cells, number
 
 # Au-delà, les recettes les moins rentables sont repliées.
@@ -111,10 +111,12 @@ class ProfitPages(AuctionPages):
         if error is not None:
             return error
         assert character is not None
-        sections = []
+        # Un onglet par métier (récolte et fabrication ensemble) ; sans JavaScript, tout reste affiché à la suite.
+        tabs, panels = [], []
         professions = sorted(character.professions.items(), key=lambda p: (not is_primary(p[0]), p[0]))
         for key, skill in professions:
             level = f" · niveau {skill}" if skill is not None else ""
+            sections = []
             if key in GATHERING:
                 sections.append(self._gathering_section(key, skill, level))
             recipes = self._known_recipes(character, key)
@@ -125,6 +127,10 @@ class ProfitPages(AuctionPages):
                     f'<section class="card admin-sec"><h2>{esc(profession_label(key))}{esc(level)}</h2>'
                     '<p class="empty">Aucune recette connue dans l\'armurerie pour ce perso.</p></section>'
                 )
+            skill_badge = f'<span class="n">{skill}</span>' if skill is not None else ""
+            tabs.append(f'<button type="button" data-tab="{esc(key)}">{esc(profession_label(key))}{skill_badge}</button>')
+            panels.append(f'<div data-panel="{esc(key)}">{"".join(sections)}</div>')
+        sections = [f'<div class="tabs" role="tablist">{"".join(tabs)}</div>', *panels]
         body = f"""
 <h1 class="title">{title}</h1>
 <p class="sub">Ce que rapportent les métiers de ton perso aux prix de l'<a href="/hdv">hôtel des ventes</a>
@@ -134,7 +140,7 @@ flux, épices…). « Marchand » : ce que le marchand te donne pour l'objet. �
 Calculer avec ton stock</a>.</p>
 {picker}
 {"".join(sections)}"""
-        return self._render(request, title, "rentabilite", body, LIST_SCRIPT + PROFIT_SCRIPT)
+        return self._render(request, title, "rentabilite", body, LIST_SCRIPT + PROFIT_SCRIPT + TABS_SCRIPT)
 
     # ------------------------------------------------------------ calculatrice
 
