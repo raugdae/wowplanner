@@ -49,6 +49,25 @@ def money_html(copper: int | None) -> str:
     return f'<span class="money" title="{esc(money_text(copper))}">{"".join(parts)}</span>'
 
 
+COIN_HEADS = '<th class="coin mg">po</th><th class="coin ms">pa</th><th class="coin mc">pc</th>'
+
+
+def money_cells(copper: int | None, item_id: int | None = None) -> str:
+    """Prix en trois colonnes alignées (po, pa, pc) ; les zéros de tête restent vides. Avec `item_id`, chaque
+    chiffre est un lien vers la fiche de l'objet (courbe des 7 jours au survol)."""
+    if copper is None:
+        return '<td class="coin muted">—</td><td class="coin"></td><td class="coin"></td>'
+    gold, silver, cop = money_parts(copper)
+    shown = [gold > 0, gold > 0 or silver > 0, True]
+    cells = []
+    for value, show, cls in zip((gold, silver, cop), shown, ("mg", "ms", "mc")):
+        text = (number(value) if value else '<span class="zero">0</span>') if show else ""
+        if text and item_id is not None:
+            text = f'<a class="price" href="/hdv/objet/{item_id}" data-item="{item_id}">{text}</a>'
+        cells.append(f'<td class="coin {cls}">{text}</td>')
+    return "".join(cells)
+
+
 def change_html(now: int, before: int | None) -> str:
     """Variation du prix le plus bas sur 24 h (hausse en rouge pour l'acheteur, baisse en vert), avec flèche."""
     if not before:
@@ -326,10 +345,8 @@ class AuctionPages(MemberPages):
                 f"<tr><td>{self._favorite_button(r['item_id'], r['item_id'] in favorites, back)}</td>"
                 f'<td><a class="ah-name" href="/hdv/objet/{r["item_id"]}">{item_icon(r)}<span>{item_name(r)}'
                 f"<small>{esc(kind)}</small></span></a></td>"
-                f'<td class="num"><a class="price" href="/hdv/objet/{r["item_id"]}" data-item="{r["item_id"]}">'
-                f'{money_html(r["min_price"])}</a></td>'
-                f'<td class="num">{money_html(r["median_price"])}</td>'
-                f'<td class="num">{number(r["quantity"])}</td><td class="num">{number(r["listings"])}</td>'
+                f'{money_cells(r["min_price"], r["item_id"])}<td class="gap"></td>{money_cells(r["median_price"])}'
+                f'<td class="num split">{number(r["quantity"])}</td><td class="num">{number(r["listings"])}</td>'
                 f'<td class="num">{change_html(r["min_price"], r["min_price_24h"])}</td></tr>'
             )
 
@@ -385,9 +402,12 @@ autocomplete="off">
             "Aucun objet ne correspond." if snapshot else "Pas encore de prix : le bot fait son premier relevé."
         )
         table = (
-            '<div class="table-wrap"><table class="ah-table"><thead><tr><th title="Favori">★</th><th>Objet</th>'
-            '<th class="num">Prix le plus bas</th><th class="num">Prix médian</th><th class="num">Disponibles</th>'
-            '<th class="num">Annonces</th><th class="num">24 h</th></tr></thead>'
+            '<div class="table-wrap ah-scroll"><table class="ah-table"><thead>'
+            '<tr><th rowspan="2" title="Favori">★</th><th rowspan="2">Objet</th>'
+            '<th colspan="3" class="group">Prix le plus bas</th><th rowspan="2" class="gap"></th>'
+            '<th colspan="3" class="group">Prix médian</th><th rowspan="2" class="num split">Disponibles</th>'
+            '<th rowspan="2" class="num">Annonces</th><th rowspan="2" class="num">24 h</th></tr>'
+            f"<tr>{COIN_HEADS}{COIN_HEADS}</tr></thead>"
             f'<tbody>{"".join(lines)}</tbody></table></div>'
             if lines else f'<p class="empty">{empty}</p>'
         )
@@ -437,14 +457,17 @@ autocomplete="off">
                 '<span><i class="k2"></i>Prix médian</span></div>'
             )
             table_rows = "".join(
-                f"<tr><td>{datetime.fromtimestamp(t, tz):%d/%m %H:%M}</td><td class=\"num\">{money_html(lo)}</td>"
-                f'<td class="num">{money_html(med)}</td><td class="num">{qty}</td><td class="num">{n}</td></tr>'
+                f"<tr><td>{datetime.fromtimestamp(t, tz):%d/%m %H:%M}</td>{money_cells(lo)}<td class=\"gap\"></td>"
+                f'{money_cells(med)}<td class="num split">{number(qty)}</td><td class="num">{number(n)}</td></tr>'
                 for t, lo, med, qty, n in reversed(points)
             )
             history = f"""{stats}{legend}{chart}
 <details class="fold"><summary>Tableau des relevés<span class="n">{len(points)}</span></summary><div class="fold-body">
-<div class="table-wrap"><table><thead><tr><th>Relevé</th><th class="num">Plus bas</th><th class="num">Médian</th>
-<th class="num">Disponibles</th><th class="num">Annonces</th></tr></thead><tbody>{table_rows}</tbody></table></div>
+<div class="table-wrap ah-scroll"><table class="ah-table"><thead>
+<tr><th rowspan="2">Relevé</th><th colspan="3" class="group">Plus bas</th><th rowspan="2" class="gap"></th>
+<th colspan="3" class="group">Médian</th><th rowspan="2" class="num split">Disponibles</th>
+<th rowspan="2" class="num">Annonces</th></tr><tr>{COIN_HEADS}{COIN_HEADS}</tr></thead>
+<tbody>{table_rows}</tbody></table></div>
 <p class="muted">Un relevé par heure sur les 7 derniers jours, puis un par jour (plus bas prix du jour, moyennes).</p>
 </div></details>"""
         else:

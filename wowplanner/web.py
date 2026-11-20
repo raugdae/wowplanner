@@ -524,6 +524,18 @@ tr[data-href] { cursor:pointer; }
 .fav-filter { display:flex; gap:6px; align-items:center; color:var(--muted); cursor:pointer; white-space:nowrap; }
 .fav-filter input { accent-color:var(--accent); }
 .ah-table td { vertical-align:middle; }
+/* Le tableau défile dans son cadre, l'en-tête reste visible. */
+.ah-scroll { max-height:calc(100vh - 170px); overflow:auto; }
+.ah-scroll thead { position:sticky; top:0; z-index:3; }
+.ah-scroll thead th { box-shadow:inset 0 -1px 0 var(--line); }
+.ah-table th.group { text-align:center; padding-bottom:2px; }
+.ah-table th.coin, .ah-table td.coin { text-align:right; padding-left:3px; padding-right:3px; min-width:2.4em;
+  font-variant-numeric:tabular-nums; white-space:nowrap; }
+.ah-table th.coin { font-size:12px; padding-top:2px; }
+.ah-table th.coin.mg { color:#e6b422; } .ah-table th.coin.ms { color:#b8c2cc; } .ah-table th.coin.mc { color:#c8794a; }
+.ah-table td.coin.mg { font-weight:600; }
+.ah-table td.coin .zero { opacity:.35; }
+.ah-table .gap { width:14px; min-width:14px; padding:0; }
 .ah-name { display:flex; align-items:center; gap:10px; }
 .ah-name small { display:block; color:var(--muted); font-size:12px; }
 .ah-icon { width:30px; height:30px; border-radius:6px; border:1px solid var(--line); flex:none; background:var(--panel2); }

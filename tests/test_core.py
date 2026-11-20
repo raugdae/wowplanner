@@ -2073,7 +2073,9 @@ def test_auction_pages(tmp_path):
 
     status, text = got["list"]
     assert status == 200 and "Étoffe de lin" in text and "dragonnet cramoisi" in text and "n° 111" in text
-    assert 'class="mg">15</span>' in text  # 15 po
+    assert '<td class="coin mg"><a class="price" href="/hdv/objet/8499" data-item="8499">15</a></td>' in text  # 15 po
+    assert 'data-item="8499"><span class="zero">0</span></a></td>' in text  # 15 po 0 pa 0 pc : zéros estompés
+    assert '<th class="coin mg">po</th>' in text
     assert 'data-item="2589"' in text and "▼" in text  # moins cher qu'il y a 24 h
     assert "Étoffe de lin" not in got["search"][1] and "dragonnet" in got["search"][1]
     assert got["fav"] == (200, {"favorite": True}) and got["fav_no_token"] == 403
