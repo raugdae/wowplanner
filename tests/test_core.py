@@ -691,7 +691,7 @@ def test_website_pages_and_no_personal_info(tmp_path):
         await site.start("127.0.0.1", 0)
         port = next(iter(site._runner.sites))._server.sockets[0].getsockname()[1]
         async with aiohttp.ClientSession() as session:
-            for path in ("/", f"/perso/{hollie.id}", "/metiers", "/metier/alchimie", "/donjons", "/perso/99999",
+            for path in ("/", f"/perso/{hollie.id}", "/metiers", "/metier/alchimie", "/donjons", "/aide", "/perso/99999",
                          "/metier/inconnu"):
                 async with session.get(f"http://127.0.0.1:{port}{path}") as resp:
                     pages[path] = (resp.status, await resp.text())
@@ -1270,6 +1270,77 @@ def test_website_guest_access(tmp_path):
     assert status == 200 and 'href="/admin"' in text and f'class="menu-char" href="/perso/{hollie.id}"' in text
     assert "lecture seule" in text
     assert got["as_post"][0] == 403
+
+
+def test_help_page(tmp_path):
+    """Page d'aide : publique, chapitre Administration réservé aux admins, captures toutes présentes et annotées."""
+    import asyncio
+    import re
+    import time
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    import aiohttp
+
+    from wowplanner import webhelp
+    from wowplanner.db import Database
+    from wowplanner.web import WebSite
+    from wowplanner.webauth import SESSION_COOKIE, DiscordOAuth, sign
+
+    # Chaque capture citée dans l'aide existe, avec sa taille et un repère pour chaque ligne de légende.
+    source = Path(webhelp.__file__).read_text(encoding="utf-8")
+    names = set(re.findall(r'shot\("([a-z0-9-]+)"', source))
+    assert len(names) >= 20
+    for name in names:
+        assert name in webhelp.SHOTS, name
+        assert (webhelp.SHOTS_DIR / f"{name}.webp").is_file(), name
+
+    db = Database(tmp_path / "t.db")
+
+    async def is_member(user_id):
+        return True
+
+    site = WebSite(db, lambda: 42)
+    secret = b"k" * 32
+    site.enable_auth(DiscordOAuth(None, "1", "s", "https://wow.fr/auth/callback"), secret, is_member, secure_cookies=False)
+
+    async def is_admin(user_id):
+        return user_id == 1
+
+    site.enable_actions(SimpleNamespace(is_admin=is_admin))
+    now = int(time.time())
+    admin_cookie = sign({"id": 1, "name": "Modo", "chk": now, "exp": now + 3600}, secret)
+    got = {}
+
+    async def scenario():
+        await site.start("127.0.0.1", 0)
+        port = next(iter(site._runner.sites))._server.sockets[0].getsockname()[1]
+        base = f"http://127.0.0.1:{port}"
+        async with aiohttp.ClientSession() as s:
+            for key, path in (("anon", "/aide"), ("img", "/static/aide/sortie.webp"), ("bad", "/static/aide/..%2Fweb.py"),
+                              ("png", "/static/aide/sortie.png"), ("login", "/")):
+                async with s.get(base + path) as resp:
+                    got[key] = (resp.status, await resp.read(), resp.headers.get("Content-Type", ""))
+        async with aiohttp.ClientSession(cookies={SESSION_COOKIE: admin_cookie}) as s:
+            async with s.get(base + "/aide") as resp:
+                got["admin"] = (resp.status, await resp.text())
+        await site.stop()
+
+    asyncio.run(scenario())
+    db.close()
+
+    status, body, _ = got["anon"]
+    text = body.decode()
+    assert status == 200 and "Bien démarrer" in text and "Se connecter" in text and 'href="/aide" class="active"' in text
+    assert 'data-ch="admin"' not in text and 'data-ch="sorties"' in text and 'data-ch="faq"' in text
+    for figure in re.findall(r'<figure class="hshot">.*?</figure>', text, re.S):
+        if "<img" in figure:  # autant de repères posés sur l'image que de lignes de légende
+            assert figure.count('class="hmark"') == figure.count("<li data-n="), figure[:200]
+    assert got["img"][0] == 200 and got["img"][2] == "image/webp" and got["img"][1][:4] == b"RIFF"
+    assert got["bad"][0] == 404 and got["png"][0] == 404
+    assert "/aide#debut-connexion" in got["login"][1].decode()  # lien d'aide sur la page de connexion
+    status, text = got["admin"]
+    assert status == 200 and 'data-ch="admin"' in text and "La page Administration" in text
 
 
 def test_sync_steps_without_armory(tmp_path):

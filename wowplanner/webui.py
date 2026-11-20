@@ -312,7 +312,7 @@ FOLD_BUTTONS = (
 def page(title: str, active: str, body: str, scripts: str = "") -> web.Response:
     links = [("sorties", "/sorties", "Sorties"), ("persos", "/", "Guilde"), ("metiers", "/metiers", "Métiers"),
              ("atelier", "/atelier", "Atelier"), ("hdv", "/hdv", "Hôtel des ventes"),
-             ("donjons", "/donjons", "Donjons")]
+             ("donjons", "/donjons", "Donjons"), ("aide", "/aide", "Aide")]
     nav = "".join(
         f'<a href="{href}" class="{"active" if key == active else ""}">{label}</a>' for key, href, label in links
     )

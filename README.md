@@ -367,6 +367,11 @@ sorties et gérer ses persos. Il peut être réservé aux membres du Discord (vo
   `/admin supprimer perso` : le membre est prévenu en MP). Sur la page Sorties, un admin peut annuler n'importe quelle
   sortie et retirer un inscrit. Le panneau de l'atelier reste à poster depuis Discord (`/admin atelier`), dans le
   salon voulu.
+- **Aide** (publique, lien dans la barre du haut et sur la page de connexion) : le mode d'emploi complet du site,
+  écrit pour quelqu'un qui n'a pas l'habitude d'internet. Un chapitre par partie du site, avec un menu à gauche, une
+  recherche, des captures d'écran annotées (repères numérotés : survoler ou cliquer un numéro allume la zone, clic
+  sur l'image pour l'agrandir), les gestes de base, une FAQ, un lexique et deux petits outils (convertisseur
+  po/pa/pc, rôles possibles par classe). Le chapitre Administration n'apparaît qu'aux admins. Voir « Page d'aide ».
 
 **Infos personnelles** : ni identifiant Discord, ni BattleTag. Seule la page Sorties montre le pseudo des inscrits
 et de l'organisateur, comme le message de la sortie sur Discord. Le site lit la même base que le bot (dans le même
@@ -375,6 +380,27 @@ conteneur), donc il est toujours à jour. Il montre les persos du serveur `GUILD
 **Sécurité des formulaires** : chaque action (inscription, création, suppression…) porte un jeton propre au joueur
 connecté, et le site refuse les envois venus d'un autre site. Les actions demandent la connexion Discord : sans
 `DISCORD_CLIENT_SECRET`, le site reste en consultation seule (aucune action possible).
+
+### Page d'aide
+
+Le texte est dans `wowplanner/webhelp.py` (fonctions `shot`, `steps`, `tip`… pour les blocs). Les captures sont
+dans `wowplanner/static/aide/` : une image `.webp` par capture et `shots.json`, qui donne la taille de chaque image
+et la zone désignée par chaque repère. Elles sont prises sur un **site de démonstration** : persos et pseudos
+inventés (sauf la fiche de Hollie Tétine, lue dans l'armurerie), vraies données de jeu et vrais prix de l'HdV.
+Aucune donnée du serveur n'y apparaît, car la page est publique.
+
+Pour les refaire après un changement du site (en local, avec les clés Blizzard dans `.env`) :
+
+```
+pip install playwright pillow aiohttp
+python tools/aide/demo_build.py demo.db                 # base de démonstration (1 à 2 minutes)
+python tools/aide/demo_server.py demo.db 8766           # site de démo, à laisser tourner
+python tools/aide/captures.py http://127.0.0.1:8766     # toutes les captures (ou : … sortie menu hdv)
+```
+
+`captures.py` utilise le Chromium de Playwright (`playwright install chromium`), ou Chrome via `CHROME_PATH`.
+La liste des captures (page, zone cadrée, repères) est en bas de `captures.py`. Le test `test_help_page` vérifie que
+chaque capture citée dans l'aide existe et que chaque repère de légende est placé sur son image.
 
 ### Hôtel des ventes
 
@@ -499,5 +525,8 @@ wowplanner/
   webmember.py         Sorties, Mes persos, Atelier, Administration (formulaires des membres)
   webauction.py        Hôtel des ventes (liste, favoris, fiche avec courbe des prix)
   webprofit.py         Rentabilité de mes métiers, Calculatrice HdV
+  webhelp.py           page d'aide (chapitres, captures annotées, recherche)
+  static/aide/         captures de la page d'aide (+ shots.json : tailles et repères)
+tools/aide/            base et site de démonstration, prise des captures de l'aide (Playwright)
 tests/test_core.py
 ```

@@ -41,6 +41,7 @@ from .webauth import (
     sign,
     unsign,
 )
+from .webhelp import HelpPages
 from .webpages import GuildPages
 from .webprofit import ProfitPages
 from .webui import (
@@ -54,8 +55,8 @@ from .webui import (
 log = logging.getLogger(__name__)
 
 
-# Pages visibles sans connexion (sans les persos du serveur).
-PUBLIC_PATHS = ("/donjons", "/donjon/", "/auth/", "/static/")
+# Pages visibles sans connexion (sans les persos du serveur) ; l'aide ne montre que des données d'exemple.
+PUBLIC_PATHS = ("/donjons", "/donjon/", "/aide", "/auth/", "/static/")
 
 # Accès invité : au-delà de 10 mots de passe faux en 15 minutes (tous visiteurs confondus), on refuse.
 GUEST_MAX_FAILURES = 10
@@ -196,7 +197,8 @@ class WebSite:
 <p class="sub">Les persos, métiers et recettes du serveur sont visibles par les membres du Discord.
 Connecte-toi avec ton compte Discord : le site ne voit que ton pseudo.</p>
 <p><a class="btn" href="{esc(login_url(next_path))}">Se connecter avec Discord</a></p>
-<p class="muted">Les <a href="/donjons">donjons et raids</a> restent consultables sans compte.</p></div>"""
+<p class="muted">Les <a href="/donjons">donjons et raids</a> restent consultables sans compte.
+Première visite ? <a href="/aide#debut-connexion">Comment se connecter</a>.</p></div>"""
         response = page("Connexion", "", body)
         response.set_status(401)
         return response
@@ -340,6 +342,7 @@ Connecte-toi avec ton compte Discord : le site ne voit que ton pseudo.</p>
         app.router.add_get("/auth/invite/{key}", self.guest_form)
         app.router.add_post("/auth/invite/{key}", self.guest_login)
         GuildPages(self).register(app.router)
+        HelpPages(self).register(app.router)
         app.router.add_get("/static/site.css", self.stylesheet)
         return app
 
