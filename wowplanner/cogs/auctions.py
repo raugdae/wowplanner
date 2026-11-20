@@ -6,8 +6,9 @@
 - Base locale des objets : tout le catalogue de Forever (noms, types, qualité, prix chez le marchand) récupéré par la
   recherche d'objets de l'API (1000 objets par requête), puis complété objet par objet pour les nouveautés.
 - Icônes : demandées petit à petit (une requête par objet), les plus vendus d'abord.
-- Ventes estimées : à chaque nouveau relevé, comparaison des annonces avec le relevé précédent (gardé en mémoire ;
-  après un redémarrage, il faut deux relevés avant la première estimation). Voir auctions.estimate_sales.
+- Ventes estimées : à chaque nouveau relevé, comparaison des annonces avec le relevé précédent (gardé en mémoire et
+  dans data/ah_listing.bin, relu au redémarrage : un redémarrage ne fait pas perdre d'heure). Voir
+  auctions.estimate_sales.
 - Une fois par jour : l'historique au-delà de 7 jours est réduit à un relevé par jour, et effacé après 90 jours.
 """
 from __future__ import annotations
@@ -22,8 +23,8 @@ from discord.ext import commands, tasks
 
 from ..armory import ArmoryError
 from ..auctions import (
-    HOURLY_DAYS, KEEP_DAYS, SALES_MAX_GAP, ListingState, aggregate, estimate_sales, listing_state, parse_item_detail,
-    parse_search_item,
+    HOURLY_DAYS, KEEP_DAYS, SALES_MAX_GAP, ListingState, aggregate, estimate_sales, listing_state, load_listing,
+    parse_item_detail, parse_search_item, save_listing,
 )
 
 if TYPE_CHECKING:
@@ -50,6 +51,10 @@ class AuctionCog(commands.Cog):
         self.db = bot.db
         self._lock = asyncio.Lock()
         self._listing: ListingState | None = None  # annonces du dernier relevé, pour estimer les ventes
+        data_dir = getattr(bot.config, "data_dir", None)
+        self._listing_path = data_dir / "ah_listing.bin" if data_dir else None
+        if self._listing_path is not None:
+            self._listing = load_listing(self._listing_path)
 
     @property
     def armory(self) -> ArmoryCog | None:
@@ -115,7 +120,7 @@ class AuctionCog(commands.Cog):
         if not fresh and self._listing is not None:
             return "pas de nouvelles données"
         auctions = [*(items.get("auctions") or []), *(goods.get("auctions") or [])]
-        sales = self._estimate_sales(listing_state(auctions, stamp)) if auctions else ""
+        sales = await self._estimate_sales(listing_state(auctions, stamp)) if auctions else ""
         if not fresh:  # premier passage après un redémarrage : sert de point de départ aux ventes
             return "pas de nouvelles données"
         points = aggregate(auctions)
@@ -128,9 +133,14 @@ class AuctionCog(commands.Cog):
         log.info("Hôtel des ventes %s : %d objets relevés%s", house, len(points), sales)
         return f"{len(points)} objets relevés{sales}"
 
-    def _estimate_sales(self, state: ListingState) -> str:
+    async def _estimate_sales(self, state: ListingState) -> str:
         """Ventes depuis le relevé précédent, rangées dans l'heure du milieu de l'intervalle."""
         before, self._listing = self._listing, state
+        if self._listing_path is not None and (before is None or state.ts != before.ts):
+            try:
+                await asyncio.to_thread(save_listing, state, self._listing_path)
+            except OSError as exc:
+                log.warning("Relevé de l'hôtel des ventes non enregistré : %s", exc)
         if before is None or not 0 < state.ts - before.ts <= SALES_MAX_GAP:
             return ""
         sold = estimate_sales(before, state)

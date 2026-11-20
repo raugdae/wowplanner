@@ -11,8 +11,11 @@ annonces SHORT et MEDIUM qui disparaissent sont ignorées (expiration possible) 
 """
 from __future__ import annotations
 
+import os
+import struct
 from array import array
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from .recipes import normalize
@@ -85,9 +88,41 @@ def listing_state(auctions: list[dict[str, Any]], ts: float) -> ListingState:
             rows.append((auction_id, item_id, quantity, a.get("time_left") in SURE_TIME_LEFT))
     rows.sort()
     return ListingState(
-        ts, array("q", (r[0] for r in rows)), array("q", (r[1] for r in rows)), array("q", (r[2] for r in rows)),
+        ts, array("q", (r[0] for r in rows)), array("i", (r[1] for r in rows)), array("i", (r[2] for r in rows)),
         bytes(r[3] for r in rows),
     )
+
+
+# Fichier du dernier relevé (data/ah_listing.bin) : en-tête (format, date, nombre d'annonces), puis les colonnes.
+_LISTING_HEADER = struct.Struct("<4sdq")
+_LISTING_MAGIC = b"AHL1"
+
+
+def save_listing(state: ListingState, path: Path) -> None:
+    """Écrit le relevé (quelques Mo) d'un coup : un fichier à moitié écrit n'est jamais relu."""
+    tmp = path.with_suffix(".tmp")
+    with open(tmp, "wb") as f:
+        f.write(_LISTING_HEADER.pack(_LISTING_MAGIC, state.ts, len(state.ids)))
+        for column in (state.ids, state.items, state.quantities):
+            column.tofile(f)
+        f.write(state.sure)
+    os.replace(tmp, path)
+
+
+def load_listing(path: Path) -> ListingState | None:
+    """Relevé enregistré par save_listing ; None si absent ou illisible."""
+    try:
+        with open(path, "rb") as f:
+            magic, ts, n = _LISTING_HEADER.unpack(f.read(_LISTING_HEADER.size))
+            if magic != _LISTING_MAGIC or n < 0:
+                return None
+            ids, items, quantities = array("q"), array("i"), array("i")
+            for column in (ids, items, quantities):
+                column.fromfile(f, n)
+            sure = f.read(n)
+    except (OSError, EOFError, struct.error):
+        return None
+    return ListingState(ts, ids, items, quantities, sure) if len(sure) == n else None
 
 
 def estimate_sales(before: ListingState, after: ListingState) -> dict[int, int]:

@@ -2230,9 +2230,28 @@ def test_auction_sales_estimate(tmp_path):
     state["i"] = 2  # 3 h plus tard : des annonces LONG ont pu expirer, pas d'estimation
     asyncio.run(cog.refresh())
     assert len(db.ah_sales_history(100, mid)) == 1
-    # Après un redémarrage, le relevé déjà enregistré sert de point de départ.
+    # Après un redémarrage sans fichier, le relevé déjà enregistré en base sert de point de départ.
     cog = AuctionCog(bot)
     assert asyncio.run(cog.refresh()) == "pas de nouvelles données" and cog._listing is not None
+
+    # Avec data/ah_listing.bin : le relevé est relu au redémarrage, aucune heure perdue.
+    from wowplanner.auctions import load_listing, save_listing
+    assert load_listing(tmp_path / "absent.bin") is None
+    (tmp_path / "abime.bin").write_bytes(b"AHL1" + b"\0" * 5)
+    assert load_listing(tmp_path / "abime.bin") is None
+    save_listing(before, tmp_path / "copie.bin")
+    copy = load_listing(tmp_path / "copie.bin")
+    assert copy == before and estimate_sales(copy, after) == {100: 12}
+
+    bot.config.data_dir = tmp_path
+    snapshots[:] = [(t0 + 10 * 3600, [a(1, 100, 3), a(2, 100, 4)]), (t0 + 11 * 3600, [a(2, 100, 4)])]
+    state["i"] = 0
+    asyncio.run(AuctionCog(bot).refresh())
+    assert (tmp_path / "ah_listing.bin").is_file()
+    state["i"] = 1
+    restarted = AuctionCog(bot)  # nouveau démarrage : relit le fichier
+    assert restarted._listing is not None and restarted._listing.ts == t0 + 10 * 3600
+    assert asyncio.run(restarted.refresh()) == "1 objets relevés, 3 ventes estimées"
     db.close()
 
 
