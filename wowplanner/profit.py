@@ -46,7 +46,7 @@ GATHERING: dict[str, tuple[int, dict[int, int], str]] = {
     "herboristerie": (9, HERB_SKILL, "Herbes"),
     "minage": (7, MINING_SKILL, "Minerais, pierres et barres"),
     "depecage": (6, SKINNING_SKILL, "Cuirs et peaux"),
-    "peche": (8, {}, "Poissons et viandes (le niveau de pêche n'est pas connu par ressource)"),
+    "peche": (8, {}, "Poissons et viandes"),
 }
 
 
@@ -152,6 +152,113 @@ class GatheredValue:
 def gathered_value(row: Any) -> GatheredValue:
     net = int(row["min_price"] * (1 - AH_CUT)) if row["min_price"] else None
     return GatheredValue(net, row["sell_price"] or None)
+
+
+# ===================================================================== calculatrice
+
+
+def raw_unit(row: Any) -> int:
+    """Meilleure vente « brute » d'un objet, à l'unité : HdV (commission déduite) ou marchand. 0 si aucun prix."""
+    if row is None:
+        return 0
+    net = int(row["min_price"] * (1 - AH_CUT)) if row["min_price"] else 0
+    return max(net, row["sell_price"] or 0)
+
+
+@dataclass
+class CraftStep:
+    """Fabriquer `crafts` fois une recette avec son stock : ce que ça rapporte face à la vente brute du stock utilisé."""
+    recipe_id: int
+    name: str
+    product_id: int
+    product: Any
+    crafts: int
+    product_value: int  # vente des objets fabriqués (meilleure vente : HdV net ou marchand)
+    buy_cost: int  # composants achetés au marchand (fioles…)
+    used_value: int  # ce qu'aurait rapporté la vente brute du stock utilisé
+
+    @property
+    def gain(self) -> int:
+        return self.product_value - self.buy_cost - self.used_value
+
+
+@dataclass
+class CraftPlan:
+    raw_total: int  # tout le stock vendu brut
+    steps: list[CraftStep]  # plan conseillé (recettes rentables, la plus rentable d'abord)
+    leftovers: dict[int, int]  # stock restant après le plan, vendu brut
+    leftover_value: int
+    options: list[CraftStep]  # chaque recette seule, avec tout le stock
+    unpriced: set[int]  # objets du stock sans aucun prix (comptés à 0)
+
+    @property
+    def total(self) -> int:
+        return sum(s.product_value - s.buy_cost for s in self.steps) + self.leftover_value
+
+    @property
+    def gain(self) -> int:
+        return self.total - self.raw_total
+
+
+def _recipe_needs(recipe: Any) -> tuple[dict[int, int], dict[int, int]] | None:
+    """(stock nécessaire par fabrication, achats au marchand par fabrication), None si un composant est inconnu."""
+    stock: dict[int, int] = {}
+    bought: dict[int, int] = {}
+    if recipe.reagents is None:
+        return None
+    for quantity, _, item_id in recipe.reagents:
+        if not isinstance(item_id, int):
+            return None
+        target = bought if item_id in VENDOR_REAGENTS else stock
+        target[item_id] = target.get(item_id, 0) + quantity
+    return stock, bought
+
+
+def _step(recipe: Any, crafts: int, stock: dict[int, int], bought: dict[int, int], items: dict[int, Any]) -> CraftStep:
+    product = items.get(recipe.crafted_item_id)
+    product_value = int(raw_unit(product) * (recipe.crafted_quantity or 1.0) * crafts)
+    buy_cost = sum((reagent_price(i, items)[0] or 0) * q for i, q in bought.items()) * crafts
+    used_value = sum(raw_unit(items.get(i)) * q for i, q in stock.items()) * crafts
+    return CraftStep(recipe.id, recipe.name, recipe.crafted_item_id, product, crafts, product_value, buy_cost,
+                     used_value)
+
+
+def craft_plan(inventory: dict[int, int], recipes: list, items: dict[int, Any]) -> CraftPlan:
+    """Que faire de son stock : tout vendre brut, ou fabriquer ? Plan glouton : la recette qui rapporte le plus par
+    fabrication d'abord, autant de fois que le stock le permet, puis la suivante ; le reste est vendu brut.
+    Les composants vendus par les marchands sont achetés, les autres doivent être dans le stock."""
+    inventory = {i: q for i, q in inventory.items() if q > 0}
+    raw_total = sum(raw_unit(items.get(i)) * q for i, q in inventory.items())
+    unpriced = {i for i in inventory if raw_unit(items.get(i)) == 0}
+
+    usable = []
+    for recipe in recipes:
+        product = items.get(recipe.crafted_item_id) if recipe.crafted_item_id else None
+        needs = _recipe_needs(recipe)
+        if product is None or needs is None or raw_unit(product) == 0 or not needs[0]:
+            continue
+        stock, bought = needs
+        alone = min(inventory.get(i, 0) // q for i, q in stock.items())
+        if alone > 0:
+            usable.append((recipe, stock, bought, _step(recipe, 1, stock, bought, items).gain, alone))
+
+    options = sorted(
+        (_step(r, alone, stock, bought, items) for r, stock, bought, _, alone in usable), key=lambda s: -s.gain
+    )
+    left = dict(inventory)
+    steps = []
+    for recipe, stock, bought, per_craft, _ in sorted(usable, key=lambda u: -u[3]):
+        if per_craft <= 0:
+            break
+        crafts = min(left.get(i, 0) // q for i, q in stock.items())
+        if crafts <= 0:
+            continue
+        for i, q in stock.items():
+            left[i] -= q * crafts
+        steps.append(_step(recipe, crafts, stock, bought, items))
+    leftovers = {i: q for i, q in left.items() if q > 0}
+    leftover_value = sum(raw_unit(items.get(i)) * q for i, q in leftovers.items())
+    return CraftPlan(raw_total, steps, leftovers, leftover_value, options, unpriced)
 
 
 def gathering_rows(rows: list, skills: dict[int, int], skill: int | None) -> list[tuple[Any, int | None, bool]]:

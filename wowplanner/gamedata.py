@@ -71,7 +71,6 @@ PROFESSIONS: dict[str, tuple[str, bool]] = {
     "secourisme": ("Secourisme", False),
     "peche": ("Pêche", False),
 }
-MAX_PRIMARY_PROFESSIONS = 2
 MAX_PROFESSION_SKILL = 300
 
 

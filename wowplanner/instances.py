@@ -190,11 +190,6 @@ class InstanceRegistry:
         self.updated_at = datetime.fromisoformat(updated_at) if updated_at else None
         self.source = source
 
-    def cache_age_hours(self) -> float | None:
-        if self.updated_at is None or self.source != "wiki (cache)":
-            return None
-        return (datetime.now(timezone.utc) - self.updated_at).total_seconds() / 3600
-
     async def refresh(self, session: aiohttp.ClientSession) -> int:
         instances = await fetch_from_wiki(session)
         now = datetime.now(timezone.utc).isoformat(timespec="seconds")

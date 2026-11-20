@@ -320,6 +320,13 @@ sorties et gérer ses persos. Il peut être réservé aux membres du Discord (vo
 
   Blizzard donne un prix d'achat « marchand » même pour des objets qu'aucun marchand ne vend : seuls les composants
   de la liste sont comptés au prix du marchand ;
+- **Calculatrice HdV** (menu du compte) : pour un de ses persos, on saisit son stock (les ressources qu'il récolte à
+  son niveau, et les composants de ses recettes ; gardé dans le navigateur, par perso). La calculatrice compare la
+  **vente brute** de tout le stock (au meilleur prix entre l'HdV, commission déduite, et le marchand) avec un **plan
+  de fabrication** : la recette qui rapporte le plus par fabrication d'abord, autant de fois que le stock le permet,
+  puis la suivante, en achetant au marchand les composants qu'il vend (fioles…), le reste vendu brut. Elle montre le
+  gain du plan, chaque étape (objets vendus, achats, valeur du stock utilisé) et chaque recette prise seule (une
+  même plante sert parfois à plusieurs recettes). Par exemple : vendre ses Pacifiques, ou en faire des potions ?
 - **Guilde** : tableau de tous les persos du serveur par ordre alphabétique (classe, race, rôles, métiers et
   niveaux), recherche et filtres par classe, rôle ou métier ;
 - **fiche d'un perso** : façon fiche du jeu, son **équipement** autour de son rendu en pied (icônes, infobulles,
@@ -367,7 +374,7 @@ conteneur), donc il est toujours à jour. Il montre les persos du serveur `GUILD
 
 **Sécurité des formulaires** : chaque action (inscription, création, suppression…) porte un jeton propre au joueur
 connecté, et le site refuse les envois venus d'un autre site. Les actions demandent la connexion Discord : sans
-`DISCORD_CLIENT_SECRET`, le site reste en lecture seule.
+`DISCORD_CLIENT_SECRET`, le site reste en consultation seule (aucune action possible).
 
 ### Hôtel des ventes
 
@@ -429,37 +436,48 @@ que le bot renvoie vers le site dans ses messages ; avec Traefik, `WEB_DOMAIN` s
 
 ```
 wowplanner/
-  __main__.py         point d'entrée (python -m wowplanner)
-  bot.py              client Discord, synchronisation des commandes
-  config.py           lecture du .env
-  db.py               SQLite : sorties, inscriptions, persos
-  embeds.py           rendu du message de sortie
-  instances.py        liste des instances, lecture du wiki
-  roles.py            rôles, compositions par défaut, émotes
-  gamedata.py         classes, races, rôles et métiers de WoW Forever
-  proficiency.py      armures et armes portables par classe (équipement conseillé)
-  armory.py           client de l'API Blizzard (armurerie Forever)
-  armory_probe.py     script de test de l'armurerie
-  timeparse.py        lecture des dates et heures
-  cogs/commands.py    déclaration de toutes les commandes slash (/ajouter, /supprimer, /liste, /admin)
-  cogs/events.py      sorties + boutons d'inscription
-  cogs/characters.py  persos
-  cogs/players.py     BattleTag
-  cogs/armory.py      synchro armurerie : métiers, recettes, équipement, talents
-  cogs/statsync.py    lecture des priorités de stats (guide stillsixty)
-  cogs/sync.py        synchro de nuit et /admin sync : tout ce qui vient de l'extérieur
-  cogs/orders.py      atelier : panneau, commandes entre persos, boutons en MP
-  orders.py           règles des commandes (recettes commandables, droits, composants)
-  recipes.py          recettes : recherche, regroupement, composants dépliés
-  web.py              site web (persos, métiers, recettes, donjons)
-  webmember.py        site : sorties et « Mes persos » (formulaires, vérification dans l'armurerie)
-  webauction.py       site : hôtel des ventes (liste, favoris, fiche avec courbe des prix)
-  auctions.py         hôtel des ventes : agrégation des annonces, prix, base des objets
-  profit.py           rentabilité des métiers (recettes, récolte, prix des marchands)
-  webprofit.py        site : page « Rentabilité de mes métiers »
-  cogs/auctions.py    relevé des prix de l'hôtel des ventes (toutes les 20 min)
-  webauth.py          connexion au site avec Discord (OAuth2, cookies signés)
-  cogs/webbridge.py   actions du site exécutées par le bot (sorties, persos)
-  cogs/schedule.py    rappels en MP et salons vocaux temporaires
+  __main__.py          point d'entrée (python -m wowplanner)
+  bot.py               client Discord : extensions, site web, connexion au site, appartenance au serveur
+  config.py            lecture du .env
+  db.py                SQLite : tout l'accès à la base (sorties, persos, recettes, commandes, hôtel des ventes…)
+
+  # Discord (cogs/)
+  cogs/commands.py     déclaration de toutes les commandes slash (/ajouter, /supprimer, /liste, /admin, /commander)
+  cogs/events.py       sorties : création, boutons d'inscription, annulation (partagé avec le site)
+  cogs/characters.py   persos (/ajouter perso, /supprimer perso)
+  cogs/players.py      BattleTag
+  cogs/orders.py       atelier : panneau, commandes entre persos, boutons en MP (partagé avec le site)
+  cogs/schedule.py     rappels en MP et salons vocaux temporaires
+  cogs/armory.py       synchro armurerie : métiers, recettes, équipement, talents
+  cogs/statsync.py     lecture des priorités de stats (guide stillsixty)
+  cogs/auctions.py     relevé des prix de l'hôtel des ventes (toutes les 20 min), catalogue des objets
+  cogs/sync.py         synchro de nuit et /admin sync : tout ce qui vient de l'extérieur, nettoyage des persos
+  cogs/webbridge.py    actions du site exécutées par le bot (sorties, persos, atelier, administration)
+  ephemeral.py         effacement des anciennes réponses privées du bot
+
+  # Données et règles (sans Discord ni HTML)
+  gamedata.py          classes, races, rôles et métiers de WoW Forever
+  proficiency.py       armures et armes portables par classe (équipement conseillé)
+  gear.py              équipement, caractéristiques, priorités de stats par spé
+  statsource.py        lecture du guide des priorités de stats
+  roles.py             rôles, compositions par défaut, émotes
+  timeparse.py         lecture des dates et heures
+  instances.py         liste des instances (wiki), pour /ajouter event
+  dungeons.py          donjons et raids de Forever (tranches de niveau), pour le site
+  dungeon_guides.py    fiches des donjons : entrée, coordonnées, parcours des boss
+  recipes.py           recettes : recherche, regroupement, composants dépliés
+  orders.py            règles des commandes de l'atelier (recettes commandables, droits, composants)
+  auctions.py          hôtel des ventes : agrégation des annonces, prix, base des objets
+  profit.py            rentabilité des métiers et calculatrice (recettes, récolte, prix des marchands)
+  armory.py            client de l'API Blizzard (armurerie, hôtel des ventes, catalogue des objets)
+  armory_probe.py      script de test de l'armurerie
+  embeds.py            rendu du message de sortie sur Discord
+
+  # Site web
+  web.py               serveur, connexion, mise en page, pages de consultation (Guilde, fiches, Métiers, Donjons)
+  webauth.py           connexion au site avec Discord (OAuth2, cookies signés)
+  webmember.py         Sorties, Mes persos, Atelier, Administration (formulaires des membres)
+  webauction.py        Hôtel des ventes (liste, favoris, fiche avec courbe des prix)
+  webprofit.py         Rentabilité de mes métiers, Calculatrice HdV
 tests/test_core.py
 ```

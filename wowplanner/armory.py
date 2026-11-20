@@ -256,21 +256,6 @@ class ArmorySheet:
         return value.get("name") if isinstance(value, dict) else None
 
     @property
-    def active_spec(self) -> tuple[str, int] | None:
-        """(nom, points) de l'arbre le plus investi dans le groupe de talents actif."""
-        for group in (self.specializations or {}).get("specialization_groups", []):
-            if not group.get("is_active"):
-                continue
-            specs = [
-                (s.get("specialization", {}).get("name") or s.get("specialization_name"), s.get("spent_points") or 0)
-                for s in group.get("specializations", [])
-            ]
-            specs = [s for s in specs if s[0]]
-            if specs:
-                return max(specs, key=lambda s: s[1])
-        return None
-
-    @property
     def talents(self) -> list[dict[str, Any]] | None:
         """Talents choisis, par groupe (double spé) : [{"active", "specs": [{"spec_id", "name", "points",
         "talents": [[id talent, nom, rang, description], …]}]}]. None si la ressource n'a pas pu être lue."""

@@ -442,7 +442,6 @@ def test_armory_sheet_parsing():
     sheet = _sheet()
     assert sheet.full_name == "Hollie Tétine"
     assert (sheet.class_key, sheet.race_key) == ("pretre", "skyborne")
-    assert sheet.active_spec == ("Magie de l'ombre", 11)  # groupe actif, arbre le plus investi
     assert sheet.asset("avatar") == "https://render/avatar.jpg" and sheet.asset("main-raw") is None
     assert sheet.profession_skills() == {"alchimie": (139, 150), "cuisine": (54, 75)}
     sheet.professions = None
@@ -707,7 +706,7 @@ def test_website_pages_and_no_personal_info(tmp_path):
     assert pages["/metier/alchimie"][0] == 200
     assert 'class="d1">4× Bouche-noire huileux' in pages["/metier/alchimie"][1]  # sous-recette dépliée
     assert pages["/perso/99999"][0] == 404 and pages["/metier/inconnu"][0] == 404
-    for status, text in pages.values():
+    for _, text in pages.values():
         assert str(discord_id) not in text and "Raug" not in text and "2134" not in text  # aucune info perso
         assert "<script>alert(1)</script>" not in text  # HTML échappé
 
@@ -1036,8 +1035,6 @@ def test_gear_stats_priorities_and_categories(tmp_path):
     assert set(gear.SPEC_IDS.values()) <= set(gear.PRIORITIES)
     assert gear.line_tokens("+12 Puissance d’attaque") == ["attack_power"]
     assert gear.priority_ranks("shadow")["spell_hit"] == 1
-    assert gear.line_has_priority("+4 Puissance des sorts", gear.stat_matcher("shadow"))
-    assert not gear.line_has_priority("+4 Endurance", gear.stat_matcher("shadow"))
 
     # Recettes classées d'après l'objet fabriqué
     def recipe(rid, name, item_class=None, slot=None, crafted=True, sub=None):
@@ -1259,7 +1256,6 @@ def test_dungeons_data_and_page(tmp_path):
     assert lows == sorted(lows)  # du plus bas au plus haut niveau
     krol = next(d for d in dungeons.DUNGEONS if d.english == "Krol'dok Stronghold")
     assert (krol.low, krol.high) == (40, 45)  # tranche corrigée par Blizzard
-    assert dungeons.in_range(krol, 42) and not dungeons.in_range(krol, 46) and not dungeons.in_range(krol, None)
     ony = next(r for r in dungeons.RAIDS if r.english == "Onyxia's Lair")
     assert dungeons.raid_status(ony, date(2026, 12, 1)) == "Ouvre le 09/12/2026"
     assert dungeons.raid_status(ony, date(2026, 12, 9)) == "Ouvert"
@@ -2135,6 +2131,41 @@ def test_profit_computation():
     assert [(r[0]["item_id"], r[1], r[2]) for r in ordered] == [(2447, 1, True), (777777, None, True), (3356, 125, False)]
 
 
+def test_craft_plan():
+    """Calculatrice : la recette la plus rentable d'abord, puis la suivante avec le reste, le reste vendu brut."""
+    from wowplanner.db import GuildRecipe
+    from wowplanner.profit import craft_plan, raw_unit
+
+    def item(min_price=None, sell=0, purchase=None):
+        return {"min_price": min_price, "sell_price": sell, "purchase_price": purchase, "purchase_quantity": 1}
+
+    items = {
+        2447: item(100, sell=10), 785: item(300), 3371: item(purchase=20),  # pacifique, mage royal, fiole (marchand)
+        118: item(1000), 858: item(400), 999: item(50, sell=40),  # potions, objet sans intérêt
+    }
+    assert raw_unit(items[2447]) == 95 and raw_unit(items[999]) == 47 and raw_unit(None) == 0
+    assert raw_unit(item(10, sell=25)) == 25  # mieux vaut le marchand
+    recipes = [
+        GuildRecipe(1, "Potion A", [(1, "Pacifique", 2447), (1, "Mage royal", 785), (1, "Fiole", 3371)], [], 118, 1.0),
+        GuildRecipe(2, "Potion B", [(2, "Pacifique", 2447), (1, "Fiole", 3371)], [], 858, 1.0),
+        GuildRecipe(3, "Bricole", [(1, "Pacifique", 2447)], [], 999, 1.0),
+        GuildRecipe(4, "Que des fioles", [(1, "Fiole", 3371)], [], 118, 1.0),  # rien du stock : ignorée
+    ]
+    plan = craft_plan({2447: 5, 785: 2, 4242: 3}, recipes, items)
+    assert plan.raw_total == 5 * 95 + 2 * 285 and plan.unpriced == {4242}
+    assert [(s.name, s.crafts) for s in plan.steps] == [("Potion A", 2), ("Potion B", 1)]
+    a, b = plan.steps
+    assert (a.product_value, a.buy_cost, a.used_value, a.gain) == (1900, 40, 760, 1100)
+    assert (b.product_value, b.buy_cost, b.used_value, b.gain) == (380, 20, 190, 170)
+    assert plan.leftovers == {2447: 1, 4242: 3} and plan.leftover_value == 95
+    assert plan.total == 1860 + 360 + 95 and plan.gain == 1270
+    assert [(s.name, s.crafts, s.gain) for s in plan.options] == [
+        ("Potion A", 2, 1100), ("Potion B", 2, 340), ("Bricole", 5, -240),
+    ]
+    nothing = craft_plan({785: 3}, recipes, items)  # sans pacifique, aucune recette possible
+    assert nothing.steps == [] and nothing.options == [] and nothing.gain == 0
+
+
 def test_profit_page(tmp_path):
     import asyncio
     import time
@@ -2184,6 +2215,10 @@ def test_profit_page(tmp_path):
         async with aiohttp.ClientSession(cookie_jar=aiohttp.CookieJar(unsafe=True), cookies={SESSION_COOKIE: session}) as s:
             async with s.get(f"http://127.0.0.1:{port}/rentabilite") as resp:
                 got["page"] = resp.status, await resp.text()
+            async with s.get(f"http://127.0.0.1:{port}/calculatrice") as resp:
+                got["calc_empty"] = resp.status, await resp.text()
+            async with s.get(f"http://127.0.0.1:{port}/calculatrice?perso={hollie.id}&q2447=10") as resp:
+                got["calc"] = resp.status, await resp.text()
         await site.stop()
 
     asyncio.run(scenario())
@@ -2197,3 +2232,12 @@ def test_profit_page(tmp_path):
     assert 'href="/rentabilite"' in text  # lien dans le menu du compte
     # Récolte : Pacifique à 200 pc → 190 pc nets, revendu 10 pc au marchand → 180 pc de plus, marge de 1800 %.
     assert "+ 1 pa 80 pc" in text and "+1800 %" in text and "Gain vs marchand" in text
+    assert 'href="/calculatrice"' in text
+
+    # Calculatrice : stock à saisir = herbes récoltables à son niveau (pas le Sang-royal, niveau 125).
+    status, text = got["calc_empty"]
+    assert status == 200 and 'name="q2447"' in text and 'name="q3356"' not in text and "Résultat" not in text
+    # 10 Pacifique : vendus bruts 10 × 190 pc = 19 pa ; en potions : 10 × (950 − 20 de fiole) = 93 pa → 74 pa de plus.
+    status, text = got["calc"]
+    assert status == 200 and "Fabriquer rapporte <b>74 pa</b>" in text and "+ 74 pa" in text
+    assert 'value="10"' in text and "Chaque recette seule" in text

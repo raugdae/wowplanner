@@ -204,18 +204,6 @@ def priority_ranks(spec: str | None) -> dict[str, int]:
     return ranks
 
 
-def stat_matcher(spec: str | None, top: int = 3) -> re.Pattern | None:
-    """Repère, dans une ligne d'infobulle d'objet, les stats les plus prioritaires de la spé."""
-    if spec not in PRIORITIES:
-        return None
-    words = [TOKENS[t][1] for t in PRIORITIES[spec][2][:top] if TOKENS[t][1]]
-    return re.compile(r"\b(" + "|".join(words) + r")\b") if words else None
-
-
-def line_has_priority(line: str, matcher: re.Pattern | None) -> bool:
-    return bool(matcher and matcher.search(normalize(line)))
-
-
 # Spés de chaque classe, dans l'ordre des arbres du jeu (variantes comprises).
 CLASS_SPECS = {
     "druide": ("balance", "feral_cat", "feral_bear", "resto_druid"),

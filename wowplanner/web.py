@@ -68,11 +68,6 @@ def login_url(path: str) -> str:
     return f"/auth/login?next={quote(safe_next(path), safe='')}"
 
 
-def is_admin_viewer() -> bool:
-    viewer = _VIEWER.get()
-    return viewer is not None and viewer.user is not None and viewer.admin
-
-
 def _menu_html() -> str:
     """Menu en haut à droite : compte, persos du joueur (préféré en tête), thème, administration, déconnexion."""
     viewer = _VIEWER.get()
@@ -100,7 +95,8 @@ def _menu_html() -> str:
     return f"""<div class="account-zone"><details class="usermenu"><summary>👤 {name} ▾</summary>
 <div class="menu-panel"><div class="menu-head">Connecté en tant que <b>{name}</b></div>
 <div class="menu-sec"><small>Mes persos</small>{links}<a class="menu-link" href="/mes-persos">Gérer mes persos →</a>
-<a class="menu-link" href="/rentabilite">💰 Rentabilité de mes métiers</a></div>
+<a class="menu-link" href="/rentabilite">💰 Rentabilité de mes métiers</a>
+<a class="menu-link" href="/calculatrice">🧮 Calculatrice HdV</a></div>
 {theme}{admin}<a class="menu-link" href="/auth/logout">Déconnexion</a></div></details></div>"""
 
 CLASS_COLORS = {
@@ -542,6 +538,18 @@ tr[data-href] { cursor:pointer; }
 .ah-table details.parts { margin-top:2px; font-size:12px; }
 .ah-table details.parts summary { color:var(--muted); cursor:pointer; }
 .ah-table details.parts ul { margin:4px 0 0; padding-left:18px; }
+/* Calculatrice HdV (webprofit.py). */
+.stock-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(250px,1fr)); gap:6px 10px; }
+.stock-item { display:flex; align-items:center; gap:8px; background:var(--panel); border:1px solid var(--line);
+  border-radius:8px; padding:5px 8px; }
+.stock-item > span { flex:1; min-width:0; }
+.stock-item small { display:block; color:var(--muted); font-size:12px; }
+.stock-item input { width:84px; flex:none; background:var(--bg); color:var(--text); border:1px solid var(--line);
+  border-radius:6px; padding:5px 6px; font:inherit; text-align:right; }
+.stock-item input:focus { border-color:var(--accent); outline:none; }
+.calc-actions { display:flex; gap:8px; margin:14px 0; }
+.verdict { font-size:16px; margin:10px 0; } .verdict.gain b { color:#5fd38d; }
+.calc-result .facts .fact b .gain, .calc-result .facts .fact b .loss { font-weight:700; }
 .ah-table .gap { width:14px; min-width:14px; padding:0; }
 .ah-name { display:flex; align-items:center; gap:10px; }
 .ah-name small { display:block; color:var(--muted); font-size:12px; }
@@ -1337,10 +1345,10 @@ def crafted_gear_html(
             ilvl = item.get("ilvl")
             up = worn is not None and isinstance(ilvl, int) and ilvl > worn
             later = bool(c.level and from_level > c.level)
-            entries.append((later, -(ilvl or 0), -len(tokens & set(top)), recipe, from_level, tokens, up))
+            entries.append((later, -(ilvl or 0), -len(tokens & set(top)), recipe, from_level, up))
         entries.sort(key=lambda e: e[:3])
         cards = []
-        for later, _, _, recipe, from_level, tokens, up in entries[:GEAR_PER_SLOT]:
+        for later, _, _, recipe, from_level, up in entries[:GEAR_PER_SLOT]:
             item = recipe.item or {}
             kind = proficiency.item_kind(item)
             color = QUALITY_COLORS.get(item.get("quality") or "", "inherit")
@@ -1600,7 +1608,7 @@ Connecte-toi avec ton compte Discord : le site ne voit que ton pseudo.</p>
         try:
             character_id = int(request.match_info["id"])
         except ValueError:
-            raise web.HTTPNotFound(text="Perso introuvable.")
+            raise web.HTTPNotFound(text="Perso introuvable.") from None
         character = next((c for c in self.db.guild_characters(gid) if c.id == character_id), None)
         if character is None:
             raise web.HTTPNotFound(text="Perso introuvable.")
@@ -1932,15 +1940,15 @@ Forever : la carte détaillée est sur le guide.</p>
     # ------------------------------------------------------------ serveur
 
     def app(self) -> web.Application:
-        # Importent ce module : chargés ici pour éviter l'import circulaire.
-        from .webauction import AuctionPages
-        from .webmember import MemberPages
-        from .webprofit import ProfitPages
+        from .webprofit import ProfitPages  # importe ce module : chargé ici pour éviter l'import circulaire
 
         app = web.Application(middlewares=[self._auth_middleware])
-        MemberPages(self).register(app.router)
-        AuctionPages(self).register_auction(app.router)
-        ProfitPages(self).register_profit(app.router)
+        # Une seule instance pour toutes les pages des membres (ProfitPages hérite d'AuctionPages et de MemberPages) :
+        # un seul état partagé (limite de vérifications dans l'armurerie, etc.).
+        pages = ProfitPages(self)
+        pages.register(app.router)
+        pages.register_auction(app.router)
+        pages.register_profit(app.router)
         app.router.add_get("/auth/login", self.auth_login)
         app.router.add_get("/auth/callback", self.auth_callback)
         app.router.add_get("/auth/logout", self.auth_logout)

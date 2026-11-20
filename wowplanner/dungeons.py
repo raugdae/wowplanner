@@ -104,10 +104,6 @@ LEVEL_MIN = 10
 LEVEL_MAX = 60
 
 
-def in_range(dungeon: Dungeon, level: int | None) -> bool:
-    return level is not None and dungeon.low <= level <= dungeon.high
-
-
 def raid_status(raid: Raid, today: date | None = None) -> str:
     today = today or date.today()
     if raid.opens is None:
