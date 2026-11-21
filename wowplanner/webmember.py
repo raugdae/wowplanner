@@ -374,12 +374,12 @@ class MemberPages:
             )
         else:
             today = datetime.now(self.tz).date().isoformat()
-            options = "".join(f'<option value="{esc(v)}">{esc(label)}</option>' for v, label in backend.instance_options())
+            options = "".join(f'<option value="{esc(v)}">{esc(label)}</option>' for v, label in sorted(backend.instance_options(), key=lambda o: normalize(o[1])))
             channel_field = ""
             if len(channels) > 1:
                 channel_field = (
                     '<label>Salon Discord<select name="salon" required>'
-                    + "".join(f'<option value="{cid}">{esc(name)}</option>' for cid, name in channels)
+                    + "".join(f'<option value="{cid}">{esc(name)}</option>' for cid, name in sorted(channels, key=lambda ch: normalize(ch[1])))
                     + "</select></label>"
                 )
             else:
@@ -461,7 +461,7 @@ placeholder="Stuff requis, point de rendez-vous…"></textarea></label>
             pick = ""
             if mine:
                 # Perso déjà inscrit, sinon le perso préféré (en tête de liste), sinon le premier.
-                ordered = sorted(mine, key=lambda c: not c.favorite)
+                ordered = sorted(mine, key=lambda c: (not c.favorite, normalize(c.name)))
                 current = my_signup.character_id if my_signup else None
                 if current is None:
                     current = ordered[0].id
@@ -605,8 +605,8 @@ placeholder="Stuff requis, point de rendez-vous…"></textarea></label>
         strict = backend.armory_enabled
         manual = ""
         if not strict:
-            classes = "".join(f'<option value="{k}">{esc(v[0])}</option>' for k, v in CLASSES.items())
-            races = "".join(f'<option value="{k}">{esc(v[0])}</option>' for k, v in RACES.items())
+            classes = "".join(f'<option value="{k}">{esc(v[0])}</option>' for k, v in sorted(CLASSES.items(), key=lambda kv: normalize(kv[1][0])))
+            races = "".join(f'<option value="{k}">{esc(v[0])}</option>' for k, v in sorted(RACES.items(), key=lambda kv: normalize(kv[1][0])))
             manual = (
                 f'<label>Classe<select name="classe" required>{classes}</select></label>'
                 f'<label>Race<select name="race" required>{races}</select></label>'
@@ -688,7 +688,7 @@ Ceux de Discord encore introuvables dans l'armurerie au bout de 2 jours sont ret
                 recipe = candidate.recipe
                 crafters = "".join(
                     f'<option value="{c.character_id}">{esc(c.name)} — {esc(class_label(c.wow_class))}</option>'
-                    for c in candidate.crafters
+                    for c in sorted(candidate.crafters, key=lambda c: normalize(c.name))
                 )
                 order_form = f"""<section class="card admin-sec" id="commande"><h2>🛒 Commander : {esc(recipe.name)}</h2>
 <div class="order-grid"><div class="cards">{recipe_card(recipe, backend.crafted_by(), None, order_link=False)}</div>
@@ -899,13 +899,13 @@ nettoyage des persos Discord introuvables et toutes les recettes. Elle tourne au
         )
 
         # --- Ajouter un perso à un membre
-        members = sorted(member_ids, key=lambda uid: names.get(uid, "").lower())
+        members = sorted(member_ids, key=lambda uid: normalize(names.get(uid, "")))
         member_options = "".join(f'<option value="{uid}">{esc(names.get(uid, str(uid)))}</option>' for uid in members)
         strict = backend.armory_enabled
         manual = ""
         if not strict:
-            classes = "".join(f'<option value="{k}">{esc(v[0])}</option>' for k, v in CLASSES.items())
-            races = "".join(f'<option value="{k}">{esc(v[0])}</option>' for k, v in RACES.items())
+            classes = "".join(f'<option value="{k}">{esc(v[0])}</option>' for k, v in sorted(CLASSES.items(), key=lambda kv: normalize(kv[1][0])))
+            races = "".join(f'<option value="{k}">{esc(v[0])}</option>' for k, v in sorted(RACES.items(), key=lambda kv: normalize(kv[1][0])))
             manual = (
                 f'<label>Classe<select name="classe" required>{classes}</select></label>'
                 f'<label>Race<select name="race" required>{races}</select></label>'

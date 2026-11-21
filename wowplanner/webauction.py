@@ -483,14 +483,14 @@ class AuctionPages(MemberPages):
         classes = db.ah_classes()
         class_options = "".join(
             f'<option value="{cid}"{" selected" if cid == class_id else ""}>{esc(name)} ({sum(s[2] for s in subs)})</option>'
-            for cid, name, subs in classes
+            for cid, name, subs in sorted(classes, key=lambda c: normalize(c[1]))
         )
         sub_select = ""
         chosen = next((c for c in classes if c[0] == class_id), None)
         if chosen and chosen[2]:
             sub_options = "".join(
                 f'<option value="{sid}"{" selected" if sid == subclass_id else ""}>{esc(name)} ({n})</option>'
-                for sid, name, n in chosen[2]
+                for sid, name, n in sorted(chosen[2], key=lambda sc: normalize(sc[1]))
             )
             sub_select = (
                 f'<select name="sous" data-autosubmit aria-label="Sous-type"><option value="">Tous les '

@@ -92,7 +92,7 @@ class ProfitPages(AuctionPages):
         options = "".join(
             f'<option value="{c.id}"{" selected" if c.id == character.id else ""}>{"⭐ " if c.favorite else ""}'
             f'{esc(c.name)} — {esc(", ".join(profession_label(p) for p in c.professions))}</option>'
-            for c in crafters
+            for c in sorted(crafters, key=lambda c: (not c.favorite, normalize(c.name)))
         )
         picker = (
             f'<form method="get" action="{action}" class="filters"><select name="perso" data-autosubmit '
@@ -225,7 +225,7 @@ Calculer avec ton stock</a>.</p>
                     f'<td class="num value">{value}</td></tr>'
                 )
         categories = "".join(
-            f'<option value="{index}">{esc(label)} ({len(rows)})</option>' for index, (label, rows) in enumerate(groups)
+            f'<option value="{index}">{esc(label)} ({len(rows)})</option>' for index, (label, rows) in sorted(enumerate(groups), key=lambda g: normalize(g[1][0]))
         )
         skill_box = (
             '<label class="fav-filter" title="Ressources que ce perso ne peut pas récolter lui-même : métier absent ou '

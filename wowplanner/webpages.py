@@ -89,9 +89,9 @@ class GuildPages:
 <p class="sub"><span id="count">{len(characters)}</span> perso(s) du serveur, par ordre alphabétique · ⭐ rôle préféré</p>
 <div class="filters">
   <input id="q" type="search" placeholder="Chercher un perso, une classe, une race…" autocomplete="off">
-  <select data-filter="classe"><option value="">Toutes les classes</option>{options((k, v[0]) for k, v in CLASSES.items())}</select>
+  <select data-filter="classe"><option value="">Toutes les classes</option>{options(sorted(((k, v[0]) for k, v in CLASSES.items()), key=lambda kv: normalize(kv[1])))}</select>
   <select data-filter="role"><option value="">Tous les rôles</option>{options((r, LABELS[r]) for r in ROLES)}</select>
-  <select data-filter="metier"><option value="">Tous les métiers</option>{options((k, v[0]) for k, v in PROFESSIONS.items())}</select>
+  <select data-filter="metier"><option value="">Tous les métiers</option>{options(sorted(((k, v[0]) for k, v in PROFESSIONS.items()), key=lambda kv: normalize(kv[1])))}</select>
 </div>
 <div class="table-wrap"><table>
 <thead><tr><th>Perso</th><th class="num">Niv.</th><th>Classe</th><th>Race</th><th>Rôles</th>

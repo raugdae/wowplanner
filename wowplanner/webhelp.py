@@ -136,7 +136,7 @@ class Chapter:
 
 def _role_widget() -> str:
     """Petit outil : choisir une classe → les rôles qu'elle peut tenir (peut figurer plusieurs fois dans la page)."""
-    options = "".join(f'<option value="{esc(key)}">{esc(v[0])}</option>' for key, v in CLASSES.items())
+    options = "".join(f'<option value="{esc(key)}">{esc(v[0])}</option>' for key, v in sorted(CLASSES.items(), key=lambda kv: normalize(kv[1][0])))
     data = {key: [f"{ROLE_ICONS[r]} {LABELS[r]}" for r in roles_for(key)] for key in CLASSES}
     return f"""<div class="hwidget hw-role">
 <label>Ta classe <select aria-label="Classe"><option value="">Choisis…</option>{options}</select></label>
