@@ -279,7 +279,7 @@ class GuildPages:
                 f'<td class="{"status-open" if status == "Ouvert" else "muted"}">{esc(status)}</td>'
                 f"{players_in(dungeons.RAID_LEVEL, dungeons.RAID_LEVEL)}</tr>"
             )
-        options = "".join(f'<option value="{c.level}">{esc(c.name)} ({c.level})</option>' for c in characters)
+        options = "".join(f'<option value="{c.level}">{esc(c.name)} ({c.level})</option>' for c in sorted(characters, key=lambda c: normalize(c.name)))
         if show_members:
             intro = "avec les persos du serveur qui sont dans la tranche"
             who_pick = f'<select id="lvl-who" aria-label="Perso"><option value="">Niveau d\'un perso…</option>{options}</select>'
