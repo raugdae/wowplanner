@@ -319,11 +319,13 @@ def page(title: str, active: str, body: str, scripts: str = "") -> web.Response:
     document = f"""<!doctype html>
 <html lang="fr" data-theme="{DEFAULT_THEME}"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{esc(title)} · WoW Planner</title>{THEME_BOOT}<link rel="stylesheet" href="/static/site.css?v={__version__}"></head>
-<body><header><a class="brand title" href="/">WoW Planner</a><nav>{nav}</nav>{_menu_html()}</header>
+<title>{esc(title)} · WoW Planner</title><link rel="icon" type="image/svg+xml" href="/static/logo.svg">{THEME_BOOT}<link rel="stylesheet" href="/static/site.css?v={__version__}"></head>
+<body><header><a class="brand title" href="/"><img class="logo" src="/static/logo.svg" alt="" width="26" height="29">WoW Planner</a><nav>{nav}</nav>{_menu_html()}</header>
 <main>{body}</main>
 <footer>Données des persos déclarés sur le Discord, complétées par l'armurerie Blizzard (WoW Forever).
-<nav class="foot-links"><a href="/conditions">Conditions d'utilisation</a> · <a href="/confidentialite">Confidentialité</a> · <a href="/aide">Aide</a></nav></footer>
+<nav class="foot-links"><a href="/conditions">Conditions d'utilisation</a> · <a href="/confidentialite">Confidentialité</a> · <a href="/aide">Aide</a></nav>
+<p class="foot-brand"><img src="/static/logo.svg" alt="" width="14" height="15"> Logo créé par
+<a href="https://ideapub.ch/" target="_blank" rel="noopener">ideapub</a></p></footer>
 {THEME_SCRIPT}{MENU_SCRIPT}{scripts}</body></html>"""
     return web.Response(text=document, content_type="text/html")
 

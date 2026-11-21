@@ -492,6 +492,9 @@ ou change de fonctionnement. Dans le portail développeur Discord (onglet **Gene
 
 Code sous licence MIT (voir `LICENSE`). Projet de fans, sans lien avec Blizzard Entertainment ni WoW Forever.
 
+Logo (`wowplanner/static/logo.svg`, aussi servi en favicon) créé par [ideapub](https://ideapub.ch/), crédité en pied de
+page et dans l'aide.
+
 ## Structure
 
 ```

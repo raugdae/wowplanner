@@ -57,7 +57,7 @@ log = logging.getLogger(__name__)
 
 
 # Pages visibles sans connexion (sans les persos du serveur) ; l'aide ne montre que des données d'exemple.
-PUBLIC_PATHS = ("/donjons", "/donjon/", "/aide", "/conditions", "/confidentialite", "/auth/", "/static/")
+PUBLIC_PATHS = ("/donjons", "/donjon/", "/aide", "/conditions", "/confidentialite", "/auth/", "/static/", "/favicon.ico")
 
 # Accès invité : au-delà de 10 mots de passe faux en 15 minutes (tous visiteurs confondus), on refuse.
 GUEST_MAX_FAILURES = 10
@@ -65,6 +65,7 @@ GUEST_FAIL_WINDOW = 15 * 60
 
 
 STYLESHEET = (Path(__file__).parent / "static" / "site.css").read_text(encoding="utf-8")
+LOGO = (Path(__file__).parent / "static" / "logo.svg").read_bytes()
 
 
 class WebSite:
@@ -346,6 +347,8 @@ Première visite ? <a href="/aide#debut-connexion">Comment se connecter</a>.</p>
         HelpPages(self).register(app.router)
         LegalPages(self).register(app.router)
         app.router.add_get("/static/site.css", self.stylesheet)
+        app.router.add_get("/static/logo.svg", self.logo)
+        app.router.add_get("/favicon.ico", self.logo)
         return app
 
     async def stylesheet(self, request: web.Request) -> web.Response:
@@ -353,6 +356,10 @@ Première visite ? <a href="/aide#debut-connexion">Comment se connecter</a>.</p>
         return web.Response(
             text=STYLESHEET, content_type="text/css", headers={"Cache-Control": "public, max-age=31536000, immutable"}
         )
+
+    async def logo(self, request: web.Request) -> web.Response:
+        """Logo du site (créé par ideapub), aussi servi comme favicon."""
+        return web.Response(body=LOGO, content_type="image/svg+xml", headers={"Cache-Control": "public, max-age=86400"})
 
     async def start(self, host: str, port: int) -> None:
         self._runner = web.AppRunner(self.app(), access_log=None)

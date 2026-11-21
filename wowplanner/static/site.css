@@ -42,7 +42,8 @@ header { background:linear-gradient(180deg,var(--head1),var(--head2)); border-bo
          box-shadow:0 2px 12px rgba(0,0,0,.45); padding:10px clamp(16px, 3vw, 40px); display:flex; gap:20px; align-items:center;
          flex-wrap:wrap; position:sticky; top:0; z-index:5; }
 header .brand { font-weight:700; color:var(--accent); font-size:19px; letter-spacing:.04em; }
-header .brand::before { content:var(--crest); margin-right:8px; }
+header .brand { display:flex; align-items:center; gap:9px; white-space:nowrap; }
+header .brand .logo { display:block; filter:drop-shadow(0 1px 2px rgba(0,0,0,.45)); }
 header nav { display:flex; gap:16px; }
 header nav a { color:var(--muted); }
 header nav a.active { color:var(--text); font-weight:600; border-bottom:2px solid var(--accent); }
@@ -647,6 +648,16 @@ details.fold.hfaq > summary { text-transform:none; letter-spacing:0; font-size:1
 .foot-links { margin-top:6px; }
 .foot-links a { color:var(--muted); }
 .foot-links a:hover { color:var(--text); }
+.foot-brand { margin:8px 0 0; }
+.foot-brand img { vertical-align:-3px; margin-right:4px; }
+.foot-brand a { color:var(--muted); text-decoration:underline; }
+.foot-brand a:hover { color:var(--text); }
+.help-about { display:flex; gap:12px; align-items:center; margin-top:18px; padding-top:14px;
+  border-top:1px solid var(--line); font-size:12px; line-height:1.6; }
+.help-about img { flex:none; }
+.help-about p { margin:0; }
+.help-about a { text-decoration:underline; }
+.help-about .title { font-size:14px; color:var(--accent); }
 .legal { max-width:860px; margin:0 auto; line-height:1.6; }
 .legal .help-head p { margin:4px 0 0; color:var(--muted); }
 .legal-date { color:var(--muted); font-size:13px; margin:10px 0 18px; }

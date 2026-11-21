@@ -1319,7 +1319,8 @@ def test_help_page(tmp_path):
         async with aiohttp.ClientSession() as s:
             for key, path in (("anon", "/aide"), ("img", "/static/aide/sortie.webp"), ("bad", "/static/aide/..%2Fweb.py"),
                               ("png", "/static/aide/sortie.png"), ("login", "/"),
-                              ("cgu", "/conditions"), ("privacy", "/confidentialite")):
+                              ("cgu", "/conditions"), ("privacy", "/confidentialite"),
+                              ("logo", "/static/logo.svg"), ("favicon", "/favicon.ico")):
                 async with s.get(base + path) as resp:
                     got[key] = (resp.status, await resp.read(), resp.headers.get("Content-Type", ""))
         async with aiohttp.ClientSession(cookies={SESSION_COOKIE: admin_cookie}) as s:
@@ -1346,6 +1347,12 @@ def test_help_page(tmp_path):
         assert status == 200 and needle in body.decode() and "Raugdae" in body.decode()
     for key in ("anon", "login", "cgu"):
         assert 'href="/conditions"' in got[key][1].decode() and 'href="/confidentialite"' in got[key][1].decode()
+    # Logo (public, aussi en favicon), crédit ideapub en pied de page et dans l'aide.
+    for key in ("logo", "favicon"):
+        assert got[key][0] == 200 and got[key][2] == "image/svg+xml" and b"<svg" in got[key][1]
+    for key in ("anon", "login", "cgu"):
+        assert 'src="/static/logo.svg"' in got[key][1].decode() and "https://ideapub.ch/" in got[key][1].decode()
+    assert 'class="help-about"' in got["anon"][1].decode()
     status, text = got["admin"]
     assert status == 200 and 'data-ch="admin"' in text and "La page Administration" in text
 
