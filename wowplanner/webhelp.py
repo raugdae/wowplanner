@@ -624,6 +624,76 @@ en bas).</p>
 {go("/donjons", "Ouvrir la page Donjons")}"""),
     ])
 
+    addon = Chapter("addon", "🧩", "Addon WoW", "Les prix de l'HdV dans le jeu, ton inventaire envoyé au site.", [
+        Section("principe", "À quoi ça sert", f"""
+<p>L'addon <b>WoW Planner</b> fait deux choses :</p>
+<ul>
+<li>dans le jeu, quand tu survoles un objet, il affiche son <b>prix le plus bas</b> et son <b>prix médian</b> à
+l'hôtel des ventes, la valeur de la pile et les <b>ventes estimées par jour</b>, les mêmes chiffres que sur le
+site ;</li>
+<li>il note ce que tu as dans tes <b>sacs</b> et ta <b>banque</b>, ton argent, tes <b>métiers</b> et tes
+<b>recettes</b>, et les envoie au site : la {ui('🧮 Calculatrice HdV')} se remplit en un clic, et les recettes
+que l'armurerie ne montre pas apparaissent quand même.</li>
+</ul>
+{note("Le jeu interdit aux addons de parler à Internet. Un petit programme à installer sur ton ordinateur, le "
+      "<b>client WoW Planner</b>, fait le lien : il télécharge les prix pour l'addon et envoie au site ce que l'addon "
+      "a vu.")}"""),
+        Section("installer", "Installer l'addon et le client", f"""
+{steps(
+    f"Ouvre ton menu → {ui('🧩 Addon WoW')} et télécharge le <b>client WoW Planner</b> (Windows ou macOS).",
+    f"Sur la même page, clique sur {ui('Créer mon jeton')} et copie le jeton affiché (il n'est montré qu'une fois).",
+    f"Lance le client, colle le jeton, puis {ui('Parcourir…')} : choisis le dossier du jeu, celui qui contient "
+    "<code>Interface</code> et <code>WTF</code> (par exemple <code>World of Warcraft\\_classic_era_</code>).",
+    f"Clique sur {ui('Enregistrer et synchroniser')} : le client installe l'addon et télécharge les prix.",
+    "Lance le jeu (ou tape <code>/reload</code> s'il est déjà lancé).",
+)}
+{tip("Laisse le client ouvert (ou réduit) pendant que tu joues : il retélécharge les prix toutes les 20 minutes "
+     "et envoie ton inventaire dès que le jeu l'enregistre.")}
+{warn("Ton jeton, c'est ta clé : ne le partage pas. Si tu penses qu'il a fuité, crée-en un nouveau sur la page "
+      "Addon WoW : l'ancien ne marche plus.")}"""),
+        Section("jeu", "Dans le jeu", f"""
+{table(["Commande", "Ce qu'elle fait"], [
+    ["<code>/wp</code>", "Date des prix chargés, nombre d'objets, dernière ouverture de la banque."],
+    ["<code>/wp maj</code>", "Recharge l'interface pour prendre les derniers prix téléchargés par le client."],
+    ["<code>/wp off</code>, <code>/wp on</code>", "Masque ou réaffiche les prix dans les infobulles."],
+])}
+<p>Les prix sont chargés à la connexion : le jeu ne laisse pas un addon relire un fichier en cours de partie.
+Quand le client annonce de nouveaux prix, <code>/wp maj</code> les prend (ça recharge l'interface, comme
+<code>/reload</code>).</p>
+{tip("Ouvre une fois ta <b>banque</b> et chacune de tes <b>fenêtres de métier</b> (et la fenêtre d'enchantement) : "
+     "l'addon ne peut lire leur contenu que quand elles sont ouvertes.")}"""),
+        Section("inventaire", "Ton inventaire sur le site", f"""
+<p>Le jeu enregistre ce que l'addon a noté <b>à la déconnexion</b> ou au <code>/reload</code>. Le client l'envoie
+alors au site, pour chacun de tes persos déclarés dans {ui('Mes persos')} (les autres sont ignorés).</p>
+<ul>
+<li>Dans la {ui('🧮 Calculatrice HdV')}, le lien <b>Remplir avec ce que l'addon a vu en jeu</b> met ton stock
+(sacs et banque) dans le tableau.</li>
+<li>Les <b>métiers</b> et leur niveau sont mis à jour, et les <b>recettes</b> vues en jeu s'ajoutent à celles de
+l'armurerie (page Métiers, atelier, rentabilité).</li>
+<li>La page {ui('🧩 Addon WoW')} montre, par perso, la date du dernier relevé et de la banque.</li>
+</ul>
+{note("Ton inventaire et ton argent ne sont visibles que par toi. Tes métiers et tes recettes sont visibles par la "
+      "guilde, comme ceux de l'armurerie.")}"""),
+        Section("soucis", "Ça ne marche pas ?", "".join([
+            faq("Windows ou macOS refuse de lancer le client",
+                "<p>Le client n'est pas signé (c'est payant) : Windows affiche « Windows a protégé votre ordinateur » → "
+                "<b>Informations complémentaires</b> → <b>Exécuter quand même</b>. Sur macOS : clic droit sur l'app → "
+                "<b>Ouvrir</b>, puis confirmer. Son code est public, dans le dépôt du projet.</p>"),
+            faq("L'addon est marqué « périmé » dans la liste des addons",
+                "<p>Coche <b>Charger les addons périmés</b> en bas de la liste des addons, ou mets à jour le client "
+                "WoW Planner (il réinstalle la dernière version de l'addon).</p>"),
+            faq("Aucun prix dans les infobulles",
+                "<p>Tape <code>/wp</code> : si l'addon dit « pas encore de prix », vérifie que le client est lancé, "
+                "que son journal dit « Prix … écrits », puis tape <code>/wp maj</code>.</p>"),
+            faq("Le client dit « Persos inconnus du site »",
+                "<p>Le site ne prend que tes persos déclarés : ajoute-les dans <b>Mes persos</b>, avec le même nom "
+                "qu'en jeu.</p>"),
+            faq("Le client dit « Jeton inconnu »",
+                "<p>Le jeton a été remplacé ou supprimé : crée-en un nouveau sur la page Addon WoW et colle-le dans "
+                "le client.</p>"),
+        ])),
+    ])
+
     discord = Chapter("discord", "🤖", "Le bot Discord", "Ce qu'on peut faire directement sur Discord.", [
         Section("commandes", "Les commandes du bot", f"""
 <p>Sur Discord, tape <code>/</code> dans un salon du serveur : la liste des commandes apparaît. Les principales :</p>
@@ -731,7 +801,7 @@ au bout de 2 jours.</li>
 </ul>"""),
     ], admin=True)
 
-    return [debut, sorties, guilde, persos, metiers, hdv, argent, donjons, discord, faq_ch, admin]
+    return [debut, sorties, guilde, persos, metiers, hdv, argent, donjons, addon, discord, faq_ch, admin]
 
 
 HELP_SCRIPT = """

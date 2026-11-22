@@ -43,6 +43,7 @@ from .webauth import (
 )
 from .webhelp import HelpPages
 from .weblegal import LegalPages
+from .webaddon import AddonPages
 from .webpages import GuildPages
 from .webprofit import ProfitPages
 from .webui import (
@@ -57,7 +58,8 @@ log = logging.getLogger(__name__)
 
 
 # Pages visibles sans connexion (sans les persos du serveur) ; l'aide ne montre que des données d'exemple.
-PUBLIC_PATHS = ("/donjons", "/donjon/", "/aide", "/conditions", "/confidentialite", "/auth/", "/static/", "/favicon.ico")
+PUBLIC_PATHS = ("/donjons", "/donjon/", "/aide", "/conditions", "/confidentialite", "/auth/", "/static/", "/favicon.ico",
+                "/api/addon/")
 
 # Accès invité : au-delà de 10 mots de passe faux en 15 minutes (tous visiteurs confondus), on refuse.
 GUEST_MAX_FAILURES = 10
@@ -338,6 +340,7 @@ Première visite ? <a href="/aide#debut-connexion">Comment se connecter</a>.</p>
         pages.register(app.router)
         pages.register_auction(app.router)
         pages.register_profit(app.router)
+        AddonPages(self, pages).register(app.router)
         app.router.add_get("/auth/login", self.auth_login)
         app.router.add_get("/auth/callback", self.auth_callback)
         app.router.add_get("/auth/logout", self.auth_logout)

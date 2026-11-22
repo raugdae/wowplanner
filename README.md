@@ -481,6 +481,31 @@ puis `docker compose up -d --build`. `docker-compose.traefik.yml` ajoute les lab
 sur le port interne 8080. Sans Docker : `WEB_PORT=8080` dans `.env`, et `WEB_URL=https://…` (adresse publique) pour
 que le bot renvoie vers le site dans ses messages ; avec Traefik, `WEB_DOMAIN` suffit.
 
+### Addon WoW et client local
+
+Le jeu interdit aux addons tout accès réseau : trois pièces travaillent ensemble.
+
+- **Addon** `addon/WowPlanner/` (Lua, interface 16001) : prix de l'HdV dans les infobulles (plus bas, médian,
+  valeur de la pile, ventes estimées par jour), lus dans `Data.lua` à la connexion ou au `/reload` (`/wp maj`).
+  Il note aussi sacs, banque (à son ouverture), argent, niveau, métiers et recettes (fenêtres de métier ouvertes)
+  dans `WowPlannerDB`, que le jeu enregistre à la déconnexion ou au `/reload`.
+- **Client** `client/wowplanner_client.py` (Python, sans dépendance, fenêtre tkinter, Windows et macOS) : installe
+  l'addon dans le dossier du jeu choisi, écrit `Data.lua` toutes les 20 minutes (ETag : rien n'est retéléchargé
+  sans nouveau relevé) et envoie `WTF/Account/*/SavedVariables/WowPlanner.lua` au site dès qu'il change. Réglages
+  dans `%APPDATA%\WowPlanner` (macOS : `~/Library/Application Support/WowPlanner`). `--once` : une synchro sans
+  fenêtre.
+- **Site** : page `/addon` (menu du compte) pour créer ou supprimer son jeton (seule son empreinte SHA-256 est
+  gardée), télécharger l'addon seul (`/addon/WowPlanner.zip`) et voir ce qui a été reçu ; API
+  `/api/addon/moi|prix|inventaire` (en-tête `Authorization: Bearer wp_…`, appartenance au serveur revérifiée chaque
+  jour). L'inventaire n'est visible que par son propriétaire (calculatrice : « Remplir avec ce que l'addon a vu en
+  jeu ») ; métiers et recettes vus en jeu complètent ceux de l'armurerie (les recettes du jeu restent après chaque
+  synchro de l'armurerie).
+
+Exécutables du client : le workflow `.github/workflows/client.yml` (PyInstaller, addon inclus) les construit et
+les joint à une release GitHub quand on pousse un tag `client-v1.0.0` ; la page `/addon` renvoie vers la dernière
+release. Ils ne sont pas signés : Windows (SmartScreen) et macOS (Gatekeeper : clic droit → Ouvrir) préviennent au
+premier lancement. Tests : `tests/test_addon.py` (l'addon y tourne avec `lupa` en simulant l'API du jeu).
+
 ### Conditions d'utilisation et confidentialité
 
 Pages publiques `/conditions` et `/confidentialite`, liées en pied de chaque page. Les textes sont dans
@@ -549,7 +574,12 @@ wowplanner/
   webprofit.py         Rentabilité de mes métiers, Calculatrice HdV
   webhelp.py           page d'aide (chapitres, captures annotées, recherche)
   weblegal.py          conditions d'utilisation et politique de confidentialité
+  addon.py             addon WoW : jetons, lecture de ce qu'envoie le client (inventaire, métiers, recettes)
+  webaddon.py          page Addon WoW (jeton, téléchargement) et API du client local
   static/aide/         captures de la page d'aide (+ shots.json : tailles et repères)
+addon/WowPlanner/      addon WoW (Lua) : prix dans les infobulles, relevé de l'inventaire
+client/                client local (lien entre l'addon et le site), construit par .github/workflows/client.yml
 tools/aide/            base et site de démonstration, prise des captures de l'aide (Playwright)
 tests/test_core.py
+tests/test_addon.py
 ```

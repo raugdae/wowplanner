@@ -190,6 +190,34 @@ CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+-- Addon WoW : jeton personnel du client local (seule son empreinte SHA-256 est gardée), un par joueur.
+CREATE TABLE IF NOT EXISTS addon_tokens (
+    user_id      INTEGER PRIMARY KEY,
+    token_hash   TEXT    NOT NULL UNIQUE,
+    created_at   INTEGER NOT NULL,
+    last_used_at INTEGER,
+    checked_at   INTEGER  -- dernière vérification que le joueur est toujours membre du serveur
+);
+-- Addon WoW : sacs et banque vus en jeu (la banque n'est relevée qu'à son ouverture).
+CREATE TABLE IF NOT EXISTS game_inventory (
+    character_id INTEGER PRIMARY KEY REFERENCES characters (id) ON DELETE CASCADE,
+    updated_at   INTEGER NOT NULL,  -- dernier relevé des sacs en jeu
+    bank_at      INTEGER,           -- dernière ouverture de la banque (NULL : jamais vue)
+    money        INTEGER
+);
+CREATE TABLE IF NOT EXISTS game_items (
+    character_id INTEGER NOT NULL REFERENCES characters (id) ON DELETE CASCADE,
+    item_id      INTEGER NOT NULL,
+    bags         INTEGER NOT NULL DEFAULT 0,
+    bank         INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (character_id, item_id)
+) WITHOUT ROWID;
+-- Addon WoW : recettes vues dans la fenêtre de métier en jeu (gardées quand l'armurerie remplace les siennes).
+CREATE TABLE IF NOT EXISTS game_recipes (
+    character_id INTEGER NOT NULL REFERENCES characters (id) ON DELETE CASCADE,
+    recipe_id    INTEGER NOT NULL REFERENCES recipes (id),
+    PRIMARY KEY (character_id, recipe_id)
+) WITHOUT ROWID;
 """
 
 
@@ -775,6 +803,12 @@ class Database:
                 "INSERT OR IGNORE INTO character_recipes (character_id, recipe_id) VALUES (?, ?)",
                 [(character_id, rid) for items in known.values() for rid, _ in items],
             )
+            # Les recettes vues en jeu (addon) restent : l'armurerie n'en montre qu'une partie.
+            self.conn.execute(
+                """INSERT OR IGNORE INTO character_recipes (character_id, recipe_id)
+                   SELECT character_id, recipe_id FROM game_recipes WHERE character_id = ?""",
+                (character_id,),
+            )
 
     def recipes_missing_details(self, profession: str | None = None) -> list[int]:
         """Recettes dont le nom français et les composants n'ont pas encore été récupérés
@@ -1013,6 +1047,102 @@ class Database:
             (item_id, since),
         )
         return [tuple(r) for r in rows]
+
+    # ------------------------------------------------------------ addon WoW
+
+    def set_addon_token(self, user_id: int, token_hash: str, now: int) -> None:
+        """Nouveau jeton du joueur (l'ancien ne marche plus)."""
+        with self.conn:
+            self.conn.execute(
+                "INSERT OR REPLACE INTO addon_tokens (user_id, token_hash, created_at, checked_at) VALUES (?, ?, ?, ?)",
+                (user_id, token_hash, now, now),
+            )
+
+    def delete_addon_token(self, user_id: int) -> bool:
+        with self.conn:
+            return self.conn.execute("DELETE FROM addon_tokens WHERE user_id = ?", (user_id,)).rowcount > 0
+
+    def addon_token(self, user_id: int) -> sqlite3.Row | None:
+        return self.conn.execute("SELECT * FROM addon_tokens WHERE user_id = ?", (user_id,)).fetchone()
+
+    def addon_token_owner(self, token_hash: str) -> sqlite3.Row | None:
+        return self.conn.execute("SELECT * FROM addon_tokens WHERE token_hash = ?", (token_hash,)).fetchone()
+
+    def touch_addon_token(self, user_id: int, now: int, checked: bool = False) -> None:
+        with self.conn:
+            self.conn.execute(
+                "UPDATE addon_tokens SET last_used_at = ?, checked_at = CASE WHEN ? THEN ? ELSE checked_at END "
+                "WHERE user_id = ?",
+                (now, int(checked), now, user_id),
+            )
+
+    def addon_prices(self, now: int) -> list[tuple[int, int, int, int]]:
+        """[(objet, prix le plus bas, prix médian, ventes estimées sur 24 h)] du dernier relevé de l'HdV."""
+        rows = self.conn.execute(
+            """SELECT l.item_id, l.min_price, l.median_price, COALESCE(s.sold, 0) FROM ah_latest l
+               LEFT JOIN (SELECT item_id, SUM(sold) AS sold FROM ah_sales WHERE ts >= ? GROUP BY item_id) s
+                 ON s.item_id = l.item_id
+               ORDER BY l.item_id""",
+            (now - 86400,),
+        )
+        return [tuple(r) for r in rows]
+
+    def recipes_of_profession(self, profession: str) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT id, name, name_en, crafted_item_id FROM recipes WHERE profession = ?", (profession,)
+        ).fetchall()
+
+    def store_game_character(
+        self, character_id: int, *, level: int | None, money: int | None, updated_at: int,
+        bags: dict[int, int], bank: dict[int, int] | None, bank_at: int | None,
+        professions: dict[str, int | None] | None, recipe_ids: set[int] | None,
+    ) -> None:
+        """Ce que l'addon a vu en jeu pour un perso : niveau, argent, sacs, banque (None : jamais ouverte, on garde
+        l'ancienne), métiers (None : inconnus) et recettes reconnues (None : fenêtre de métier jamais ouverte)."""
+        with self.conn:
+            if level:
+                self.conn.execute("UPDATE characters SET level = ? WHERE id = ?", (level, character_id))
+            old = self.conn.execute(
+                "SELECT bank_at FROM game_inventory WHERE character_id = ?", (character_id,)
+            ).fetchone()
+            keep_bank = bank is None
+            if keep_bank:
+                bank_at = old["bank_at"] if old else None
+                bank = {
+                    r["item_id"]: r["bank"] for r in self.conn.execute(
+                        "SELECT item_id, bank FROM game_items WHERE character_id = ? AND bank > 0", (character_id,)
+                    )
+                }
+            self.conn.execute(
+                "INSERT OR REPLACE INTO game_inventory (character_id, updated_at, bank_at, money) VALUES (?, ?, ?, ?)",
+                (character_id, updated_at, bank_at, money),
+            )
+            self.conn.execute("DELETE FROM game_items WHERE character_id = ?", (character_id,))
+            self.conn.executemany(
+                "INSERT INTO game_items (character_id, item_id, bags, bank) VALUES (?, ?, ?, ?)",
+                [(character_id, i, bags.get(i, 0), bank.get(i, 0)) for i in set(bags) | set(bank)],
+            )
+            if professions is not None:
+                self.conn.execute("DELETE FROM character_professions WHERE character_id = ?", (character_id,))
+                self.conn.executemany(
+                    "INSERT INTO character_professions (character_id, profession, skill) VALUES (?, ?, ?)",
+                    [(character_id, p, s) for p, s in professions.items()],
+                )
+            if recipe_ids is not None:
+                self.conn.execute("DELETE FROM game_recipes WHERE character_id = ?", (character_id,))
+                rows = [(character_id, rid) for rid in recipe_ids]
+                self.conn.executemany("INSERT INTO game_recipes (character_id, recipe_id) VALUES (?, ?)", rows)
+                self.conn.executemany(
+                    "INSERT OR IGNORE INTO character_recipes (character_id, recipe_id) VALUES (?, ?)", rows
+                )
+
+    def game_inventory(self, character_id: int) -> tuple[sqlite3.Row | None, dict[int, int]]:
+        """(relevé : updated_at, bank_at, money ; objet -> quantité dans les sacs et la banque)."""
+        meta = self.conn.execute("SELECT * FROM game_inventory WHERE character_id = ?", (character_id,)).fetchone()
+        rows = self.conn.execute(
+            "SELECT item_id, bags + bank AS n FROM game_items WHERE character_id = ?", (character_id,)
+        )
+        return meta, {r["item_id"]: r["n"] for r in rows if r["n"] > 0}
 
     def ah_snapshot_time(self) -> int | None:
         row = self.conn.execute("SELECT MAX(ts) FROM ah_latest").fetchone()

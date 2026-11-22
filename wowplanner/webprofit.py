@@ -265,6 +265,22 @@ class="calc-mine"> Seulement ce que j'ai</label>{skill_box}<button class="act pr
         for key, value in request.query.items():
             if key.startswith("q") and key[1:].isdigit() and value.strip().isdigit():
                 inventory[int(key[1:])] = min(int(value), MAX_STOCK)
+        # Stock vu en jeu par l'addon (sacs + banque) : proposé, ou chargé avec ?jeu=1.
+        game_meta, game_items = self.site.db.game_inventory(character.id)
+        candidates = {row["id"] for _, rows in groups for row, _ in rows}
+        game_stock = {i: min(n, MAX_STOCK) for i, n in game_items.items() if i in candidates}
+        if request.query.get("jeu") and game_stock:
+            inventory = game_stock
+        game_link = ""
+        if game_meta is not None:
+            when = datetime.fromtimestamp(game_meta["updated_at"], self.tz).strftime("%d/%m à %H:%M")
+            bank = "" if game_meta["bank_at"] else " (banque jamais ouverte avec l'addon)"
+            game_link = (
+                f'<p class="game-stock">🧩 <a href="/calculatrice?perso={character.id}&amp;jeu=1">Remplir avec ce que '
+                f"l'addon a vu en jeu</a> : sacs et banque, relevé du {when}{bank}.</p>"
+                if game_stock else
+                f'<p class="muted">🧩 L\'addon n\'a vu aucun objet utile à la calculatrice (relevé du {when}).</p>'
+            )
 
         if not any(rows for _, rows in groups):
             stock_form = (
@@ -295,6 +311,7 @@ recettes (composants vendus par les marchands achetés au besoin), aux prix de {
 {no_craft}
 {result}
 <h2>Ton stock</h2>
+{game_link}
 {stock_form}"""
         return self._render(request, title, "calculatrice", body, LIST_SCRIPT + CALC_SCRIPT)
 

@@ -9,6 +9,8 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY wowplanner ./wowplanner
+# Addon WoW, proposé en .zip sur la page Addon WoW du site.
+COPY addon ./addon
 
 # Site web (activé par WEB_PORT, voir docker-compose.traefik.yml).
 EXPOSE 8080

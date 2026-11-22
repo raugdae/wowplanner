@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from .web import WebSite
 
 EDITOR = "Raugdae"
-UPDATED = "20 novembre 2026"
+UPDATED = "22 novembre 2026"
 REPO = "https://github.com/raugdae/wowplanner"
 
 
@@ -130,6 +130,11 @@ ton pseudo dans les listes d'inscrits et les commandes</td></tr>
 <tr><td>Tes <b>commandes d'artisanat</b> (objet, quantité, note)</td><td>Toi</td>
 <td>Les transmettre à l'artisan, suivre leur avancement</td></tr>
 <tr><td>Tes <b>favoris</b> de l'hôtel des ventes</td><td>Toi</td><td>Ta liste de suivi des prix</td></tr>
+<tr><td>Si tu utilises l'<b>addon WoW</b> : le contenu de tes sacs et de ta banque, ton argent, ton niveau, tes
+métiers et recettes vus en jeu, et l'empreinte de ton jeton (pas le jeton lui-même)</td>
+<td>Le client WoW Planner, que tu installes et relies au site avec ton jeton</td>
+<td>Remplir la calculatrice avec ton stock, compléter tes métiers et recettes ; ton inventaire et ton argent ne
+sont visibles que par toi</td></tr>
 <tr><td>Ton <b>BattleTag</b>, seulement si tu l'ajoutes</td><td>Toi (commande <code>/ajouter battletag</code>)</td>
 <td>Que les membres puissent t'ajouter en ami ; il n'est visible que sur le Discord, <b>jamais sur le site</b></td></tr>
 </tbody></table></div>
@@ -170,7 +175,9 @@ gardée sur le même genre de serveur et remplacée au fil des sauvegardes.</p>"
 <li><b>corriger</b> tes infos (sur le site ou avec les commandes du bot) ;</li>
 <li><b>supprimer</b> un perso ou ton BattleTag toi-même (<code>/supprimer perso</code>,
 <code>/supprimer battletag</code>) ;</li>
-<li>demander à <b>tout effacer</b> : persos, inscriptions, commandes, favoris, BattleTag. Un message à l'éditeur
+<li>couper l'addon : supprime ton jeton sur la page <b>Addon WoW</b> du site, le client ne peut plus rien
+envoyer ;</li>
+<li>demander à <b>tout effacer</b> : persos, inscriptions, commandes, favoris, BattleTag, inventaire. Un message à l'éditeur
 suffit, sans avoir à te justifier.</li>
 </ul>
 <p>Si tu estimes que tes données sont mal traitées, tu peux aussi t'adresser au Préposé fédéral à la protection des

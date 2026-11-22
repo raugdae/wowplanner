@@ -688,3 +688,9 @@ details.fold.hfaq > summary { text-transform:none; letter-spacing:0; font-size:1
 .chart-tip i.kb { width:10px; height:10px; border:0; background:var(--sales); }
 .chart-legend i.kb { width:12px; height:10px; border:0; background:var(--sales); vertical-align:middle; }
 .small-note { font-size:12px; margin:6px 0 0; }
+
+/* Page Addon WoW */
+form.inline { display:inline; }
+.token-line { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+.token-line code { word-break:break-all; user-select:all; padding:4px 8px; }
+.game-stock { margin:6px 0 10px; }

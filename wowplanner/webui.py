@@ -76,7 +76,8 @@ def _menu_html() -> str:
 <div class="menu-panel"><div class="menu-head">{head}</div>
 <div class="menu-sec"><small>Mes persos</small>{links}<a class="menu-link" href="/mes-persos">Gérer mes persos →</a>
 <a class="menu-link" href="/rentabilite">💰 Rentabilité de mes métiers</a>
-<a class="menu-link" href="/calculatrice">🧮 Calculatrice HdV</a></div>
+<a class="menu-link" href="/calculatrice">🧮 Calculatrice HdV</a>
+<a class="menu-link" href="/addon">🧩 Addon WoW</a></div>
 {theme}{admin}<a class="menu-link" href="/auth/logout">Déconnexion</a></div></details></div>"""
 
 CLASS_COLORS = {
