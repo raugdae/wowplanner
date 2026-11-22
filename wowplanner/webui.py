@@ -326,7 +326,8 @@ def page(title: str, active: str, body: str, scripts: str = "") -> web.Response:
 <footer>Données des persos déclarés sur le Discord, complétées par l'armurerie Blizzard (WoW Forever).
 <nav class="foot-links"><a href="/conditions">Conditions d'utilisation</a> · <a href="/confidentialite">Confidentialité</a> · <a href="/aide">Aide</a></nav>
 <p class="foot-brand"><img src="/static/logo.svg" alt="" width="14" height="15"> Logo créé par
-<a href="https://ideapub.ch/" target="_blank" rel="noopener">ideapub</a></p></footer>
+<a href="https://ideapub.ch/" target="_blank" rel="noopener">ideapub</a> · Développé avec l'IA
+<a href="https://claude.com/claude-code" target="_blank" rel="noopener">Claude Code</a></p></footer>
 {THEME_SCRIPT}{MENU_SCRIPT}{scripts}</body></html>"""
     return web.Response(text=document, content_type="text/html")
 

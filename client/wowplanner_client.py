@@ -28,7 +28,27 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
+SITE_URL = "https://wow.raug-info.ch"
+REPO_URL = "https://github.com/raugdae/wowplanner"
+TERMS_VERSION = "1"  # à changer si les conditions ci-dessous changent : elles sont alors redemandées
+TERMS = f"""WoW Planner (client {VERSION} et addon) est gratuit, sans publicité ni abonnement, et libre : licence MIT,
+tu peux l'utiliser, le copier, le modifier et le partager en gardant cette licence.
+
+Il est fourni « tel quel », SANS AUCUNE GARANTIE. Tu l'utilises à tes risques : dans les limites permises par la
+loi, l'auteur n'est responsable d'aucun dommage, perte de données ou problème lié à son utilisation, y compris avec
+ton compte de jeu.
+
+Ce que fait le client : il installe l'addon dans le dossier du jeu que tu choisis, y écrit les prix de l'hôtel des
+ventes, et envoie au site, avec ton jeton, ce que l'addon a noté pour tes persos déclarés (sacs, banque, argent,
+niveau, métiers, recettes). Rien d'autre ne quitte ton ordinateur. Détails : page Confidentialité du site.
+
+Projet de fans, sans lien avec Blizzard Entertainment ni WoW Forever.
+
+Fait par Raugdae pour la guilde. Logo créé par ideapub (ideapub.ch).
+Développé avec l'aide de l'IA : Claude Code, l'assistant de programmation d'Anthropic.
+
+Licence complète et code source : {REPO_URL}"""
 DEFAULT_SERVER = "https://wow.raug-info.ch"
 PRICES_EVERY = 20 * 60
 WATCH_EVERY = 15
@@ -53,6 +73,7 @@ class Settings:
     token: str = ""
     game_dir: str = ""
     prices_etag: str = ""
+    accepted: str = ""  # version des conditions acceptées (TERMS_VERSION)
     sent: dict[str, float] = field(default_factory=dict)  # fichier SavedVariables -> date du dernier envoi
 
     @classmethod
@@ -102,6 +123,12 @@ def bundled_addon() -> Path:
     """Dossier de l'addon livré avec le client (dans l'exécutable, ou à côté dans le dépôt)."""
     base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
     return base / "addon" / ADDON_NAME
+
+
+def bundled_file(name: str) -> Path:
+    """Fichier livré avec le client (logo…), dans l'exécutable ou à côté du script."""
+    base = getattr(sys, "_MEIPASS", None)
+    return Path(base) / "client" / name if base else Path(__file__).resolve().parent / name
 
 
 def install_addon(root: Path, source: Path | None = None) -> bool:
@@ -439,10 +466,77 @@ def run_window(settings: Settings) -> None:
 
     window = tk.Tk()
     window.title(f"WoW Planner {VERSION}")
-    window.minsize(560, 420)
+    window.minsize(600, 460)
+    logo = None
+    try:
+        logo = tk.PhotoImage(file=str(bundled_file("logo.png")))
+        window.iconphoto(True, logo)
+    except (tk.TclError, OSError):
+        pass
+
+    def show_terms(first_time: bool) -> bool:
+        """Conditions d'utilisation (et à propos) ; au premier lancement, il faut les accepter pour continuer."""
+        import webbrowser
+
+        dialog = tk.Toplevel(window)
+        dialog.title("Conditions d'utilisation" if first_time else "À propos de WoW Planner")
+        box = ttk.Frame(dialog, padding=14)
+        box.pack(fill="both", expand=True)
+        if logo is not None:
+            small = logo.subsample(4)
+            picture = ttk.Label(box, image=small)
+            picture.image = small  # garder une référence
+            picture.pack(anchor="w")
+        ttk.Label(box, text=f"WoW Planner {VERSION}", font=("TkDefaultFont", 13, "bold")).pack(anchor="w", pady=(4, 8))
+        text = tk.Text(box, width=86, height=20, wrap="word")
+        text.insert("1.0", TERMS)
+        text.configure(state="disabled")
+        text.pack(fill="both", expand=True)
+        result = {"ok": not first_time}
+        row = ttk.Frame(box)
+        row.pack(fill="x", pady=(10, 0))
+
+        def close(ok: bool) -> None:
+            result["ok"] = ok or not first_time
+            dialog.destroy()
+
+        ttk.Button(row, text="Code source et licence", command=lambda: webbrowser.open(REPO_URL)).pack(side="left")
+        ttk.Button(row, text="Site", command=lambda: webbrowser.open(SITE_URL)).pack(side="left", padx=6)
+        if first_time:
+            ttk.Button(row, text="Quitter", command=lambda: close(False)).pack(side="right")
+            ttk.Button(row, text="J'accepte", command=lambda: close(True)).pack(side="right", padx=6)
+        else:
+            ttk.Button(row, text="Fermer", command=lambda: close(True)).pack(side="right")
+        dialog.protocol("WM_DELETE_WINDOW", lambda: close(False))
+        dialog.grab_set()
+        window.wait_window(dialog)
+        return result["ok"]
+
+    if settings.accepted != TERMS_VERSION:
+        window.withdraw()
+        if not show_terms(True):
+            window.destroy()
+            return
+        settings.accepted = TERMS_VERSION
+        settings.save()
+        window.deiconify()
+
     frame = ttk.Frame(window, padding=12)
     frame.pack(fill="both", expand=True)
     frame.columnconfigure(1, weight=1)
+
+    header = ttk.Frame(frame)
+    header.grid(row=0, column=0, columnspan=3, sticky="ew", pady=(0, 10))
+    if logo is not None:
+        icon = logo.subsample(5)
+        picture = ttk.Label(header, image=icon)
+        picture.image = icon
+        picture.pack(side="left", padx=(0, 10))
+    titles = ttk.Frame(header)
+    titles.pack(side="left")
+    ttk.Label(titles, text="WoW Planner", font=("TkDefaultFont", 15, "bold"), foreground="#5f07b6").pack(anchor="w")
+    ttk.Label(titles, text="Le lien entre l'addon et le site de la guilde", foreground="#666").pack(anchor="w")
+    ttk.Button(header, text="À propos", command=lambda: show_terms(False)).pack(side="right")
 
     server = tk.StringVar(value=settings.server)
     token = tk.StringVar(value=settings.token)
@@ -480,22 +574,24 @@ def run_window(settings: Settings) -> None:
 
         threading.Thread(target=check, daemon=True).start()
 
-    ttk.Label(frame, text="Site").grid(row=0, column=0, sticky="w", pady=3)
-    ttk.Entry(frame, textvariable=server).grid(row=0, column=1, columnspan=2, sticky="ew", pady=3)
-    ttk.Label(frame, text="Jeton").grid(row=1, column=0, sticky="w", pady=3)
-    ttk.Entry(frame, textvariable=token, show="•").grid(row=1, column=1, columnspan=2, sticky="ew", pady=3)
-    ttk.Label(frame, text="Dossier du jeu").grid(row=2, column=0, sticky="w", pady=3)
-    ttk.Entry(frame, textvariable=game).grid(row=2, column=1, sticky="ew", pady=3)
-    ttk.Button(frame, text="Parcourir…", command=browse).grid(row=2, column=2, padx=(6, 0), pady=3)
-    ttk.Label(frame, textvariable=found, foreground="#666").grid(row=3, column=0, columnspan=3, sticky="w")
+    ttk.Label(frame, text="Site").grid(row=1, column=0, sticky="w", pady=3)
+    ttk.Entry(frame, textvariable=server).grid(row=1, column=1, columnspan=2, sticky="ew", pady=3)
+    ttk.Label(frame, text="Jeton").grid(row=2, column=0, sticky="w", pady=3)
+    ttk.Entry(frame, textvariable=token, show="•").grid(row=2, column=1, columnspan=2, sticky="ew", pady=3)
+    ttk.Label(frame, text="Dossier du jeu").grid(row=3, column=0, sticky="w", pady=3)
+    ttk.Entry(frame, textvariable=game).grid(row=3, column=1, sticky="ew", pady=3)
+    ttk.Button(frame, text="Parcourir…", command=browse).grid(row=3, column=2, padx=(6, 0), pady=3)
+    ttk.Label(frame, textvariable=found, foreground="#666").grid(row=4, column=0, columnspan=3, sticky="w")
     buttons = ttk.Frame(frame)
-    buttons.grid(row=4, column=0, columnspan=3, sticky="w", pady=(8, 8))
+    buttons.grid(row=5, column=0, columnspan=3, sticky="w", pady=(8, 8))
     ttk.Button(buttons, text="Enregistrer et synchroniser", command=save_and_sync).pack(side="left")
     ttk.Label(buttons, text="  Prix toutes les 20 min · inventaire envoyé après chaque /reload ou déconnexion",
               foreground="#666").pack(side="left")
     journal = tk.Text(frame, height=14, wrap="word", state="disabled")
-    journal.grid(row=5, column=0, columnspan=3, sticky="nsew")
-    frame.rowconfigure(5, weight=1)
+    journal.grid(row=6, column=0, columnspan=3, sticky="nsew")
+    frame.rowconfigure(6, weight=1)
+    ttk.Label(frame, text="Gratuit et libre (MIT), sans garantie · logo : ideapub · développé avec l'IA Claude Code",
+              foreground="#888").grid(row=7, column=0, columnspan=3, sticky="w", pady=(6, 0))
 
     def pump() -> None:
         while not messages.empty():

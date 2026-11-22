@@ -1,0 +1,41 @@
+WoW Planner : addon et client
+=============================
+
+Gratuit, sans publicité ni abonnement. Fait par Raugdae pour la guilde, sur WoW Forever.
+Site : https://wow.raug-info.ch · Code source : https://github.com/raugdae/wowplanner
+
+En bref (le texte qui fait foi est la licence MIT plus bas)
+-----------------------------------------------------------
+- Tu peux l'utiliser librement, le copier, le modifier et le partager, à condition de garder cette licence.
+- Il est fourni « tel quel », SANS AUCUNE GARANTIE. Tu l'utilises à tes risques : dans les limites permises par la
+  loi, l'auteur n'est responsable d'aucun dommage, perte de données ou problème lié à son utilisation, y compris
+  avec ton compte de jeu.
+- Le client n'envoie au site que ce que l'addon a noté pour tes persos déclarés (sacs, banque, argent, niveau,
+  métiers, recettes), avec ton jeton. Voir la page Confidentialité du site.
+- Projet de fans, sans lien avec Blizzard Entertainment ni WoW Forever. World of Warcraft et Blizzard sont des
+  marques de Blizzard Entertainment, Inc.
+- Logo créé par ideapub (https://ideapub.ch/). La licence MIT couvre le code, pas le logo.
+- Développé avec l'aide de l'IA : Claude Code, l'assistant de programmation d'Anthropic (https://claude.com/claude-code).
+
+
+MIT License
+
+Copyright (c) 2026 Raugdae
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

@@ -986,6 +986,7 @@ aria-label="Chercher dans l'aide">
 <div class="help-about"><img src="/static/logo.svg" alt="Logo WoW Planner" width="54" height="59">
 <p><b class="title">WoW Planner</b> <span class="muted">v{__version__}</span><br>
 Logo créé par <a href="https://ideapub.ch/" target="_blank" rel="noopener">ideapub</a>.<br>
+Développé avec l'IA <a href="https://claude.com/claude-code" target="_blank" rel="noopener">Claude Code</a>.<br>
 <a href="/conditions">Conditions</a> · <a href="/confidentialite">Confidentialité</a></p></div>
 </aside>
 <div class="help-main">{login_hint}<p id="help-found" class="help-found" hidden></p>{"".join(bodies)}</div>

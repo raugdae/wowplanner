@@ -1,4 +1,4 @@
-# Client WoW Planner : exécutables Windows et macOS (PyInstaller, addon inclus), joints à une release GitHub.
+# Client WoW Planner : exécutables Windows et macOS (PyInstaller, addon et logo inclus), joints à une release GitHub.
 # Lancement : pousser un tag « client-v1.0.0 » (ou à la main depuis l'onglet Actions, sans release).
 name: Client WoW Planner
 
@@ -17,8 +17,10 @@ jobs:
         include:
           - os: windows-latest
             artifact: WowPlanner-Windows.zip
+            icon: client/logo.ico
           - os: macos-latest
             artifact: WowPlanner-macOS.zip
+            icon: client/logo.png
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -26,20 +28,28 @@ jobs:
         with:
           python-version: "3.12"
       - name: Outils
-        run: pip install pyinstaller==6.11.1 certifi
+        # Pillow : PyInstaller convertit le logo PNG en icône macOS (.icns).
+        run: pip install pyinstaller==6.11.1 certifi pillow
       - name: Exécutable
         shell: bash
         run: |
           SEP=":"; [ "$RUNNER_OS" = "Windows" ] && SEP=";"
-          pyinstaller --noconfirm --windowed --onefile --name WowPlanner \
-            --add-data "addon/WowPlanner${SEP}addon/WowPlanner" client/wowplanner_client.py
+          pyinstaller --noconfirm --windowed --onefile --name WowPlanner --icon "${{ matrix.icon }}" \
+            --add-data "addon/WowPlanner${SEP}addon/WowPlanner" --add-data "client/logo.png${SEP}client" \
+            client/wowplanner_client.py
+      - name: Dossier à livrer
+        shell: bash
+        run: |
+          mkdir -p package/WowPlanner
+          cp addon/WowPlanner/LICENSE.txt package/WowPlanner/LICENSE.txt
+          if [ "$RUNNER_OS" = "Windows" ]; then cp dist/WowPlanner.exe package/WowPlanner/; else cp -R dist/WowPlanner.app package/WowPlanner/; fi
       - name: Archive (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: Compress-Archive -Path dist/WowPlanner.exe -DestinationPath ${{ matrix.artifact }}
+        run: Compress-Archive -Path package/WowPlanner -DestinationPath ${{ matrix.artifact }}
       - name: Archive (macOS)
         if: runner.os == 'macOS'
-        run: cd dist && ditto -c -k --keepParent WowPlanner.app ../${{ matrix.artifact }}
+        run: cd package && ditto -c -k --keepParent WowPlanner ../${{ matrix.artifact }}
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
@@ -57,3 +67,8 @@ jobs:
         with:
           files: WowPlanner-*.zip
           make_latest: true
+          body: |
+            Client WoW Planner (Windows et macOS), addon inclus : il s'installe tout seul dans le dossier du jeu.
+            Mode d'emploi : page « Addon WoW » du site. Gratuit et libre (MIT), fourni sans aucune garantie
+            (voir LICENSE.txt). Logo : ideapub. Développé avec l'aide de l'IA Claude Code (Anthropic).
+            Exécutables non signés : Windows (SmartScreen) et macOS (clic droit → Ouvrir) préviennent au premier lancement.

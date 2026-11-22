@@ -86,7 +86,13 @@ l'API officielle de Blizzard, dans le respect de ses conditions.</p>
     ("code", "10. Le code source", f"""
 <p>Le code de WoW Planner est <b>libre</b>, publié sous licence MIT : tu peux le consulter, le réutiliser et le
 modifier, à condition de garder la mention de licence. Il est disponible sur
-<a href="{REPO}" rel="noopener">GitHub</a>. Cette licence concerne le code, pas les contenus de Blizzard.</p>"""),
+<a href="{REPO}" rel="noopener">GitHub</a>. Cette licence concerne le code, pas les contenus de Blizzard ni
+le logo (créé par <a href="https://ideapub.ch/" rel="noopener">ideapub</a>).</p>
+<p>Le site, le bot, l'addon et son client sont <b>développés avec l'aide de l'IA</b> :
+<a href="https://claude.com/claude-code" rel="noopener">Claude Code</a>, l'assistant de programmation d'Anthropic, écrit une grande partie
+du code sous la direction de {EDITOR}, qui le relit, le teste et décide de ce qui est publié.</p>
+<p>L'<b>addon WoW</b> et son <b>client</b> sont fournis « tels quels », gratuitement et sans aucune garantie ; tu
+les installes et les utilises à tes risques (voir le fichier <code>LICENSE.txt</code> livré avec l'addon).</p>"""),
     ("changements", "11. Changements de ces conditions", """
 <p>Ces conditions peuvent évoluer avec le site. La date de mise à jour est indiquée en haut de la page ; pour un
 changement important, on le signale sur le Discord de la guilde.</p>"""),

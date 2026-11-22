@@ -1353,6 +1353,8 @@ def test_help_page(tmp_path):
     for key in ("anon", "login", "cgu"):
         assert 'src="/static/logo.svg"' in got[key][1].decode() and "https://ideapub.ch/" in got[key][1].decode()
     assert 'class="help-about"' in got["anon"][1].decode()
+    assert "https://claude.com/claude-code" in got["anon"][1].decode()  # développé avec l'IA (pied de page, aide)
+    assert "développés avec l'aide de l'IA" in got["cgu"][1].decode()
     status, text = got["admin"]
     assert status == 200 and 'data-ch="admin"' in text and "La page Administration" in text
 

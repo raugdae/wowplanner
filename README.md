@@ -518,7 +518,16 @@ ou change de fonctionnement. Dans le portail développeur Discord (onglet **Gene
 Code sous licence MIT (voir `LICENSE`). Projet de fans, sans lien avec Blizzard Entertainment ni WoW Forever.
 
 Logo (`wowplanner/static/logo.svg`, aussi servi en favicon) créé par [ideapub](https://ideapub.ch/), crédité en pied de
-page et dans l'aide.
+page et dans l'aide ; la licence MIT couvre le code, pas le logo. Ses déclinaisons : `addon/WowPlanner/logo.tga`
+(icône de l'addon, 64×64), `client/logo.png` et `client/logo.ico` (fenêtre et exécutables du client).
+
+Développé avec l'aide de l'IA : [Claude Code](https://claude.com/claude-code), l'assistant de programmation d'Anthropic, écrit une
+grande partie du code sous la direction de Raugdae (mention en pied de page, dans l'aide, les conditions
+d'utilisation, l'addon et le client).
+
+L'addon et le client sont livrés avec `addon/WowPlanner/LICENSE.txt` (résumé en français : gratuit, libre, sans
+aucune garantie, ce qui est envoyé au site, puis la licence MIT) ; le client demande d'accepter ces conditions au
+premier lancement (`TERMS`, `TERMS_VERSION` dans `client/wowplanner_client.py`) et les remontre avec « À propos ».
 
 ## Structure
 

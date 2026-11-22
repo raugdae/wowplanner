@@ -8,13 +8,15 @@ local NUM_BAGS = NUM_TOTAL_EQUIPPED_BAG_SLOTS or ((NUM_BAG_SLOTS or 4) + (NUM_RE
 local NUM_BANK_BAGS = NUM_BANKBAGSLOTS or 6
 local BANK = BANK_CONTAINER or -1
 local COLOR = "|cff9d8cff"
+local VERSION = "1.0.2"
+local LOGO = "|TInterface\\AddOns\\WowPlanner\\logo:0|t"  -- logo à la taille du texte
 
 local db, me, bankOpen
 
 -- ------------------------------------------------------------------ outils
 
 local function say(text)
-  DEFAULT_CHAT_FRAME:AddMessage(COLOR .. "WoW Planner|r : " .. text)
+  DEFAULT_CHAT_FRAME:AddMessage(LOGO .. " " .. COLOR .. "WoW Planner|r : " .. text)
 end
 
 local function itemId(link)
@@ -127,7 +129,7 @@ local function priceLines(tooltip, id, count)
   local p = WowPlannerData.items[id]
   if not p then return end
   local low, median, sold = p[1], p[2], p[3]
-  tooltip:AddDoubleLine(COLOR .. "HdV, plus bas|r", money(low), 1, 1, 1, 1, 1, 1)
+  tooltip:AddDoubleLine(LOGO .. " " .. COLOR .. "HdV, plus bas|r", money(low), 1, 1, 1, 1, 1, 1)
   if median and median ~= low then
     tooltip:AddDoubleLine(COLOR .. "HdV, médian|r", money(median), 1, 1, 1, 1, 1, 1)
   end
@@ -202,6 +204,11 @@ SlashCmdList.WOWPLANNER = function(text)
     local kinds = 0
     for _ in pairs(me.bags) do kinds = kinds + 1 end
     say(kinds .. " objets différents notés dans tes sacs (envoyés au prochain /reload).")
+  elseif command == "info" then
+    say("version " .. VERSION .. ", par Raugdae, gratuit et libre (licence MIT, sans aucune garantie : voir "
+      .. "LICENSE.txt dans le dossier de l'addon).")
+    say("Logo créé par ideapub (ideapub.ch). Développé avec l'aide de l'IA Claude Code (Anthropic).")
+    say("Site : wow.raug-info.ch · code : github.com/raugdae/wowplanner")
   elseif command == "off" or command == "on" then
     db.settings.tooltip = command == "on"
     say(db.settings.tooltip and "prix affichés dans les infobulles." or "prix masqués dans les infobulles.")
@@ -213,7 +220,7 @@ SlashCmdList.WOWPLANNER = function(text)
     else
       say("pas encore de prix : lance le client WoW Planner, puis /wp maj.")
     end
-    say("/wp maj : recharger l'interface pour prendre les derniers prix · /wp off, /wp on : prix dans les infobulles · /wp sacs : ce que l'addon voit dans tes sacs.")
+    say("/wp maj : recharger l'interface pour prendre les derniers prix · /wp off, /wp on : prix dans les infobulles · /wp sacs : ce que l'addon voit dans tes sacs · /wp info : à propos.")
     say("Banque " .. (me.bankAt and ("vue le " .. date("%d/%m à %H:%M", me.bankAt)) or "jamais ouverte : ouvre-la une fois") .. ".")
   end
 end

@@ -1,6 +1,6 @@
 [project]
 name = "wowplanner"
-version = "1.26.3"
+version = "1.27.0"
 description = "Bot Discord d'organisation de sorties donjon/raid pour WoW Forever"
 license = "MIT"
 requires-python = ">=3.11"

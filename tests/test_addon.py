@@ -150,6 +150,10 @@ def test_addon_lua_scans_and_tooltips():
     g.SlashCmdList.WOWPLANNER("on")
     g.SlashCmdList.WOWPLANNER("maj")
     assert g.reloaded
+    g.SlashCmdList.WOWPLANNER("info")
+    about = " | ".join(g.printed.values())
+    assert "ideapub" in about and "Claude Code" in about and "MIT" in about
+    assert "logo:0|t" in about  # petit logo devant chaque message
 
     # Ce que le jeu enregistre, relu par le client puis par le site.
     saved = "WowPlannerDB = " + to_lua(lua_to_python(g.WowPlannerDB)) + "\n"
@@ -240,6 +244,10 @@ def test_client_game_folder_and_install(tmp_path):
     sv = era / "WTF" / "Account" / "ABC" / "SavedVariables" / "WowPlanner.lua"
     sv.write_text("WowPlannerDB = {}", encoding="utf-8")
     assert client.saved_variables(era) == [sv]
+    assert (installed / "logo.tga").read_bytes()[:3] == b"\x00\x00\x02" and (installed / "LICENSE.txt").exists()
+    assert client.bundled_file("logo.png").read_bytes()[1:4] == b"PNG"
+    toc = (ADDON / "WowPlanner.toc").read_text(encoding="utf-8")
+    assert r"## IconTexture: Interface\AddOns\WowPlanner\logo" in toc and "Claude" in toc
 
 
 def test_addon_payload_parsing():
