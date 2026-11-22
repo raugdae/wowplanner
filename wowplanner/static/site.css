@@ -441,6 +441,10 @@ tr[data-href] { cursor:pointer; }
 .calc-table td.qty input { width:84px; background:var(--bg); color:var(--text); border:1px solid var(--line);
   border-radius:6px; padding:5px 6px; font:inherit; text-align:right; }
 .calc-table td.qty input:focus { border-color:var(--accent); outline:none; }
+/* Pas de flèches + / − dans les champs de quantité : on tape le nombre. */
+.calc-table td.qty input { -moz-appearance:textfield; appearance:textfield; }
+.calc-table td.qty input::-webkit-inner-spin-button, .calc-table td.qty input::-webkit-outer-spin-button {
+  -webkit-appearance:none; margin:0; }
 .calc-table td.value { white-space:nowrap; font-variant-numeric:tabular-nums; }
 .calc-table tfoot td { position:sticky; bottom:0; background:var(--panel2); font-weight:700;
   box-shadow:inset 0 1px 0 var(--line); }
