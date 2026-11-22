@@ -29,7 +29,7 @@ class Viewer:
     user: dict[str, Any] | None  # {"id", "name", …} si connecté
     path: str  # page demandée (pour y revenir après connexion)
     characters: list[Character] = field(default_factory=list)  # ses persos (menu du compte)
-    admin: bool = False  # permission « Gérer le serveur » sur Discord
+    admin: bool = False  # page Administration : « Gérer le serveur » sur Discord, ou droits confiés sur le site
     guest: bool = False  # accès invité (mot de passe, sans Discord) : lecture seule
 
 

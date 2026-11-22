@@ -367,6 +367,10 @@ sorties et gérer ses persos. Il peut être réservé aux membres du Discord (vo
   `/admin supprimer perso` : le membre est prévenu en MP). Sur la page Sorties, un admin peut annuler n'importe quelle
   sortie et retirer un inscrit. Le panneau de l'atelier reste à poster depuis Discord (`/admin atelier`), dans le
   salon voulu.
+  **Droits confiés** : un admin peut confier une partie de ces outils à un membre (raid lead, officier…) sans rien
+  toucher sur Discord, en cochant *Persos des membres*, *Sorties* (annuler, retirer un inscrit, depuis le site
+  seulement) et/ou *Synchro*. Le membre est prévenu en MP et ne voit que ses sections ; il ne peut pas confier de droits
+  à son tour, et les perd s'il quitte le serveur (table `site_delegations`, par serveur).
 - **Aide** (publique, lien dans la barre du haut et sur la page de connexion) : le mode d'emploi complet du site,
   écrit pour quelqu'un qui n'a pas l'habitude d'internet. Un chapitre par partie du site, avec un menu à gauche, une
   recherche, des captures d'écran annotées (repères numérotés : survoler ou cliquer un numéro allume la zone, clic

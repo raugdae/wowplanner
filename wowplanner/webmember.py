@@ -54,6 +54,22 @@ class WebUser:
     display_name: str
 
 
+# Droits de la page Administration. Les admins du serveur (« Gérer le serveur ») les ont tous, plus celui de les
+# confier à d'autres membres (raid leads…), sur le site seulement : rien ne change côté Discord.
+RIGHT_PERSOS, RIGHT_SORTIES, RIGHT_SYNC = "persos", "sorties", "synchro"
+RIGHT_DELEGATE = "deleguer"
+RIGHTS = {  # droit -> (libellé, ce qu'il permet)
+    RIGHT_PERSOS: ("👥 Persos des membres", "ajouter un perso à un membre, changer son rôle préféré, le supprimer"),
+    RIGHT_SORTIES: ("📅 Sorties", "annuler n'importe quelle sortie et retirer un inscrit, depuis le site"),
+    RIGHT_SYNC: ("🔄 Synchro", "lancer la synchro complète des données"),
+}
+ADMIN_RIGHTS = frozenset(RIGHTS) | {RIGHT_DELEGATE}
+
+
+def right_label(right: str) -> str:
+    return RIGHTS[right][0].split(" ", 1)[1]
+
+
 FLASH_COOKIE = "wp_flash"
 FLASH_SECONDS = 120
 ROLE_ICONS = {"tank": "🛡️", "heal": "⛑️", "dps": "⚔️"}
@@ -252,6 +268,7 @@ class MemberPages:
         router.add_post("/admin/persos", self.admin_add_character)
         router.add_post("/admin/persos/{id}/role", self.admin_set_role)
         router.add_post("/admin/persos/{id}/supprimer", self.admin_delete_character)
+        router.add_post("/admin/delegations", self.admin_delegate)
 
     # ============================================================ outils
 
@@ -807,35 +824,51 @@ l'artisan reçoit la commande en MP, et chacun peut répondre ici ou sur Discord
         # « pour » : formulaire d'admin, les doublons sont cherchés chez le membre choisi.
         owner = user.id
         target = request.query.get("pour", "")
-        if target.isdigit() and int(target) != user.id and await self.backend.is_admin(user.id):
+        if target.isdigit() and int(target) != user.id and RIGHT_PERSOS in await self._rights(user.id):
             owner = int(target)
         result = await self.backend.armory_lookup(owner, request.query.get("nom", "")[:40])
         return web.json_response(result)
 
     # ============================================================ administration
 
-    async def _admin_user(self) -> WebUser | None:
-        user = self._web_user()
-        if user is None or self.backend is None or not await self.backend.is_admin(user.id):
-            return None
-        return user
+    async def _rights(self, user_id: int) -> frozenset[str]:
+        """Droits de la page Administration (tous pour un admin du serveur, sinon ceux qu'un admin a confiés)."""
+        backend = self.backend
+        if backend is None:
+            return frozenset()
+        rights = getattr(backend, "rights", None)
+        if rights is not None:
+            return await rights(user_id)
+        return ADMIN_RIGHTS if await backend.is_admin(user_id) else frozenset()
 
     async def admin_page(self, request: web.Request) -> web.Response:
-        user = await self._admin_user()
-        if user is None:
+        user = self._web_user()
+        rights = await self._rights(user.id) if user is not None else frozenset()
+        if not rights:
             body = (
                 '<h1 class="title">Administration</h1><p class="muted">Réservé aux membres qui ont la permission '
-                "« Gérer le serveur » sur Discord.</p>"
+                "« Gérer le serveur » sur Discord, ou à qui un admin a confié des droits sur le site.</p>"
             )
             response = self._render(request, "Administration", "", body)
             response.set_status(403)
             return response
+        assert user is not None
         backend = self.backend
         assert backend is not None
         site = self.site
         gid = site._scope()
         csrf = self._csrf_field()
         tz = self.tz
+        is_admin = RIGHT_DELEGATE in rights
+        delegations = site.db.delegations(gid) if is_admin else []
+        member_ids = site.db.guild_member_ids(gid)
+        characters = (
+            sorted(site.db.guild_characters(gid), key=lambda c: c.name.lower()) if RIGHT_PERSOS in rights else []
+        )
+        wanted_names = {c.user_id for c in characters} | {d.user_id for d in delegations} | {d.granted_by for d in delegations}
+        if RIGHT_PERSOS in rights or is_admin:  # listes de choix des membres
+            wanted_names |= set(member_ids)
+        names = await backend.member_names(sorted(wanted_names))
 
         # --- Synchro
         state = backend.sync_state
@@ -861,9 +894,6 @@ nettoyage des persos Discord introuvables et toutes les recettes. Elle tourne au
 {csrf}<button class="act primary"{" disabled" if running else ""}>Lancer la synchro complète</button></form></section>"""
 
         # --- Persos des membres
-        characters = sorted(site.db.guild_characters(gid), key=lambda c: c.name.lower())
-        member_ids = site.db.guild_member_ids(gid)
-        names = await backend.member_names(sorted({c.user_id for c in characters} | set(member_ids)))
         rows = []
         for c in characters:
             owner = names.get(c.user_id, "?")
@@ -923,24 +953,100 @@ placeholder="Prénom Nom (ex. Grommash Hurlenfer)" data-armory="{int(strict)}"><
 déjà vus par le bot (inscrits à une sortie, persos déclarés, connectés au site).</p>
 </form>"""
 
-        body = f"""
-<h1 class="title">Administration</h1>
-<p class="sub">Les outils de <code>/admin</code>, pour les membres qui ont la permission « Gérer le serveur » sur Discord.</p>
-{sync_html}
-<section class="card admin-sec" id="persos"><h2>👥 Persos des membres</h2>
+        persos_html = f"""<section class="card admin-sec" id="persos"><h2>👥 Persos des membres</h2>
 <p class="muted">{len(characters)} perso(s). Modifier le rôle préféré ou supprimer un perso (son joueur est prévenu en MP
 quand c'est un autre que toi).{missing_text}</p>
 {table}
 <h2>➕ Ajouter un perso à un membre</h2>
-{add}</section>
-<section class="card admin-sec"><h2>📅 Sorties</h2>
+{add}</section>"""
+        discord_too = (
+            "comme <code>/supprimer event</code> et <code>/supprimer inscrit</code>" if is_admin
+            else "depuis le site (sur Discord, ça reste réservé à l'organisateur et aux modérateurs)"
+        )
+        sorties_html = f"""<section class="card admin-sec"><h2>📅 Sorties</h2>
 <p class="muted">Sur la page <a href="/sorties">Sorties</a>, tu peux annuler n'importe quelle sortie (les inscrits sont
-prévenus sur Discord) et retirer un inscrit, comme <code>/supprimer event</code> et <code>/supprimer inscrit</code>.</p>
-</section>
-<section class="card admin-sec"><h2>🔨 Atelier</h2>
+prévenus sur Discord) et retirer un inscrit, {discord_too}.</p>
+</section>"""
+        atelier_html = """<section class="card admin-sec"><h2>🔨 Atelier</h2>
 <p class="muted">Le panneau de l'atelier se poste depuis Discord, dans le salon voulu : <code>/admin atelier</code>.</p>
 </section>"""
+
+        if is_admin:
+            intro = "Les outils de <code>/admin</code>, pour les membres qui ont la permission « Gérer le serveur » sur Discord."
+            sections = [sync_html, persos_html, sorties_html, self._delegations_html(delegations, member_ids, names, user.id),
+                        atelier_html]
+        else:
+            labels = ", ".join(f"<b>{esc(right_label(r))}</b>" for r in RIGHTS if r in rights)
+            intro = f"Les droits qu'un admin du serveur t'a confiés sur le site : {labels}."
+            sections = [
+                html for right, html in ((RIGHT_SYNC, sync_html), (RIGHT_PERSOS, persos_html), (RIGHT_SORTIES, sorties_html))
+                if right in rights
+            ]
+        body = f"""
+<h1 class="title">Administration</h1>
+<p class="sub">{intro}</p>
+{"".join(sections)}"""
         return self._render(request, "Administration", "", body, LOOKUP_SCRIPT + FILTER_SCRIPT)
+
+    def _delegations_html(self, delegations: list, member_ids: list[int], names: dict[int, str], me: int) -> str:
+        """Section « Droits confiés » (admins du serveur seulement) : qui a quels droits, en confier, en retirer."""
+        csrf = self._csrf_field()
+
+        def boxes(chosen: frozenset[str]) -> str:
+            return "".join(
+                f'<label class="chk" title="{esc(desc)}"><input type="checkbox" name="droits" value="{r}"'
+                f'{" checked" if r in chosen else ""}> {esc(label)}</label>'
+                for r, (label, desc) in RIGHTS.items()
+            )
+
+        rows = []
+        for d in sorted(delegations, key=lambda d: normalize(names.get(d.user_id, ""))):
+            name = names.get(d.user_id, "?")
+            since = datetime.fromtimestamp(d.granted_at, self.tz)
+            member = f'<input type="hidden" name="membre" value="{d.user_id}">'
+            rows.append(
+                f"<tr><td><b>{esc(name)}</b><br><small class=\"muted\">par {esc(names.get(d.granted_by, '?'))}, "
+                f"le {since:%d/%m/%Y}</small></td>"
+                f'<td><form method="post" action="/admin/delegations" class="inline deleg">{csrf}{member}'
+                f'{boxes(d.rights)}<button class="act">Enregistrer</button></form>'
+                f'<form method="post" action="/admin/delegations" class="inline" '
+                f'data-confirm="Retirer tous ses droits à {esc(name)} ? Le membre est prévenu en MP.">{csrf}{member}'
+                '<button class="act danger">Retirer</button></form></td></tr>'
+            )
+        table = (
+            '<div class="table-wrap"><table><thead><tr><th>Membre</th><th>Droits</th></tr></thead>'
+            f'<tbody>{"".join(rows)}</tbody></table></div>'
+            if rows else '<p class="empty">Aucun droit confié pour l\'instant.</p>'
+        )
+        taken = {d.user_id for d in delegations} | {me}
+        options = "".join(
+            f'<option value="{uid}">{esc(names.get(uid, str(uid)))}</option>'
+            for uid in sorted((u for u in member_ids if u not in taken), key=lambda u: normalize(names.get(u, "")))
+        )
+        explain = "".join(f"<li><b>{esc(label)}</b> : {esc(desc)}.</li>" for label, desc in RIGHTS.values())
+        return f"""<section class="card admin-sec" id="delegations"><h2>🔑 Droits confiés</h2>
+<p class="muted">Pour confier une partie de l'administration à un membre (raid lead, officier…) sans lui donner de
+permission sur Discord. Ces droits ne valent que <b>sur le site</b> ; le membre est prévenu en MP.</p>
+<ul class="hlist">{explain}</ul>
+{table}
+<h2>➕ Confier des droits</h2>
+<form method="post" action="/admin/delegations" class="form deleg-add">{csrf}
+<label>Membre<select name="membre" required><option value="">Choisis…</option>{options}</select></label>
+<div class="wide">{boxes(frozenset())}</div>
+<div><button class="act primary">Confier</button></div>
+<p class="hint wide">Seuls les admins du serveur (« Gérer le serveur ») voient cette section : un membre à qui tu
+confies des droits ne peut pas en confier à son tour.</p>
+</form></section>"""
+
+    async def admin_delegate(self, request: web.Request) -> web.StreamResponse:
+        async def action(user, form) -> str:
+            member = str(form.get("membre") or "")
+            if not member.isdigit():
+                raise ActionError("Choisis le membre.")
+            rights = {str(r) for r in form.getall("droits", [])}
+            return await self.backend.set_delegation(user, int(member), rights)  # type: ignore[union-attr]
+
+        return await self._act(request, "/admin#delegations", action)
 
     async def admin_sync(self, request: web.Request) -> web.StreamResponse:
         return await self._act(request, "/admin", lambda user, form: self.backend.start_sync(user))

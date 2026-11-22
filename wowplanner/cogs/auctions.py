@@ -51,6 +51,8 @@ class AuctionCog(commands.Cog):
         self.db = bot.db
         self._lock = asyncio.Lock()
         self._listing: ListingState | None = None  # annonces du dernier relevé, pour estimer les ventes
+        # Objets en vente que Blizzard ne connaît pas (404) : plus redemandés jusqu'au prochain démarrage.
+        self._not_found: set[int] = set()
         data_dir = getattr(bot.config, "data_dir", None)
         self._listing_path = data_dir / "ah_listing.bin" if data_dir else None
         if self._listing_path is not None:
@@ -174,13 +176,17 @@ class AuctionCog(commands.Cog):
 
     async def _unknown_items(self, client) -> None:
         """Objets en vente absents du catalogue (ajoutés depuis la dernière lecture), demandés un par un."""
-        missing = self.db.ah_unknown_items(UNKNOWN_PER_RUN)
+        candidates = self.db.ah_unknown_items(UNKNOWN_PER_RUN + len(self._not_found))
+        missing = [i for i in candidates if i not in self._not_found][:UNKNOWN_PER_RUN]
         records = []
         for item_id in missing:
             try:
                 record = parse_item_detail(await client.item(item_id))
             except (ArmoryError, aiohttp.ClientError, asyncio.TimeoutError) as exc:
-                log.info("Objet %s : %s", item_id, exc)
+                if isinstance(exc, ArmoryError) and exc.status == 404:
+                    self._not_found.add(item_id)
+                # Niveau debug : ces objets inconnus noyaient les logs (à remettre en info au besoin).
+                log.debug("Objet %s : %s", item_id, exc)
                 continue
             if record:
                 records.append(record)

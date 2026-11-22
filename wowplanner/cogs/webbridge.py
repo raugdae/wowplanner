@@ -26,7 +26,9 @@ from ..gear import parse_equipment
 from ..orders import STATUS_LABELS, TRANSITIONS, Candidate, allowed_actions
 from ..recipes import crafted_by_map
 from ..roles import LABELS, ROLES
-from ..webmember import ActionError, WebUser
+from ..webmember import (
+    ADMIN_RIGHTS, RIGHT_DELEGATE, RIGHT_PERSOS, RIGHT_SORTIES, RIGHT_SYNC, RIGHTS, ActionError, WebUser, right_label,
+)
 from .armory import NOT_FOUND_HELP
 from .characters import MAX_CHARACTERS, NAME_ERROR, normalize_name, race_refusal, role_refusal
 
@@ -43,7 +45,7 @@ LOOKUP_CACHE_MAX = 500
 # Droit de gérer une sortie (organisateur ou modo) : gardé quelques minutes pour ne pas interroger Discord
 # à chaque affichage de la page.
 MANAGE_CACHE_SECONDS = 300
-# Droits d'administration (« Gérer le serveur ») : revérifiés toutes les 5 minutes.
+# Droits d'administration (« Gérer le serveur », présence sur le serveur) : revérifiés toutes les 5 minutes.
 ADMIN_CACHE_SECONDS = 300
 # Pseudos des membres (page d'administration).
 NAME_CACHE_SECONDS = 3600
@@ -56,7 +58,7 @@ class WebBridge(commands.Cog):
         self.timezone = bot.config.timezone
         self._lookups: dict[str, tuple[float, dict[str, Any]]] = {}
         self._managers: dict[tuple[int, int], tuple[float, bool]] = {}
-        self._admins: dict[int, tuple[float, bool]] = {}
+        self._admins: dict[int, tuple[float, tuple[bool, bool]]] = {}
         self._names: dict[int, tuple[float, str]] = {}
         # Dernière synchro lancée depuis le site : {"by", "started", "finished", "lines", "running"}.
         self.sync_state: dict[str, Any] | None = None
@@ -193,7 +195,7 @@ class WebBridge(commands.Cog):
         return f"Tu es désinscrit de **{ev.instance}**."
 
     async def can_manage(self, user_id: int, ev: Event) -> bool:
-        if user_id == ev.creator_id or await self.is_admin(user_id):
+        if user_id == ev.creator_id or RIGHT_SORTIES in await self.rights(user_id):
             return True
         key = (user_id, ev.channel_id)
         cached = self._managers.get(key)
@@ -268,7 +270,7 @@ class WebBridge(commands.Cog):
         owner = owner_id or user.id
         by_admin = owner != user.id
         if by_admin:
-            await self._require_admin(user)
+            await self._require(user, RIGHT_PERSOS)
         has = "Ce membre a" if by_admin else "Tu as"
         name = normalize_name(raw_name)
         if name is None:
@@ -317,13 +319,13 @@ class WebBridge(commands.Cog):
         return f"✅ {what} ajouté."
 
     async def _character_for(self, user: WebUser, character_id: int) -> tuple[Character, bool]:
-        """(perso, géré par un admin ?) : le perso du joueur, ou celui d'un autre si le joueur est admin."""
+        """(perso, géré par un admin ?) : le perso du joueur, ou celui d'un autre si le joueur gère les persos."""
         character = self.db.get_character(character_id)
         if character is None:
             raise ActionError("Ce perso n'existe plus.")
         if character.user_id == user.id:
             return character, False
-        if await self.is_admin(user.id) and character.user_id in self.db.guild_member_ids(self._guild_id()):
+        if RIGHT_PERSOS in await self.rights(user.id) and character.user_id in self.db.guild_member_ids(self._guild_id()):
             return character, True
         raise ActionError("Ce perso n'est pas à toi.")
 
@@ -333,7 +335,7 @@ class WebBridge(commands.Cog):
         for message_id in affected:  # les sorties où il était inscrit affichent désormais le pseudo
             await self.events.refresh_event(message_id)
         if by_admin:
-            log.info("Perso %s supprimé depuis le site par l'admin %s", character.name, user.id)
+            log.info("Perso %s supprimé depuis le site par %s (droits d'admin)", character.name, user.id)
             await self._tell(character.user_id, f"🛠️ **{user.display_name}** a supprimé ton perso **{character.name}** du bot.")
         return f"🗑️ **{character.name}** supprimé, avec ses métiers."
 
@@ -408,26 +410,87 @@ class WebBridge(commands.Cog):
 
     # ========================================================== administration
 
-    async def is_admin(self, user_id: int) -> bool:
-        """Permission « Gérer le serveur » sur Discord, comme pour les commandes /admin."""
+    async def _status(self, user_id: int) -> tuple[bool | None, bool]:
+        """(membre du serveur ?, permission « Gérer le serveur » ?). None : on ne sait pas (Discord injoignable)."""
         cached = self._admins.get(user_id)
         if cached and time.monotonic() - cached[0] < ADMIN_CACHE_SECONDS:
             return cached[1]
         gid = self.bot.website.guild_id()
         guild = self.bot.get_guild(gid) if gid else None
         if guild is None:
-            return False
+            return None, False
         try:
             member = guild.get_member(user_id) or await guild.fetch_member(user_id)
+        except discord.NotFound:
+            status = (False, False)
         except discord.HTTPException:
-            return False  # pas mis en cache : Discord peut répondre au prochain essai
-        allowed = bool(member.guild_permissions.manage_guild)
-        self._admins[user_id] = (time.monotonic(), allowed)
-        return allowed
+            return None, False  # pas mis en cache : Discord peut répondre au prochain essai
+        else:
+            status = (True, bool(member.guild_permissions.manage_guild))
+        self._admins[user_id] = (time.monotonic(), status)
+        return status
 
-    async def _require_admin(self, user: WebUser) -> None:
-        if not await self.is_admin(user.id):
-            raise ActionError("Réservé aux membres qui ont la permission « Gérer le serveur » sur Discord.")
+    async def is_admin(self, user_id: int) -> bool:
+        """Permission « Gérer le serveur » sur Discord, comme pour les commandes /admin."""
+        return (await self._status(user_id))[1]
+
+    async def rights(self, user_id: int) -> frozenset[str]:
+        """Droits de la page Administration : tous pour un admin du serveur, sinon ceux qu'un admin a confiés."""
+        member, admin = await self._status(user_id)
+        if admin:
+            return ADMIN_RIGHTS
+        gid = self.bot.website.guild_id()
+        if gid is None:
+            return frozenset()
+        granted = self.db.delegation_rights(gid, user_id)
+        if granted and member is False:  # parti du serveur : ses droits disparaissent
+            self.db.set_delegation(gid, user_id, frozenset(), 0, 0)
+            log.info("Droits du site retirés au joueur %s, qui a quitté le serveur", user_id)
+            return frozenset()
+        return granted & frozenset(RIGHTS)
+
+    async def _require(self, user: WebUser, right: str) -> None:
+        if right in await self.rights(user.id):
+            return
+        if right == RIGHT_DELEGATE:
+            raise ActionError("Seuls les membres qui ont la permission « Gérer le serveur » sur Discord confient des droits.")
+        raise ActionError(
+            "Réservé aux membres qui ont la permission « Gérer le serveur » sur Discord, ou à qui un admin a confié "
+            f"« {right_label(right)} » sur le site."
+        )
+
+    async def set_delegation(self, user: WebUser, member_id: int, rights: set[str]) -> str:
+        """Confie (ou retire, si `rights` est vide) des droits de la page Administration à un membre, prévenu en MP."""
+        await self._require(user, RIGHT_DELEGATE)
+        gid = self._guild_id()
+        if member_id == user.id:
+            raise ActionError("Tu as déjà tous les droits.")
+        if member_id not in self.db.guild_member_ids(gid):
+            raise ActionError("Ce membre n'est pas encore connu du bot (il doit s'être connecté au site ou inscrit à une sortie).")
+        wanted = frozenset(r for r in rights if r in RIGHTS)
+        name = (await self.member_names([member_id]))[member_id]
+        present, admin = await self._status(member_id)
+        if wanted and present is False:
+            raise ActionError(f"**{name}** n'est plus sur le serveur.")
+        if wanted and admin:
+            raise ActionError(f"**{name}** a déjà tous les droits : la permission « Gérer le serveur » sur Discord.")
+        before = self.db.delegation_rights(gid, member_id)
+        if wanted == before:
+            return f"Rien de changé pour **{name}**."
+        self.db.set_delegation(gid, member_id, wanted, user.id, int(time.time()))
+        log.info("Droits du site de %s : %s (par %s)", member_id, ",".join(sorted(wanted)) or "aucun", user.id)
+        if not wanted:
+            await self._tell(member_id, f"🛠️ **{user.display_name}** t'a retiré tes droits d'administration sur le site WoW Planner.")
+            return f"🗑️ **{name}** n'a plus de droits sur le site."
+        labels = ", ".join(right_label(r) for r in RIGHTS if r in wanted)
+        site = getattr(self.bot.config, "web_url", "") or ""
+        where = f" : {site}/admin" if site else ""
+        verb = "a changé tes droits" if before else "t'a confié des droits"
+        await self._tell(
+            member_id, f"🛠️ **{user.display_name}** {verb} sur le site WoW Planner : **{labels}**. "
+            f"Tout est sur la page Administration{where}.",
+        )
+        return f"✅ **{name}** : {labels}."
 
     async def member_names(self, user_ids: list[int]) -> dict[int, str]:
         """Pseudo de chaque membre sur le serveur (« a quitté le serveur » s'il n'y est plus)."""
@@ -458,7 +521,7 @@ class WebBridge(commands.Cog):
 
     async def start_sync(self, user: WebUser) -> str:
         """Lance la synchro complète (comme /admin sync) en tâche de fond ; la page d'admin affiche l'avancement."""
-        await self._require_admin(user)
+        await self._require(user, RIGHT_SYNC)
         sync = self.bot.get_cog("SyncCog")
         if sync is None:
             raise ActionError("Module de synchro absent.")

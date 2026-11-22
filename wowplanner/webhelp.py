@@ -226,7 +226,7 @@ appuie sur {k("Échap")}).</p>
     ("rentab", "<b>Rentabilité de mes métiers</b> : ce que tes métiers rapportent."),
     ("calc", "<b>Calculatrice HdV</b> : vendre tel quel ou fabriquer ?"),
     ("theme", "<b>Thème</b> : les couleurs du site (Alliance, Hurlevent, Forgefer, Darnassus, Gnomeregan)."),
-    ("admin", "<b>Administration</b> : seulement pour les modérateurs du Discord."),
+    ("admin", "<b>Administration</b> : pour les modérateurs du Discord et les membres à qui ils ont confié des droits."),
     ("logout", "<b>Déconnexion</b> : pour quitter le site sur cet appareil (utile sur un ordinateur partagé)."),
 ])}
 {note("Le thème choisi est retenu sur cet appareil. Il ne change que les couleurs, pas le contenu.")}"""),
@@ -783,10 +783,10 @@ privés du bot (rappels, commandes) arrivent toujours sur Discord.</p>"""),
         ])),
     ])
 
-    admin = Chapter("admin", "🛠️", "Administration", "Pour les modérateurs : synchro, persos des membres.", [
+    admin = Chapter("admin", "🛠️", "Administration", "Pour les modérateurs et les raid leads : synchro, persos, droits.", [
         Section("page", "La page Administration", f"""
-<p>Visible seulement des membres qui ont la permission « Gérer le serveur » sur Discord, depuis le menu →
-{ui('🛠️ Administration')}.</p>
+<p>Visible des membres qui ont la permission « Gérer le serveur » sur Discord, et de ceux à qui ils ont confié des
+droits (voir plus bas), depuis le menu → {ui('🛠️ Administration')}. Chacun n'y voit que les sections de ses droits.</p>
 {shot("admin", "La page Administration.", [
     ("sync", "Relancer toute la synchro maintenant (sinon chaque nuit à 4 h). Ça peut prendre plusieurs minutes."),
     ("q", "Chercher un perso, un joueur ou une classe."),
@@ -801,6 +801,19 @@ au bout de 2 jours.</li>
 <li>Sur la page Sorties, tu peux annuler n'importe quelle sortie et retirer n'importe quel inscrit.</li>
 <li>Le panneau de l'atelier se poste sur Discord avec <code>/admin atelier</code> dans le salon voulu.</li>
 </ul>"""),
+        Section("droits", "Confier des droits (raid leads…)", """
+<p>Un admin du serveur peut confier une partie de l'administration à un membre, <b>sur le site seulement</b> : pas de
+rôle ni de permission à créer sur Discord. C'est la section <b>🔑 Droits confiés</b> de la page Administration.</p>
+<ul class="hlist">
+<li><b>Persos des membres</b> : ajouter un perso à un membre, changer son rôle préféré, le supprimer.</li>
+<li><b>Sorties</b> : annuler n'importe quelle sortie et retirer un inscrit, depuis le site (sur Discord, ça reste
+réservé à l'organisateur et aux modérateurs).</li>
+<li><b>Synchro</b> : lancer la synchro complète des données.</li>
+</ul>
+<p>Choisis le membre, coche ses droits, puis <b>Confier</b>. Pour les changer, coche ou décoche sur sa ligne puis
+<b>Enregistrer</b> ; <b>Retirer</b> lui enlève tout. Le membre est prévenu en MP à chaque fois.</p>
+<p>Un membre à qui on a confié des droits ne peut pas en confier à son tour. S'il quitte le serveur, ses droits
+disparaissent.</p>"""),
     ], admin=True)
 
     return [debut, sorties, guilde, persos, metiers, hdv, argent, donjons, addon, discord, faq_ch, admin]

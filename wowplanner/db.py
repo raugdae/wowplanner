@@ -218,6 +218,15 @@ CREATE TABLE IF NOT EXISTS game_recipes (
     recipe_id    INTEGER NOT NULL REFERENCES recipes (id),
     PRIMARY KEY (character_id, recipe_id)
 ) WITHOUT ROWID;
+-- Droits du site confiés par un admin du serveur (« Gérer le serveur ») à un membre : rights = "persos,sorties".
+CREATE TABLE IF NOT EXISTS site_delegations (
+    guild_id   INTEGER NOT NULL,
+    user_id    INTEGER NOT NULL,
+    rights     TEXT    NOT NULL,
+    granted_by INTEGER NOT NULL,
+    granted_at INTEGER NOT NULL,
+    PRIMARY KEY (guild_id, user_id)
+);
 """
 
 
@@ -244,6 +253,15 @@ class Event:
     @property
     def size(self) -> int:
         return sum(self.caps.values())
+
+
+@dataclass(frozen=True)
+class Delegation:
+    """Droits du site confiés à un membre par un admin du serveur."""
+    user_id: int
+    rights: frozenset[str]
+    granted_by: int
+    granted_at: int
 
 
 @dataclass
@@ -1047,6 +1065,36 @@ class Database:
             (item_id, since),
         )
         return [tuple(r) for r in rows]
+
+    # ---------------------------------------------------- droits délégués (site)
+
+    def delegations(self, guild_id: int) -> list[Delegation]:
+        rows = self.conn.execute(
+            "SELECT * FROM site_delegations WHERE guild_id = ? ORDER BY granted_at", (guild_id,)
+        )
+        return [
+            Delegation(r["user_id"], frozenset(filter(None, r["rights"].split(","))), r["granted_by"], r["granted_at"])
+            for r in rows
+        ]
+
+    def delegation_rights(self, guild_id: int, user_id: int) -> frozenset[str]:
+        row = self.conn.execute(
+            "SELECT rights FROM site_delegations WHERE guild_id = ? AND user_id = ?", (guild_id, user_id)
+        ).fetchone()
+        return frozenset(filter(None, row["rights"].split(","))) if row else frozenset()
+
+    def set_delegation(self, guild_id: int, user_id: int, rights: set[str] | frozenset[str], granted_by: int,
+                       now: int) -> None:
+        """Droits confiés au membre (aucun : la délégation est retirée)."""
+        with self.conn:
+            if not rights:
+                self.conn.execute("DELETE FROM site_delegations WHERE guild_id = ? AND user_id = ?", (guild_id, user_id))
+                return
+            self.conn.execute(
+                "INSERT OR REPLACE INTO site_delegations (guild_id, user_id, rights, granted_by, granted_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (guild_id, user_id, ",".join(sorted(rights)), granted_by, now),
+            )
 
     # ------------------------------------------------------------ addon WoW
 

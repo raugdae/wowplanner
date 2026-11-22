@@ -171,10 +171,11 @@ class WebSite:
         viewer = Viewer(user, request.path_qs, guest=guest)
         if user is not None and int(user["id"]):
             viewer.characters = self.db.get_characters(int(user["id"]))
-            is_admin = getattr(self.actions, "is_admin", None)
-            if is_admin is not None:
+            # Accès à la page Administration : admin du serveur, ou membre à qui un admin a confié des droits.
+            check = getattr(self.actions, "rights", None) or getattr(self.actions, "is_admin", None)
+            if check is not None:
                 try:
-                    viewer.admin = bool(await is_admin(int(user["id"])))
+                    viewer.admin = bool(await check(int(user["id"])))
                 except Exception:
                     log.exception("Vérification des droits d'administration impossible")
         token = _VIEWER.set(viewer)

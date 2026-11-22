@@ -496,6 +496,14 @@ main h3 { margin:16px 0 8px; font-size:16px; }
 .fav:hover { color:#f2c75c; }
 .src-tag.warn { border-color:#a98a2a; color:#e6c35c; }
 .admin-sec { margin:0 0 16px; }
+/* Droits confiés : cases à cocher sur une ligne, qui passent à la ligne sur mobile. */
+.chk, .form label.chk { display:inline-flex; flex-direction:row; align-items:center; gap:4px; margin:2px 12px 2px 0;
+  white-space:nowrap; cursor:pointer; font-size:14px; color:var(--text); }
+.form .chk input { padding:0; }
+.chk input { accent-color:var(--accent); width:16px; height:16px; }
+form.deleg { display:inline-flex; flex-wrap:wrap; align-items:center; gap:4px 0; margin-right:6px; }
+form.deleg .act { margin-left:4px; }
+form.deleg + form.inline { display:inline-block; margin:4px 0 4px 4px; }
 .sync-log { background:var(--panel2); border:1px solid var(--line); border-radius:8px; padding:6px 12px; margin:8px 0; }
 .sync-log p { margin:4px 0; } .sync-log ul { margin:4px 0; padding-left:18px; }
 .ev { margin:0 0 14px; padding:12px 16px 14px; }

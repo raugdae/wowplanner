@@ -141,6 +141,9 @@ métiers et recettes vus en jeu, et l'empreinte de ton jeton (pas le jeton lui-m
 <td>Le client WoW Planner, que tu installes et relies au site avec ton jeton</td>
 <td>Remplir la calculatrice avec ton stock, compléter tes métiers et recettes ; ton inventaire et ton argent ne
 sont visibles que par toi</td></tr>
+<tr><td>Les <b>droits d'administration</b> qu'un admin du serveur t'a confiés sur le site, qui te les a confiés et
+quand</td><td>Un admin du serveur (page Administration)</td>
+<td>Te donner accès aux outils correspondants ; visible des admins du serveur seulement</td></tr>
 <tr><td>Ton <b>BattleTag</b>, seulement si tu l'ajoutes</td><td>Toi (commande <code>/ajouter battletag</code>)</td>
 <td>Que les membres puissent t'ajouter en ami ; il n'est visible que sur le Discord, <b>jamais sur le site</b></td></tr>
 </tbody></table></div>

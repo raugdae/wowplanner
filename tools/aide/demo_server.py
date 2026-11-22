@@ -18,6 +18,7 @@ from wowplanner.orders import orderable  # noqa: E402
 from wowplanner.recipes import crafted_by_map  # noqa: E402
 from wowplanner.web import WebSite  # noqa: E402
 from wowplanner.webauth import SESSION_COOKIE, SESSION_SECONDS, DiscordOAuth, sign  # noqa: E402
+from wowplanner.webmember import ADMIN_RIGHTS, RIGHTS  # noqa: E402
 
 DB = Path(sys.argv[1])
 PORT = int(sys.argv[2]) if len(sys.argv) > 2 else 8766
@@ -35,6 +36,13 @@ class Backend:
 
     async def is_admin(self, user_id):
         return user_id == ME
+
+    async def rights(self, user_id):
+        return ADMIN_RIGHTS if user_id == ME else self.db.delegation_rights(GUILD, user_id)
+
+    async def set_delegation(self, user, member_id, rights):
+        self.db.set_delegation(GUILD, member_id, {r for r in rights if r in RIGHTS}, user.id, int(time.time()))
+        return f"✅ Droits de **{NAMES.get(member_id, member_id)}** enregistrés."
 
     def last_sync(self):
         return time.time() - 5 * 3600
@@ -84,9 +92,10 @@ async def main():
 
     async def demo_login(request):
         now = int(time.time())
+        who = int(request.query.get("as", ME))  # ?as=2 : voir le site en tant qu'un autre membre de la démo
         resp = web.Response(status=302, headers={"Location": request.query.get("next", "/")})
-        resp.set_cookie(SESSION_COOKIE, sign({"id": ME, "name": "Elwyn", "chk": now, "exp": now + SESSION_SECONDS}, secret),
-                        path="/", httponly=True)
+        resp.set_cookie(SESSION_COOKIE, sign({"id": who, "name": NAMES.get(who, "Membre"), "chk": now,
+                                              "exp": now + SESSION_SECONDS}, secret), path="/", httponly=True)
         return resp
 
     app.router.add_get("/auth/demo", demo_login)

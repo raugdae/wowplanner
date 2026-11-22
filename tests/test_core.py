@@ -1578,7 +1578,7 @@ def test_member_pages_events_and_characters(tmp_path):
     from wowplanner.db import Database, Event
     from wowplanner.web import WebSite
     from wowplanner.webauth import SESSION_COOKIE, DiscordOAuth, sign
-    from wowplanner.webmember import ActionError
+    from wowplanner.webmember import ADMIN_RIGHTS, ActionError
 
     db = Database(tmp_path / "t.db")
     me, organizer = 123, 456
@@ -1589,6 +1589,8 @@ def test_member_pages_events_and_characters(tmp_path):
                           {"tank": 1, "heal": 1, "dps": 3}, description="RDV <b>devant</b>", creator_name="Orga"))
     db.upsert_signup(111, organizer, "tank", "PseudoOrga", None)
     db.set_favorite(me, hollie.id)
+    db.touch_member(42, organizer)
+    db.set_delegation(42, organizer, {"sorties"}, me, int(time.time()))
     calls = []
 
     class Backend:
@@ -1598,6 +1600,13 @@ def test_member_pages_events_and_characters(tmp_path):
 
         async def is_admin(self, user_id):
             return user_id == me
+
+        async def rights(self, user_id):
+            return ADMIN_RIGHTS if user_id == me else db.delegation_rights(42, user_id)
+
+        async def set_delegation(self, user, member_id, rights):
+            calls.append(("delegate", user.id, member_id, rights))
+            return "✅ Droits confiés."
 
         def last_sync(self):
             return None
@@ -1692,9 +1701,20 @@ def test_member_pages_events_and_characters(tmp_path):
             got["admin"] = await get("/admin")
             await post("/admin/sync", {"csrf": token})
             got["admin_after_sync"] = await get("/admin")
+            await post("/admin/delegations", [("csrf", token), ("membre", str(organizer)), ("droits", "persos"),
+                                              ("droits", "synchro")])
+            got["after_delegate"] = await get("/admin")
         async with aiohttp.ClientSession(
             cookie_jar=aiohttp.CookieJar(unsafe=True),
             cookies={SESSION_COOKIE: sign({"id": organizer, "name": "Orga", "chk": now, "exp": now + 3600}, secret)},
+        ) as s:
+            async with s.get(base + "/admin") as resp:
+                got["admin_delegate"] = resp.status, await resp.text()
+            async with s.get(base + "/sorties") as resp:
+                got["delegate_menu"] = await resp.text()
+        async with aiohttp.ClientSession(
+            cookie_jar=aiohttp.CookieJar(unsafe=True),
+            cookies={SESSION_COOKIE: sign({"id": 789, "name": "Simple", "chk": now, "exp": now + 3600}, secret)},
         ) as s:
             async with s.get(base + "/admin") as resp:
                 got["admin_refused"] = resp.status, await resp.text()
@@ -1738,6 +1758,15 @@ def test_member_pages_events_and_characters(tmp_path):
     assert status == 200 and "Persos des membres" in text and "Membre123" in text and "Hollie Tétine" in text
     assert ("sync", me) in calls and "Synchro complète lancée" in got["admin_after_sync"][1]
     assert got["admin_refused"][0] == 403 and "Gérer le serveur" in got["admin_refused"][1]
+    # Droits confiés : section réservée aux admins, avec la délégation existante et ses cases cochées.
+    assert 'id="delegations"' in text and f"<b>Membre{organizer}</b>" in text and "par Membre123" in text
+    assert 'name="droits" value="sorties" checked' in text and 'name="droits" value="persos">' in text
+    assert ("delegate", me, organizer, {"persos", "synchro"}) in calls and "Droits confiés." in got["after_delegate"][1]
+    # Le délégué voit la page avec ses seules sections, et le lien dans son menu.
+    status, text = got["admin_delegate"]
+    assert status == 200 and "<b>Sorties</b>" in text and "annuler n'importe quelle sortie" in text
+    assert "Persos des membres" not in text and 'id="delegations"' not in text and "/admin/sync" not in text
+    assert 'href="/admin"' in got["delegate_menu"]
 
 
 def test_web_bridge_rules(tmp_path):
@@ -1746,11 +1775,13 @@ def test_web_bridge_rules(tmp_path):
     import time
     from types import SimpleNamespace
 
+    import discord
+
     from wowplanner.armory import ArmorySheet
     from wowplanner.cogs.webbridge import WebBridge
     from wowplanner.db import SOURCE_WEB, Database, Event
     from wowplanner.instances import Instance
-    from wowplanner.webmember import ActionError, WebUser
+    from wowplanner.webmember import ADMIN_RIGHTS, ActionError, WebUser
 
     db = Database(tmp_path / "t.db")
     profile = {"name": "Grommash", "surname": "Hurlenfer", "level": 34, "character_class": {"id": 1}, "race": {"id": 2}}
@@ -1790,9 +1821,14 @@ def test_web_bridge_rules(tmp_path):
             self.display_name = f"M{user_id}"
             self.guild_permissions = SimpleNamespace(manage_guild=user_id == 1)  # Raug gère le serveur
 
+    gone = set()  # membres partis du serveur
+
     class FakeGuild:
         def get_member(self, user_id):
-            return FakeMember(user_id)
+            return None if user_id in gone else FakeMember(user_id)
+
+        async def fetch_member(self, user_id):
+            raise discord.NotFound(SimpleNamespace(status=404, reason="Not Found"), "Unknown Member")
 
     dms = []
 
@@ -1873,6 +1909,38 @@ def test_web_bridge_rules(tmp_path):
             await bridge.set_favorite(raug, theirs.id)  # le perso préféré reste le choix du joueur
         assert "supprimé" in await bridge.delete_character(raug, theirs.id)
         assert db.get_characters(2) == [] and "a supprimé ton perso" in dms[-1][1]
+
+        # Droits confiés sur le site : Raug (admin) confie les persos et les sorties à Autre, prévenu en MP.
+        db.touch_member(42, 3)
+        thrall = db.add_character(3, "Thrall", "chaman", "orc", None)
+        db.create_event(Event(11, 42, 7, 5, "Deadmines", "dungeon", None, int(time.time()) + 3600,
+                              {"tank": 1, "heal": 1, "dps": 3}))
+        assert await bridge.rights(2) == frozenset() and await bridge.rights(1) == ADMIN_RIGHTS
+        with pytest.raises(ActionError, match="Gérer le serveur"):
+            await bridge.set_delegation(other, 3, {"persos"})
+        with pytest.raises(ActionError, match="déjà tous les droits"):
+            await bridge.set_delegation(raug, 1, {"persos"})
+        text = await bridge.set_delegation(raug, 2, {"persos", "sorties", "bidon"})
+        assert "**M2**" in text and db.delegation_rights(42, 2) == {"persos", "sorties"}
+        assert dms[-1][0] == 2 and "t'a confié des droits" in dms[-1][1] and "Persos des membres, Sorties" in dms[-1][1]
+        assert await bridge.rights(2) == {"persos", "sorties"} and await bridge.can_manage(2, db.get_event(11))
+        assert "plus de rôle préféré" in await bridge.set_role(other, thrall.id, None)
+        with pytest.raises(ActionError, match="« Synchro »"):
+            await bridge.start_sync(other)
+        with pytest.raises(ActionError, match="Gérer le serveur"):
+            await bridge.set_delegation(other, 3, {"persos"})  # un délégué ne délègue pas
+        assert "Rien de changé" in await bridge.set_delegation(raug, 2, {"sorties", "persos"})
+        assert "n'a plus de droits" in await bridge.set_delegation(raug, 2, set())
+        assert await bridge.rights(2) == frozenset() and "retiré tes droits" in dms[-1][1]
+        with pytest.raises(ActionError, match="pas à toi"):
+            await bridge.delete_character(other, thrall.id)
+        # Parti du serveur : on ne lui confie rien, et ses droits disparaissent à la vérification suivante.
+        await bridge.set_delegation(raug, 3, {"synchro"})
+        gone.add(3)
+        bridge._admins.clear()
+        assert await bridge.rights(3) == frozenset() and db.delegations(42) == []
+        with pytest.raises(ActionError, match="n'est plus sur le serveur"):
+            await bridge.set_delegation(raug, 3, {"synchro"})
 
         # Fiche de donjon → nom dans la liste des instances.
         assert bridge.match_instance("The Deadmines", "Les Mortemines") == "Deadmines"
@@ -2166,6 +2234,20 @@ def test_auction_cog_refresh(tmp_path):
     assert db.ah_listing()[0][0]["icon"].startswith("https://")
     assert asyncio.run(cog.refresh()) == "pas de nouvelles données"
     assert calls["search"] == 1 and calls["item"] == 1  # catalogue lu une fois, objet inconnu demandé une fois
+
+    # Objet en vente que Blizzard ne connaît pas (404) : demandé une seule fois, sans bruit dans les logs.
+    from wowplanner.armory import ArmoryError
+    from wowplanner.auctions import PricePoint
+
+    async def item_404(item_id):
+        calls["item"] += 1
+        raise ArmoryError(404, f"/data/wow/item/{item_id}")
+
+    FakeArmory.client.item = item_404
+    db.store_ah_snapshot(1_800_010_000, {13: PricePoint(10, 10, 1, 1)})
+    asyncio.run(cog._unknown_items(FakeArmory.client))
+    asyncio.run(cog._unknown_items(FakeArmory.client))
+    assert calls["item"] == 2 and cog._not_found == {13}
     db.close()
 
 
