@@ -657,6 +657,7 @@ que l'armurerie ne montre pas apparaissent quand même.</li>
     ["<code>/wp</code>", "Date des prix chargés, nombre d'objets, dernière ouverture de la banque."],
     ["<code>/wp maj</code>", "Recharge l'interface pour prendre les derniers prix téléchargés par le client."],
     ["<code>/wp off</code>, <code>/wp on</code>", "Masque ou réaffiche les prix dans les infobulles."],
+    ["<code>/wp sacs</code>", "Ce que l'addon lit dans chacun de tes sacs (pour vérifier qu'il voit bien tout)."],
 ])}
 <p>Les prix sont chargés à la connexion : le jeu ne laisse pas un addon relire un fichier en cours de partie.
 Quand le client annonce de nouveaux prix, <code>/wp maj</code> les prend (ça recharge l'interface, comme

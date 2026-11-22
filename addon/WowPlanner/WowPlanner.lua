@@ -3,7 +3,8 @@
 -- /reload, puis envoyé au site par le client).
 
 local ADDON = "WowPlanner"
-local NUM_BAGS = NUM_BAG_SLOTS or 4
+-- Sacs portés : le sac à dos (0), les sacs équipés, et l'emplacement « composants » des clients qui en ont un.
+local NUM_BAGS = NUM_TOTAL_EQUIPPED_BAG_SLOTS or ((NUM_BAG_SLOTS or 4) + (NUM_REAGENTBAG_SLOTS or 0))
 local NUM_BANK_BAGS = NUM_BANKBAGSLOTS or 6
 local BANK = BANK_CONTAINER or -1
 local COLOR = "|cff9d8cff"
@@ -55,19 +56,27 @@ end
 
 -- ------------------------------------------------------------------ relevés
 
-local function scanInventory()
+local function carriedBags()
   local bags = {}
   for bag = 0, NUM_BAGS do bags[#bags + 1] = bag end
-  me.bags = scanBags(bags)
+  return bags
+end
+
+local function bankBags()
+  local bags = { BANK }
+  for bag = NUM_BAGS + 1, NUM_BAGS + NUM_BANK_BAGS do bags[#bags + 1] = bag end
+  return bags
+end
+
+local function scanInventory()
+  me.bags = scanBags(carriedBags())
   me.money = GetMoney()
   me.level = UnitLevel("player")
   me.updated = time()
 end
 
 local function scanBank()
-  local bags = { BANK }
-  for bag = NUM_BAGS + 1, NUM_BAGS + NUM_BANK_BAGS do bags[#bags + 1] = bag end
-  me.bank = scanBags(bags)
+  me.bank = scanBags(bankBags())
   me.bankAt = time()
 end
 
@@ -177,6 +186,22 @@ SlashCmdList.WOWPLANNER = function(text)
   local command = strlower(strtrim(text or ""))
   if command == "maj" or command == "reload" then
     ReloadUI()
+  elseif command == "sacs" then
+    -- Diagnostic : ce que l'addon lit dans chaque conteneur (y compris un cran au-delà des sacs portés).
+    say("sacs portés : conteneurs 0 à " .. NUM_BAGS .. " (NUM_BAG_SLOTS=" .. tostring(NUM_BAG_SLOTS)
+      .. ", NUM_REAGENTBAG_SLOTS=" .. tostring(NUM_REAGENTBAG_SLOTS) .. ").")
+    for bag = 0, NUM_BAGS + 1 do
+      local n, objects = slots(bag) or 0, 0
+      for slot = 1, n do
+        if slotItem(bag, slot) then objects = objects + 1 end
+      end
+      say("conteneur " .. bag .. " : " .. n .. " emplacements, " .. objects .. " occupés"
+        .. (bag > NUM_BAGS and " (pas lu : au-delà des sacs portés)" or ""))
+    end
+    scanInventory()
+    local kinds = 0
+    for _ in pairs(me.bags) do kinds = kinds + 1 end
+    say(kinds .. " objets différents notés dans tes sacs (envoyés au prochain /reload).")
   elseif command == "off" or command == "on" then
     db.settings.tooltip = command == "on"
     say(db.settings.tooltip and "prix affichés dans les infobulles." or "prix masqués dans les infobulles.")
@@ -188,7 +213,7 @@ SlashCmdList.WOWPLANNER = function(text)
     else
       say("pas encore de prix : lance le client WoW Planner, puis /wp maj.")
     end
-    say("/wp maj : recharger l'interface pour prendre les derniers prix · /wp off, /wp on : prix dans les infobulles.")
+    say("/wp maj : recharger l'interface pour prendre les derniers prix · /wp off, /wp on : prix dans les infobulles · /wp sacs : ce que l'addon voit dans tes sacs.")
     say("Banque " .. (me.bankAt and ("vue le " .. date("%d/%m à %H:%M", me.bankAt)) or "jamais ouverte : ouvre-la une fois") .. ".")
   end
 end

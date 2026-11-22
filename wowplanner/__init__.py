@@ -1,3 +1,3 @@
 """WoW Planner — bot Discord d'organisation de sorties donjon/raid pour WoW Forever."""
 
-__version__ = "1.26.2"
+__version__ = "1.26.3"

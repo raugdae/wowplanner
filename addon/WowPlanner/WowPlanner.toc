@@ -2,7 +2,7 @@
 ## Title: WoW Planner
 ## Notes: Prix de l'hôtel des ventes dans les infobulles, inventaire et recettes pour le site WoW Planner.
 ## Author: Raugdae
-## Version: 1.0.0
+## Version: 1.0.1
 ## SavedVariables: WowPlannerDB
 
 Data.lua

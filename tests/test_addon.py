@@ -117,10 +117,10 @@ def lua_to_python(obj):
     return obj
 
 
-def run_addon(prices: dict | None):
+def run_addon(prices: dict | None, extra: str = ""):
     lupa = pytest.importorskip("lupa")
     lua = lupa.LuaRuntime(unpack_returned_tuples=True)
-    lua.execute(WOW_API)
+    lua.execute(WOW_API + extra)
     data = client.lua_prices(prices) if prices else (ADDON / "Data.lua").read_text(encoding="utf-8")
     lua.execute(data)
     lua.execute((ADDON / "WowPlanner.lua").read_text(encoding="utf-8"))
@@ -162,6 +162,26 @@ def test_addon_lua_scans_and_tooltips():
     assert game.professions == {"couture": 215, "secourisme": 150}  # les armes ne sont pas des métiers
     assert {r.item for r in game.recipes["couture"]} == {2996, 2575}
     assert game.recipes["enchantement"][0].spell == 7457
+
+
+def test_addon_reagent_bag():
+    """Client avec un emplacement « composants » (conteneur 5) : lu avec les sacs, banque décalée d'un cran."""
+    lua = run_addon(None, """
+NUM_REAGENTBAG_SLOTS = 1
+BAGS[5] = { [1] = { 2447, 60 } }   -- sac de composants (herbes)
+BAGS[6] = { [3] = { 14047, 12 } }  -- premier sac de banque
+""")
+    g = lua.globals()
+    g.fire("ADDON_LOADED", "WowPlanner")
+    g.fire("PLAYER_LOGIN")
+    g.fire("BANKFRAME_OPENED")
+    me = g.WowPlannerDB.chars["Elwyn - Forever"]
+    assert me.bags[2447] == 60 and me.bags[14047] is None
+    assert me.bank[14047] == 12 and me.bank[4306] == 40 and me.bank[2447] is None
+    g.SlashCmdList.WOWPLANNER("sacs")
+    shown = " | ".join(g.printed.values())
+    assert "conteneurs 0 à 5" in shown and "conteneur 5 : 4 emplacements, 1 occupés" in shown
+    assert "conteneur 6 : 4 emplacements, 1 occupés (pas lu" in shown
 
 
 def test_addon_without_prices():
