@@ -294,8 +294,9 @@ class="calc-mine"> Seulement ce que j'ai</label>{skill_box}<button class="act pr
         if inventory:
             ids = set(inventory) | {r.crafted_item_id for r in recipes}
             ids |= {i for r in recipes for _, _, i in r.reagents or [] if isinstance(i, int)}
-            plan = craft_plan(inventory, recipes, self.site.db.ah_items_map(ids))
-            result = self._plan_html(plan, bool(recipes))
+            items = self.site.db.ah_items_map(ids)
+            plan = craft_plan(inventory, recipes, items)
+            result = self._plan_html(plan, bool(recipes), inventory, items)
 
         no_craft = "" if recipes else (
             '<p class="muted">Ce perso n\'a pas de métier de fabrication : la calculatrice donne la valeur du stock '
@@ -315,7 +316,50 @@ recettes (composants vendus par les marchands achetés au besoin), aux prix de {
 {stock_form}"""
         return self._render(request, title, "calculatrice", body, LIST_SCRIPT + CALC_SCRIPT)
 
-    def _plan_html(self, plan: CraftPlan, can_craft: bool) -> str:
+    @staticmethod
+    def _sell_table(stock: dict[int, int], items: dict[int, Any]) -> str:
+        """Ce qu'il reste à vendre brut, objet par objet : où (HdV ou marchand), à combien l'unité des deux côtés,
+        et le total ; les objets les plus rentables d'abord."""
+        rows, totals = [], {"hdv": 0, "marchand": 0}
+        for item_id, qty in stock.items():
+            row = items.get(item_id)
+            channel = best_channel(row)
+            if channel is None or qty <= 0:
+                continue
+            net = int(row["min_price"] * (1 - AH_CUT)) if row["min_price"] else 0
+            vendor = row["sell_price"] or 0
+            total = raw_unit(row) * qty
+            totals[channel] += total
+            rows.append((total, row, qty, channel, net, vendor))
+        if not rows:
+            return ""
+        rows.sort(key=lambda r: (-r[0], normalize(r[1]["name"])))
+
+        def unit(value: int, best: bool) -> str:
+            if not value:
+                return '<span class="muted">—</span>'
+            return f'<b>{esc(money_text(value))}</b>' if best else f'<span class="muted">{esc(money_text(value))}</span>'
+
+        lines = "".join(
+            f'<tr><td><a class="ah-name" href="/hdv/objet/{row["id"]}">{item_icon(row)}<span>{item_name(row)}</span></a>'
+            f'</td><td class="num">{number(qty)}</td><td>{channel_tag(channel)}</td>'
+            f'<td class="num">{unit(net, channel == "hdv")}</td><td class="num">{unit(vendor, channel == "marchand")}</td>'
+            f'<td class="num">{esc(money_text(total))}</td></tr>'
+            for total, row, qty, channel, net, vendor in rows
+        )
+        summary = " · ".join(
+            f"{channel_tag(ch)} {esc(money_text(v))}" for ch, v in totals.items() if v
+        )
+        return (
+            f'<p class="sell-sum">{summary}</p>'
+            '<div class="table-wrap"><table class="ah-table sell"><thead><tr><th>Objet</th><th class="num">Quantité</th>'
+            '<th>Vendre</th>'
+            f'<th class="num" title="Prix le plus bas actuel, commission de {AH_CUT * 100:.0f} % déduite">HdV, l\'unité</th>'
+            '<th class="num" title="Ce que le marchand en donne">Marchand, l\'unité</th>'
+            f'<th class="num">Total</th></tr></thead><tbody>{lines}</tbody></table></div>'
+        )
+
+    def _plan_html(self, plan: CraftPlan, can_craft: bool, inventory: dict[int, int], items: dict[int, Any]) -> str:
         def item_label(step: CraftStep) -> str:
             product = step.product
             name = item_name(product) if product is not None else esc(step.name)
@@ -356,11 +400,15 @@ recettes (composants vendus par les marchands achetés au besoin), aux prix de {
         parts = [f'<section class="card admin-sec calc-result"><h2>Résultat</h2>{facts}{verdict}']
         if plan.steps:
             parts.append("<h3>Plan conseillé</h3>" + steps_table(plan.steps, "Fabriquer"))
-            if plan.leftovers:
-                parts.append(
-                    f'<p class="muted">Puis vendre brut le reste du stock, à l’HdV ou au marchand selon l’objet : '
-                    f"{esc(money_text(plan.leftover_value))}.</p>"
-                )
+        # Vente brute : le reste après le plan, ou tout le stock s'il n'y a rien à fabriquer.
+        sell = self._sell_table(plan.leftovers if plan.steps else inventory, items)
+        if sell:
+            title = "Puis vendre le reste du stock" if plan.steps else "Vendre le stock"
+            parts.append(
+                f"<h3>{title} : où ?</h3><p class=\"muted\">Pour chaque objet, là où il rapporte le plus : l'HdV (au "
+                f"prix le plus bas actuel, commission de {AH_CUT * 100:.0f} % déduite) ou le marchand (sans risque ni "
+                "attente). Le prix en gras est celui retenu.</p>" + sell
+            )
         if plan.options:
             parts.append(
                 "<h3>Chaque recette seule</h3><p class=\"muted\">Avec tout ton stock pour elle seule ; une même "

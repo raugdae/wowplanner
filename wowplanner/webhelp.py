@@ -567,7 +567,8 @@ tu peux récolter à ton niveau, de la plus chère à la moins chère.</li>
     "recherche, ou filtre par catégorie). La valeur se calcule en direct.",
     f"Clique sur {ui('🧮 Calculer')}.",
     "En haut apparaît le <b>Résultat</b> : combien rapporte la vente brute, combien rapporte le plan conseillé, et "
-    "quelles recettes fabriquer dans quel ordre.",
+    "quelles recettes fabriquer dans quel ordre, puis, objet par objet, où vendre le reste : <b>HdV</b> ou "
+    "<b>marchand</b>, avec le prix à l'unité des deux côtés.",
 )}
 {shot("calc-stock", "Le tableau du stock.", [
     ("cat", "Filtrer par catégorie."),

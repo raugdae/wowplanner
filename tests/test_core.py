@@ -2493,6 +2493,8 @@ def test_profit_page(tmp_path):
                 got["calc_empty"] = resp.status, await resp.text()
             async with s.get(f"http://127.0.0.1:{port}/calculatrice?perso={hollie.id}&q2447=10") as resp:
                 got["calc"] = resp.status, await resp.text()
+            async with s.get(f"http://127.0.0.1:{port}/calculatrice?perso={hollie.id}&q3356=2&q3371=5") as resp:
+                got["calc_sell"] = resp.status, await resp.text()
         await site.stop()
 
     asyncio.run(scenario())
@@ -2528,5 +2530,15 @@ def test_profit_page(tmp_path):
     # Groupes repliables et filtre par catégorie.
     assert '<tr class="grp" data-group="0">' in text and 'aria-expanded="true"><span class="arrow">▾</span> Herboristerie : herbes' in text
     assert '<option value="0">Herboristerie : herbes (1)</option>' in text
+    # Rien à fabriquer : où vendre chaque objet. Sang-royal à l'HdV (900 → 855 pc nets, 2 × = 17 pa 10 pc) plutôt
+    # qu'au marchand (30 pc) ; fiole sans prix à l'HdV : marchand (1 pc).
+    status, sold = got["calc_sell"]
+    assert status == 200 and "Vendre le stock : où ?" in sold and "Puis vendre" not in sold
+    sell = sold[sold.index('<table class="ah-table sell">'):]
+    sell = sell[:sell.index("</table>")]
+    assert sell.index("Sang-royal") < sell.index("Fiole vide")  # le plus rentable d'abord
+    assert '<span class="chan hdv">HdV</span></td><td class="num"><b>8 pa 55 pc</b></td>' in sell
+    assert '<span class="chan marchand">Marchand</span></td><td class="num"><span class="muted">—</span></td>' in sell
+    assert '<td class="num">17 pa 10 pc</td>' in sell
     # Résultat : où l'argent est gagné ou dépensé (potions vendues à l'HdV, fiole achetée au marchand).
     assert '+ 95 pa <span class="chan hdv">HdV</span>' in text and '− 2 pa <span class="chan marchand">Marchand</span>' in text
