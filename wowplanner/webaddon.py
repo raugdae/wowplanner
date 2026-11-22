@@ -21,6 +21,8 @@ from typing import TYPE_CHECKING, Any
 from aiohttp import web
 
 from .addon import PayloadError, hash_token, match_recipes, new_token, parse_inventory
+from .db import Character
+from .recipes import normalize
 from .webauth import MEMBER_RECHECK_SECONDS
 from .weblegal import REPO
 from .webui import COPY_SCRIPT, _VIEWER, esc
@@ -46,6 +48,17 @@ def addon_zip() -> bytes | None:
             if path.is_file():
                 archive.write(path, Path("WowPlanner") / path.relative_to(ADDON_DIR))
     return buffer.getvalue()
+
+
+def find_character(game_name: str, characters: list[Character]) -> Character | None:
+    """Perso du site correspondant au nom vu en jeu. Sur Forever, « Hollie Tétine » s'appelle « Hollie » pour le jeu :
+    nom exact, sinon premier mot du nom (s'il ne désigne qu'un seul des persos du joueur)."""
+    wanted = normalize(game_name.strip())
+    exact = [c for c in characters if normalize(c.name.strip()) == wanted]
+    if exact:
+        return exact[0]
+    first = [c for c in characters if c.name.split() and normalize(c.name.split()[0]) == wanted]
+    return first[0] if len(first) == 1 else None
 
 
 class AddonPages:
@@ -249,10 +262,10 @@ l'envoie au site juste après.</p>
         except ValueError:
             return self._error(400, "JSON illisible.")
         db = self.site.db
-        mine = {c.name.casefold(): c for c in db.get_characters(owner)}
+        characters = db.get_characters(owner)
         updated, unknown, unmatched = [], [], 0
         for game in received:
-            character = mine.get(game.name.casefold())
+            character = find_character(game.name, characters)
             if character is None:
                 unknown.append(game.name)
                 continue

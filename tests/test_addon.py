@@ -242,6 +242,18 @@ def test_addon_payload_parsing():
     assert ids == {1, 2} and missing == 1
 
 
+def test_find_character_by_game_name():
+    from types import SimpleNamespace
+    from wowplanner.webaddon import find_character
+
+    hollie, holly2, grom = (SimpleNamespace(name=n) for n in ("Hollie Tétine", "Hollie", "Grom Hurlenfer"))
+    assert find_character("Hollie", [hollie, grom]) is hollie  # le jeu ne donne que le premier mot
+    assert find_character("hollie tetine", [hollie]) is hollie
+    assert find_character("Hollie", [hollie, holly2]) is holly2  # le nom exact passe avant
+    twins = [hollie, SimpleNamespace(name="Hollie Autre")]
+    assert find_character("Hollie", twins) is None and find_character("Bob", [grom]) is None
+
+
 def test_addon_api(tmp_path):
     aiohttp = pytest.importorskip("aiohttp")
     from wowplanner.db import Database
