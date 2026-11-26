@@ -40,6 +40,8 @@ C_Container = {
     if x then return { itemID = x[1], stackCount = x[2], hyperlink = "|Hitem:" .. x[1] .. ":0|h" } end
   end,
 }
+VENDOR = { [2589] = 1300, [4306] = 300 }  -- prix marchand d'un exemplaire (11e valeur de GetItemInfo)
+function GetItemInfo(id) return "objet", nil, nil, nil, nil, nil, nil, nil, nil, nil, VENDOR[id] end
 function GetMoney() return 123456 end
 function UnitLevel() return 42 end
 function UnitName() return "Elwyn" end
@@ -138,12 +140,18 @@ def test_addon_lua_scans_and_tooltips():
     fire("CRAFT_SHOW")
     g = lua.globals()
 
-    # Infobulles : prix unitaire, médian, pile survolée dans un sac, ventes ; rien pour un objet absent des prix.
+    # Infobulles : prix unitaire, pile survolée dans un sac, prix marchand à l'unité, bénéfice ou perte à l'HdV
+    # (au plus bas, moins 5 %) par rapport au marchand, ventes ; pas de prix médian ; rien pour un objet sans prix.
     lines = list(g.hover("|Hitem:2589:0|h", g.button("ContainerFrame1Item2", 0, 1)).values())
-    assert lines[0].endswith("= 1200c") and "médian" in lines[1] and lines[2].endswith("= 24000c")
-    assert lines[3].endswith("~340 / jour")
+    assert "l'unité" in lines[0] and lines[0].endswith("= 1200c") and lines[1].endswith("= 24000c")
+    assert "Marchand (l'unité)" in lines[2] and lines[2].endswith("= 1300c")
+    assert "Perte à l'HdV (les 20)" in lines[3] and lines[3].endswith("= -3200c")  # 22800 net - 26000 marchand
+    assert lines[4].endswith("~340 / jour") and not any("médian" in line for line in lines)
     lines = list(g.hover("|Hitem:4306:0|h", g.button("BankFrameItem1", -1, 1)).values())
-    assert len(lines) == 2 and lines[1].endswith("= 36000c")  # médian = plus bas : pas répété ; pile de 40
+    assert lines[1].endswith("= 36000c")  # pile de 40
+    assert "Bénéfice à l'HdV (les 40)" in lines[3] and lines[3].endswith("= +22200c")  # 34200 net - 12000
+    lines = list(g.hover("|Hitem:4306:0|h", None).values())  # hors d'un sac : un exemplaire
+    assert len(lines) == 3 and lines[2].endswith("= +555c")  # 855 net - 300
     assert len(g.hover("|Hitem:9999:0|h", None)) == 0
     g.SlashCmdList.WOWPLANNER("off")
     assert len(g.hover("|Hitem:2589:0|h", None)) == 0
@@ -334,7 +342,27 @@ def test_addon_api(tmp_path):
                 got["bad"] = r.status
             async with s.get(base + "/addon/WowPlanner.zip") as r:
                 got["zip"] = (r.status, (await r.read())[:2])
+            async with s.get(base + "/api/addon/version") as r:
+                got["version_anon"] = r.status
+            async with s.get(base + "/api/addon/version", headers=auth) as r:
+                got["version"] = await r.json()
+
+        # Le client met à jour l'addon du jeu (version plus ancienne) depuis le site, sans toucher aux prix.
+        lines = []
+        sync = client.Sync(client.Settings(server=base, token=token), lines.append)
+        api = client.Api(base, token)
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, sync.update_addon, api, game)
+        got["update"] = list(lines)
+        await loop.run_in_executor(None, sync.update_addon, api, game)  # déjà à jour : rien
+        got["update2"] = lines[len(got["update"]):]
         await site.stop()
+
+    game = tmp_path / "game"
+    old = game / "Interface" / "AddOns" / "WowPlanner"
+    old.mkdir(parents=True)
+    (old / "WowPlanner.toc").write_text("## Interface: 16001\n## Version: 0.9\nWowPlanner.lua\n", encoding="utf-8")
+    (old / "Data.lua").write_text("WowPlannerData = { ts = 5 }", encoding="utf-8")
 
     asyncio.run(scenario())
     assert got["anon"] == 401 and got["me"] == {"characters": ["Elwyn"]}
@@ -350,4 +378,39 @@ def test_addon_api(tmp_path):
     db.replace_character_recipes(cid, {"couture": []})  # synchro armurerie : la recette vue en jeu reste
     assert db.character_recipe_ids(cid) == {9}
     assert got["zip"] == (200, b"PK")
+    current = client.addon_version(ADDON)
+    assert got["version_anon"] == 401 and got["version"]["version"] == current and len(got["version"]["sha256"]) == 64
+    assert got["update"] == [f"Addon mis à jour : 0.9 → {current} (en jeu : /reload pour le prendre)."]
+    assert got["update2"] == []
+    assert client.addon_version(old) == current and (old / "WowPlanner.lua").exists() and (old / "logo.tga").exists()
+    assert (old / "Data.lua").read_text(encoding="utf-8") == "WowPlannerData = { ts = 5 }"  # prix gardés
     db.close()
+
+
+def test_client_addon_update_safety(tmp_path):
+    """L'addon reçu du site ne peut écrire que dans son dossier, et celui du client ne remplace pas un plus récent."""
+    import io
+    import zipfile
+
+    def archive(files):
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as z:
+            for name, data in files.items():
+                z.writestr(name, data)
+        return buffer.getvalue()
+
+    root = tmp_path / "game"
+    toc = "## Version: 9.0\n"
+    for bad in ("WowPlanner/../evil.lua", "WowPlanner/..\\evil.lua", "Autre/x.lua", "WowPlanner/sous/x.lua",
+                "/WowPlanner/x.lua", "WowPlanner/C:x.lua"):
+        with pytest.raises(ValueError):
+            client.install_addon_zip(root, archive({"WowPlanner/WowPlanner.toc": toc, bad: "x"}))
+    with pytest.raises(ValueError, match="sans fichier .toc"):
+        client.install_addon_zip(root, archive({"WowPlanner/WowPlanner.lua": "x"}))
+    assert not (tmp_path / "evil.lua").exists() and not (root / "Interface").exists()  # rien d'écrit
+
+    assert client.install_addon_zip(root, archive({"WowPlanner/WowPlanner.toc": toc, "WowPlanner/Data.lua": "x"}))
+    installed = root / "Interface" / "AddOns" / "WowPlanner"
+    assert client.addon_version(installed) == "9.0"
+    assert client.install_addon(root, ADDON) is False and client.addon_version(installed) == "9.0"  # pas de retour arrière
+    assert client.parse_version("1.0.10") > client.parse_version("1.0.9") > client.parse_version(None)

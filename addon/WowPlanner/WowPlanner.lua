@@ -8,7 +8,8 @@ local NUM_BAGS = NUM_TOTAL_EQUIPPED_BAG_SLOTS or ((NUM_BAG_SLOTS or 4) + (NUM_RE
 local NUM_BANK_BAGS = NUM_BANKBAGSLOTS or 6
 local BANK = BANK_CONTAINER or -1
 local COLOR = "|cff9d8cff"
-local VERSION = "1.0.2"
+local VERSION = "1.0.3"
+local AH_CUT = 0.05  -- commission de l'hôtel des ventes sur une vente (comme la calculatrice du site)
 local LOGO = "|TInterface\\AddOns\\WowPlanner\\logo:0|t"  -- logo à la taille du texte
 
 local db, me, bankOpen
@@ -128,13 +129,24 @@ local function priceLines(tooltip, id, count)
   if not db.settings.tooltip or not WowPlannerData or not WowPlannerData.items then return end
   local p = WowPlannerData.items[id]
   if not p then return end
-  local low, median, sold = p[1], p[2], p[3]
-  tooltip:AddDoubleLine(LOGO .. " " .. COLOR .. "HdV, plus bas|r", money(low), 1, 1, 1, 1, 1, 1)
-  if median and median ~= low then
-    tooltip:AddDoubleLine(COLOR .. "HdV, médian|r", money(median), 1, 1, 1, 1, 1, 1)
+  local low, sold = p[1], p[3]  -- p[2], le prix médian, n'est plus affiché
+  local n = (count and count > 1) and count or 1
+  tooltip:AddDoubleLine(LOGO .. " " .. COLOR .. "HdV, plus bas (l'unité)|r", money(low), 1, 1, 1, 1, 1, 1)
+  if n > 1 then
+    tooltip:AddDoubleLine(COLOR .. "HdV, les " .. n .. "|r", money(low * n), 1, 1, 1, 1, 1, 1)
   end
-  if count and count > 1 then
-    tooltip:AddDoubleLine(COLOR .. "HdV, les " .. count .. "|r", money(low * count), 1, 1, 1, 1, 1, 1)
+  -- Le jeu affiche le prix marchand de toute la pile : on donne celui d'un exemplaire, puis ce que rapporte l'HdV
+  -- au plus bas actuel (moins la commission de 5 %) par rapport au marchand.
+  local sell = select(11, GetItemInfo(id))  -- 0 : le marchand n'en veut pas ; nil : objet pas encore en cache
+  if sell and sell > 0 then
+    tooltip:AddDoubleLine(COLOR .. "Marchand (l'unité)|r", money(sell), 1, 1, 1, 1, 1, 1)
+    local diff = floor(low * n * (1 - AH_CUT)) - sell * n
+    local label = n > 1 and ("les " .. n) or "l'unité"
+    if diff >= 0 then
+      tooltip:AddDoubleLine(COLOR .. "Bénéfice à l'HdV (" .. label .. ")|r", "+" .. money(diff), 1, 1, 1, 0.3, 1, 0.3)
+    else
+      tooltip:AddDoubleLine(COLOR .. "Perte à l'HdV (" .. label .. ")|r", "-" .. money(-diff), 1, 1, 1, 1, 0.35, 0.35)
+    end
   end
   if sold and sold > 0 then
     tooltip:AddDoubleLine(COLOR .. "Ventes estimées|r", "~" .. sold .. " / jour", 1, 1, 1, 1, 1, 1)

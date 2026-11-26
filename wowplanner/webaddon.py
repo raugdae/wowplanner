@@ -3,15 +3,19 @@
 API (jeton dans l'en-tête « Authorization: Bearer wp_… ») :
 - GET  /api/addon/moi        : à qui appartient le jeton, ses persos (test de connexion du client) ;
 - GET  /api/addon/prix       : prix de l'HdV pour Data.lua (ETag : rien n'est renvoyé si rien n'a changé) ;
-- POST /api/addon/inventaire : ce que l'addon a vu en jeu (voir addon.parse_inventory).
+- POST /api/addon/inventaire : ce que l'addon a vu en jeu (voir addon.parse_inventory) ;
+- GET  /api/addon/version    : version de l'addon servi par le site, et l'empreinte SHA-256 de son .zip ;
+- GET  /api/addon/zip        : l'addon en .zip (le client le pose dans le jeu quand le site en a un plus récent).
 Voir addon.py pour le fonctionnement d'ensemble.
 """
 from __future__ import annotations
 
+import hashlib
 import hmac
 import io
 import json
 import logging
+import re
 import time
 import zipfile
 from datetime import datetime
@@ -36,6 +40,16 @@ log = logging.getLogger(__name__)
 # Dossier de l'addon (à la racine du dépôt ; copié dans l'image Docker).
 ADDON_DIR = Path(__file__).resolve().parent.parent / "addon" / "WowPlanner"
 CLIENT_URL = f"{REPO}/releases/latest"
+
+
+def addon_version() -> str | None:
+    """Version de l'addon (ligne « ## Version: » du .toc), None si absente."""
+    try:
+        text = (ADDON_DIR / "WowPlanner.toc").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    match = re.search(r"^## Version:\s*(\S+)", text, re.MULTILINE)
+    return match.group(1) if match else None
 
 
 def addon_zip() -> bytes | None:
@@ -75,6 +89,14 @@ class AddonPages:
         router.add_get("/api/addon/moi", self.api_me)
         router.add_get("/api/addon/prix", self.api_prices)
         router.add_post("/api/addon/inventaire", self.api_inventory)
+        router.add_get("/api/addon/version", self.api_version)
+        router.add_get("/api/addon/zip", self.api_zip)
+
+    def _addon(self) -> bytes | None:
+        """L'addon en .zip, construit une fois (il ne change qu'avec une nouvelle image du site)."""
+        if self._zip is None:
+            self._zip = addon_zip()
+        return self._zip
 
     # ============================================================ page
 
@@ -140,7 +162,8 @@ métiers et tes recettes envoyés au site pour la calculatrice.</p>
 <li>Télécharge le <a href="{CLIENT_URL}" target="_blank" rel="noopener">client WoW Planner</a> (Windows ou macOS) et
 lance-le.</li>
 <li>Dans le client, choisis le dossier du jeu (celui qui contient <code>Interface</code> et <code>WTF</code>) :
-le client y installe l'addon tout seul.</li>
+le client y installe l'addon tout seul, puis le met à jour quand le site en a une nouvelle version (en jeu :
+<code>/reload</code>).</li>
 <li>Colle ton jeton (ci-dessous) dans le client.</li>
 </ol>
 <p class="muted">Sans le client, tu peux poser l'addon à la main : <a href="/addon/WowPlanner.zip">WowPlanner.zip</a>, à
@@ -149,7 +172,7 @@ décompresser dans <code>Interface/AddOns</code>. Il n'aura alors pas les prix n
 <section class="card admin-sec"><h2>2. Ton jeton</h2>{key_block}<div class="actions">{buttons}</div></section>
 <section class="card admin-sec"><h2>3. En jeu</h2>
 <ul>
-<li>Survole un objet : prix le plus bas, prix médian et ventes estimées par jour à l'HdV.</li>
+<li>Survole un objet : prix le plus bas à l'HdV (à l'unité et pour la pile), prix marchand à l'unité, bénéfice ou perte en le vendant à l'HdV plutôt qu'au marchand (5 % de commission déduits) et ventes estimées par jour.</li>
 <li><code>/wp</code> : date des prix et état de l'addon. <code>/wp maj</code> : recharge l'interface pour prendre les
 derniers prix téléchargés par le client.</li>
 <li>Ouvre ta banque et chacune de tes fenêtres de métier une fois : l'addon les note pour le site.</li>
@@ -194,12 +217,11 @@ l'envoie au site juste après.</p>
         return response
 
     async def download(self, request: web.Request) -> web.Response:
-        if self._zip is None:
-            self._zip = addon_zip()
-        if not self._zip:
+        archive = self._addon()
+        if not archive:
             raise web.HTTPNotFound(text="Addon introuvable sur ce serveur.")
         return web.Response(
-            body=self._zip, content_type="application/zip",
+            body=archive, content_type="application/zip",
             headers={"Content-Disposition": 'attachment; filename="WowPlanner.zip"'},
         )
 
@@ -232,6 +254,24 @@ l'envoie au site juste après.</p>
             return owner
         characters = self.site.db.get_characters(owner)
         return web.json_response({"characters": [c.name for c in characters]})
+
+    async def api_version(self, request: web.Request) -> web.Response:
+        owner = await self._owner(request)
+        if isinstance(owner, web.Response):
+            return owner
+        archive, version = self._addon(), addon_version()
+        if not archive or not version:
+            return self._error(404, "Addon introuvable sur ce serveur.")
+        return web.json_response({"version": version, "sha256": hashlib.sha256(archive).hexdigest()})
+
+    async def api_zip(self, request: web.Request) -> web.Response:
+        owner = await self._owner(request)
+        if isinstance(owner, web.Response):
+            return owner
+        archive = self._addon()
+        if not archive:
+            return self._error(404, "Addon introuvable sur ce serveur.")
+        return web.Response(body=archive, content_type="application/zip")
 
     async def api_prices(self, request: web.Request) -> web.Response:
         owner = await self._owner(request)

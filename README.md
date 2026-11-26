@@ -489,12 +489,17 @@ que le bot renvoie vers le site dans ses messages ; avec Traefik, `WEB_DOMAIN` s
 
 Le jeu interdit aux addons tout accès réseau : trois pièces travaillent ensemble.
 
-- **Addon** `addon/WowPlanner/` (Lua, interface 16001) : prix de l'HdV dans les infobulles (plus bas, médian,
-  valeur de la pile, ventes estimées par jour), lus dans `Data.lua` à la connexion ou au `/reload` (`/wp maj`).
+- **Addon** `addon/WowPlanner/` (Lua, interface 16001) : prix de l'HdV dans les infobulles (plus bas à l'unité,
+  valeur de la pile, prix marchand à l'unité, bénéfice ou perte à l'HdV au plus bas moins 5 % par rapport au marchand,
+  ventes estimées par jour ; le prix médian, encore envoyé par le site, n'est plus affiché), lus dans `Data.lua` à la connexion ou au `/reload` (`/wp maj`).
   Il note aussi sacs, banque (à son ouverture), argent, niveau, métiers et recettes (fenêtres de métier ouvertes)
   dans `WowPlannerDB`, que le jeu enregistre à la déconnexion ou au `/reload`.
 - **Client** `client/wowplanner_client.py` (Python, sans dépendance, fenêtre tkinter, Windows et macOS) : installe
-  l'addon dans le dossier du jeu choisi, écrit `Data.lua` toutes les 20 minutes (ETag : rien n'est retéléchargé
+  l'addon dans le dossier du jeu choisi et le met à jour depuis le site (`/api/addon/version`, vérifié avec les prix :
+  si la version du `.toc` du site est plus récente, il télécharge `/api/addon/zip`, contrôle son SHA-256 et son contenu
+  (fichiers à plat dans `WowPlanner/`), puis le pose sans écraser `Data.lua` ; l'addon livré avec le client ne remplace
+  jamais une version plus récente). Pour diffuser un nouvel addon, il suffit donc d'augmenter `## Version` dans
+  `WowPlanner.toc` et de déployer le site. Il écrit `Data.lua` toutes les 20 minutes (ETag : rien n'est retéléchargé
   sans nouveau relevé) et envoie `WTF/Account/*/SavedVariables/WowPlanner.lua` au site dès qu'il change. Réglages
   dans `%APPDATA%\WowPlanner` (macOS : `~/Library/Application Support/WowPlanner`). `--once` : une synchro sans
   fenêtre.

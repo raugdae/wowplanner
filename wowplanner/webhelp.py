@@ -629,9 +629,10 @@ en bas).</p>
         Section("principe", "À quoi ça sert", f"""
 <p>L'addon <b>WoW Planner</b> fait deux choses :</p>
 <ul>
-<li>dans le jeu, quand tu survoles un objet, il affiche son <b>prix le plus bas</b> et son <b>prix médian</b> à
-l'hôtel des ventes, la valeur de la pile et les <b>ventes estimées par jour</b>, les mêmes chiffres que sur le
-site ;</li>
+<li>dans le jeu, quand tu survoles un objet, il affiche son <b>prix le plus bas</b> à l'hôtel des ventes (à
+l'unité et pour la pile), son <b>prix chez le marchand à l'unité</b> (le jeu, lui, donne celui de toute la pile), le
+<b>bénéfice ou la perte</b> si tu le vends à l'HdV au plus bas actuel plutôt qu'au marchand (commission de 5 %
+déduite), et les <b>ventes estimées par jour</b> ;</li>
 <li>il note ce que tu as dans tes <b>sacs</b> et ta <b>banque</b>, ton argent, tes <b>métiers</b> et tes
 <b>recettes</b>, et les envoie au site : la {ui('🧮 Calculatrice HdV')} se remplit en un clic, et les recettes
 que l'armurerie ne montre pas apparaissent quand même.</li>
@@ -650,6 +651,9 @@ que l'armurerie ne montre pas apparaissent quand même.</li>
 )}
 {tip("Laisse le client ouvert (ou réduit) pendant que tu joues : il retélécharge les prix toutes les 20 minutes "
      "et envoie ton inventaire dès que le jeu l'enregistre.")}
+{note("<b>Mises à jour de l'addon</b> : le client vérifie en même temps que les prix si le site a une version plus "
+      "récente de l'addon, et l'installe tout seul (tes prix sont gardés). Il te le dit dans sa fenêtre : en jeu, "
+      "un <code>/reload</code> suffit pour la prendre. Pas besoin de retélécharger le client.")}
 {warn("Ton jeton, c'est ta clé : ne le partage pas. Si tu penses qu'il a fuité, crée-en un nouveau sur la page "
       "Addon WoW : l'ancien ne marche plus.")}"""),
         Section("jeu", "Dans le jeu", f"""

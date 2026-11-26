@@ -1,7 +1,8 @@
 """Client WoW Planner : fait le lien entre l'addon WowPlanner et le site (le jeu ne laisse pas les addons parler au
 réseau).
 
-- Installe l'addon dans Interface/AddOns du dossier du jeu choisi.
+- Installe l'addon dans Interface/AddOns du dossier du jeu choisi, et le met à jour quand le site en a une version
+  plus récente (vérifié avec les prix ; en jeu, /reload pour la prendre).
 - Toutes les 20 minutes, télécharge les prix de l'hôtel des ventes et les écrit dans Data.lua (pris par le jeu à la
   connexion ou au /reload : « /wp maj » en jeu).
 - Dès que le jeu enregistre ce que l'addon a vu (déconnexion, /reload), envoie l'inventaire, les métiers et les
@@ -12,6 +13,8 @@ enregistrés), pour tester ou lancer depuis une tâche planifiée.
 """
 from __future__ import annotations
 
+import hashlib
+import io
 import json
 import os
 import queue
@@ -23,15 +26,16 @@ import threading
 import time
 import urllib.error
 import urllib.request
+import zipfile
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Callable
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 SITE_URL = "https://wow.raug-info.ch"
 REPO_URL = "https://github.com/raugdae/wowplanner"
-TERMS_VERSION = "1"  # à changer si les conditions ci-dessous changent : elles sont alors redemandées
+TERMS_VERSION = "2"  # à changer si les conditions ci-dessous changent : elles sont alors redemandées
 TERMS = f"""WoW Planner (client {VERSION} et addon) est gratuit, sans publicité ni abonnement, et libre : licence MIT,
 tu peux l'utiliser, le copier, le modifier et le partager en gardant cette licence.
 
@@ -39,8 +43,8 @@ Il est fourni « tel quel », SANS AUCUNE GARANTIE. Tu l'utilises à tes risques
 loi, l'auteur n'est responsable d'aucun dommage, perte de données ou problème lié à son utilisation, y compris avec
 ton compte de jeu.
 
-Ce que fait le client : il installe l'addon dans le dossier du jeu que tu choisis, y écrit les prix de l'hôtel des
-ventes, et envoie au site, avec ton jeton, ce que l'addon a noté pour tes persos déclarés (sacs, banque, argent,
+Ce que fait le client : il installe l'addon dans le dossier du jeu que tu choisis et le met à jour depuis le site,
+y écrit les prix de l'hôtel des ventes, et envoie au site, avec ton jeton, ce que l'addon a noté pour tes persos déclarés (sacs, banque, argent,
 niveau, métiers, recettes). Rien d'autre ne quitte ton ordinateur. Détails : page Confidentialité du site.
 
 Projet de fans, sans lien avec Blizzard Entertainment ni WoW Forever.
@@ -53,6 +57,8 @@ DEFAULT_SERVER = "https://wow.raug-info.ch"
 PRICES_EVERY = 20 * 60
 WATCH_EVERY = 15
 ADDON_NAME = "WowPlanner"
+MAX_ADDON_SIZE = 5 * 1024 * 1024  # garde-fou : l'addon pèse quelques dizaines de Ko (hors prix)
+ADDON_FILE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]*$")  # fichiers à plat dans WowPlanner/, sans chemin
 GAME_FOLDERS = ("_classic_era_", "_classic_", "_anniversary_", "_retail_")
 
 
@@ -131,10 +137,30 @@ def bundled_file(name: str) -> Path:
     return Path(base) / "client" / name if base else Path(__file__).resolve().parent / name
 
 
+def parse_version(text: str | None) -> tuple[int, ...]:
+    """« 1.0.3 » → (1, 0, 3) ; () si illisible (donc plus ancienne que tout)."""
+    return tuple(int(n) for n in re.findall(r"\d+", text or "")[:4])
+
+
+def addon_version(folder: Path) -> str | None:
+    """Version d'un addon (ligne « ## Version: » de son .toc), None s'il n'y en a pas."""
+    try:
+        text = (folder / f"{ADDON_NAME}.toc").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    match = re.search(r"^## Version:\s*(\S+)", text, re.MULTILINE)
+    return match.group(1) if match else None
+
+
 def install_addon(root: Path, source: Path | None = None) -> bool:
-    """Copie l'addon dans le jeu (sans écraser les prix déjà téléchargés). True si quelque chose a changé."""
+    """Copie l'addon dans le jeu (sans écraser les prix déjà téléchargés). True si quelque chose a changé.
+
+    Rien n'est fait si le jeu a déjà une version plus récente (mise à jour reçue du site) : l'addon livré avec le
+    client ne doit pas la remplacer par une plus ancienne."""
     source = source or bundled_addon()
     target = addons_dir(root) / ADDON_NAME
+    if parse_version(addon_version(target)) > parse_version(addon_version(source)):
+        return False
     target.mkdir(parents=True, exist_ok=True)
     changed = False
     for path in source.iterdir():
@@ -146,6 +172,40 @@ def install_addon(root: Path, source: Path | None = None) -> bool:
         if not dest.exists() or dest.read_bytes() != path.read_bytes():
             shutil.copyfile(path, dest)
             changed = True
+    return changed
+
+
+def install_addon_zip(root: Path, archive: bytes) -> bool:
+    """Pose dans le jeu l'addon reçu du site (.zip avec un dossier WowPlanner/), sans écraser les prix.
+
+    L'archive est vérifiée avant d'écrire quoi que ce soit : fichiers à plat dans WowPlanner/ uniquement (aucun
+    chemin qui sortirait du dossier de l'addon), taille raisonnable, .toc présent. ValueError sinon."""
+    files: dict[str, bytes] = {}
+    total = 0
+    with zipfile.ZipFile(io.BytesIO(archive)) as content:
+        for info in content.infolist():
+            if info.is_dir():
+                continue
+            parts = PurePosixPath(info.filename).parts
+            if len(parts) != 2 or parts[0] != ADDON_NAME or not ADDON_FILE.match(parts[1]):
+                raise ValueError(f"fichier inattendu dans l'archive : {info.filename}")
+            total += info.file_size
+            if total > MAX_ADDON_SIZE:
+                raise ValueError("archive trop grosse")
+            files[parts[1]] = content.read(info)
+    if f"{ADDON_NAME}.toc" not in files:
+        raise ValueError("archive sans fichier .toc")
+    target = addons_dir(root) / ADDON_NAME
+    target.mkdir(parents=True, exist_ok=True)
+    changed = False
+    for name, data in files.items():
+        dest = target / name
+        if (name == "Data.lua" and dest.exists()) or (dest.exists() and dest.read_bytes() == data):
+            continue
+        tmp = dest.with_name(name + ".tmp")
+        tmp.write_bytes(data)
+        os.replace(tmp, dest)
+        changed = True
     return changed
 
 
@@ -382,8 +442,32 @@ class Sync:
         except OSError as exc:
             self.log(f"Impossible d'installer l'addon : {exc}")
         if force_prices or time.time() - self.last_prices >= PRICES_EVERY:
+            self.update_addon(api, root)
             self.prices(api, root, force_prices)
         self.inventory(api, root)
+
+    def update_addon(self, api: Api, root: Path) -> None:
+        """Installe l'addon du site s'il est plus récent que celui du jeu."""
+        try:
+            remote = json.loads(api.request("GET", "/api/addon/version")[2])
+        except ApiError as exc:
+            if not str(exc).startswith("404"):  # site plus ancien, sans mise à jour de l'addon : rien à dire
+                self.log(f"Mise à jour de l'addon non vérifiée : {exc}")
+            return
+        except ValueError:
+            return
+        installed = addon_version(addons_dir(root) / ADDON_NAME)
+        if parse_version(remote.get("version")) <= parse_version(installed):
+            return
+        try:
+            archive = api.request("GET", "/api/addon/zip")[2]
+            if hashlib.sha256(archive).hexdigest() != remote.get("sha256"):
+                raise ValueError("archive abîmée pendant le téléchargement")
+            install_addon_zip(root, archive)
+        except (ApiError, ValueError, zipfile.BadZipFile, OSError) as exc:
+            self.log(f"Addon non mis à jour : {exc}")
+            return
+        self.log(f"Addon mis à jour : {installed or '?'} → {remote['version']} (en jeu : /reload pour le prendre).")
 
     def prices(self, api: Api, root: Path, force: bool = False) -> None:
         try:
