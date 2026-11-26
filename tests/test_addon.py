@@ -176,6 +176,35 @@ def test_addon_lua_scans_and_tooltips():
     assert game.recipes["enchantement"][0].spell == 7457
 
 
+def test_addon_tooltip_on_modern_client():
+    """Client récent : plus de GetItemInfo (C_Item.GetItemInfo), boutons de sac sans nom qui donnent leur sac ;
+    une API manquante ne casse pas l'infobulle (erreur gardée pour /wp)."""
+    modern = """
+C_Item = { GetItemInfo = GetItemInfo }
+GetItemInfo = nil
+function modernButton(bag, slot)
+  return { GetName = function() return nil end, GetID = function() return slot end, GetBagID = function() return bag end }
+end
+"""
+    prices = {"ts": 1795000000 - 3600, "generated": 1795000000, "items": [[2589, 1200, 1500, 340]]}
+    lua = run_addon(prices, modern)
+    g = lua.globals()
+    g.fire("ADDON_LOADED", "WowPlanner")
+    g.fire("PLAYER_LOGIN")
+    lines = list(g.hover("|Hitem:2589:0|h", g.modernButton(0, 1)).values())  # pile de 20 dans le sac à dos
+    assert lines[1].endswith("= 24000c") and "Marchand (l'unité)" in lines[2]
+    assert "Perte à l'HdV (les 20)" in lines[3] and lines[4].endswith("~340 / jour")
+
+    lua.execute("C_Item = nil")  # aucune API de prix marchand : le reste de l'infobulle s'affiche quand même
+    lines = list(g.hover("|Hitem:2589:0|h", None).values())
+    assert len(lines) == 2 and lines[1].endswith("~340 / jour")
+    lua.execute("C_Container.GetContainerItemInfo = function() error('boum') end")
+    lines = list(g.hover("|Hitem:2589:0|h", g.modernButton(0, 1)).values())  # pile illisible : un exemplaire
+    assert len(lines) == 2 and lines[0].endswith("= 1200c")
+    g.SlashCmdList.WOWPLANNER("")
+    assert any("boum" in line for line in g.printed.values())
+
+
 def test_addon_reagent_bag():
     """Client avec un emplacement « composants » (conteneur 5) : lu avec les sacs, banque décalée d'un cran."""
     lua = run_addon(None, """

@@ -8,11 +8,11 @@ local NUM_BAGS = NUM_TOTAL_EQUIPPED_BAG_SLOTS or ((NUM_BAG_SLOTS or 4) + (NUM_RE
 local NUM_BANK_BAGS = NUM_BANKBAGSLOTS or 6
 local BANK = BANK_CONTAINER or -1
 local COLOR = "|cff9d8cff"
-local VERSION = "1.0.3"
+local VERSION = "1.0.4"
 local AH_CUT = 0.05  -- commission de l'hôtel des ventes sur une vente (comme la calculatrice du site)
 local LOGO = "|TInterface\\AddOns\\WowPlanner\\logo:0|t"  -- logo à la taille du texte
 
-local db, me, bankOpen
+local db, me, bankOpen, lastError
 
 -- ------------------------------------------------------------------ outils
 
@@ -125,6 +125,15 @@ end
 
 -- ------------------------------------------------------------------ infobulles
 
+-- Prix marchand d'un exemplaire (0 : le marchand n'en veut pas ; nil : objet pas encore en cache ou API absente).
+-- Les clients récents n'ont plus GetItemInfo, remplacé par C_Item.GetItemInfo.
+local function vendorPrice(id)
+  local getInfo = (C_Item and C_Item.GetItemInfo) or GetItemInfo
+  if not getInfo then return nil end
+  local ok, sell = pcall(function() return select(11, getInfo(id)) end)
+  return ok and tonumber(sell) or nil
+end
+
 local function priceLines(tooltip, id, count)
   if not db.settings.tooltip or not WowPlannerData or not WowPlannerData.items then return end
   local p = WowPlannerData.items[id]
@@ -137,7 +146,7 @@ local function priceLines(tooltip, id, count)
   end
   -- Le jeu affiche le prix marchand de toute la pile : on donne celui d'un exemplaire, puis ce que rapporte l'HdV
   -- au plus bas actuel (moins la commission de 5 %) par rapport au marchand.
-  local sell = select(11, GetItemInfo(id))  -- 0 : le marchand n'en veut pas ; nil : objet pas encore en cache
+  local sell = vendorPrice(id)
   if sell and sell > 0 then
     tooltip:AddDoubleLine(COLOR .. "Marchand (l'unité)|r", money(sell), 1, 1, 1, 1, 1, 1)
     local diff = floor(low * n * (1 - AH_CUT)) - sell * n
@@ -159,18 +168,23 @@ local function priceLines(tooltip, id, count)
 end
 
 -- Quantité de la pile survolée, lue sur le bouton du sac ou de la banque (sans toucher aux fonctions du jeu).
+-- Boutons récents : sans nom, ils donnent leur sac (GetBagID) ; anciens : ContainerFrameNItemM, BankFrameItemN.
 local function stackCount(tooltip)
   local owner = tooltip.GetOwner and tooltip:GetOwner()
-  local name = owner and owner.GetName and owner:GetName()
-  if not name or not owner.GetID then return nil end
+  if not owner or not owner.GetID then return nil end
   local bag
-  if name:match("^ContainerFrame%d+Item%d+$") then
-    bag = owner:GetParent():GetID()
-  elseif name:match("^BankFrameItem%d+$") then
-    bag = BANK
+  if owner.GetBagID then
+    bag = owner:GetBagID()
   else
-    return nil
+    local name = owner.GetName and owner:GetName()
+    if not name then return nil end
+    if name:match("^ContainerFrame%d+Item%d+$") then
+      bag = owner:GetParent():GetID()
+    elseif name:match("^BankFrameItem%d+$") then
+      bag = BANK
+    end
   end
+  if not bag then return nil end
   local _, count = slotItem(bag, owner:GetID())
   return count
 end
@@ -178,7 +192,13 @@ end
 local function onItem(tooltip)
   local _, link = tooltip:GetItem()
   local id = itemId(link)
-  if id then priceLines(tooltip, id, stackCount(tooltip)) end
+  if not id then return end
+  -- Une erreur (API différente selon les clients) ne doit jamais casser l'infobulle du jeu.
+  -- Erreurs gardées pour /wp (dépannage). Pile illisible : les prix s'affichent quand même, pour un exemplaire.
+  local okCount, count = pcall(stackCount, tooltip)
+  if not okCount then lastError, count = tostring(count), nil end
+  local ok, err = pcall(priceLines, tooltip, id, count)
+  if not ok then lastError = tostring(err) end
 end
 
 local function hookTooltips()
@@ -234,6 +254,7 @@ SlashCmdList.WOWPLANNER = function(text)
     end
     say("/wp maj : recharger l'interface pour prendre les derniers prix · /wp off, /wp on : prix dans les infobulles · /wp sacs : ce que l'addon voit dans tes sacs · /wp info : à propos.")
     say("Banque " .. (me.bankAt and ("vue le " .. date("%d/%m à %H:%M", me.bankAt)) or "jamais ouverte : ouvre-la une fois") .. ".")
+    if lastError then say("dernière erreur d'infobulle (à signaler) : " .. lastError) end
   end
 end
 

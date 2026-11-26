@@ -2,7 +2,7 @@
 ## Title: |cffac7fd9WoW|r |cff7fc0e3Planner|r
 ## Notes: Prix de l'hôtel des ventes dans les infobulles, inventaire et recettes pour le site WoW Planner. Développé avec l'aide de l'IA Claude (Anthropic).
 ## Author: Raugdae
-## Version: 1.0.3
+## Version: 1.0.4
 ## IconTexture: Interface\AddOns\WowPlanner\logo
 ## SavedVariables: WowPlannerDB
 ## X-Website: https://wow.raug-info.ch
