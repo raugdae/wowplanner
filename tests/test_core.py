@@ -1383,7 +1383,7 @@ def test_sync_steps_without_armory(tmp_path):
     lines = asyncio.run(cog._run_steps(full=False))
     assert lines[0] == "✅ **Donjons et raids (wiki)** : 37 donjons et raids"
     assert lines[1].startswith("⚠️") and "anciennes priorités gardées" in lines[1]
-    assert len(lines) == 6 and all(line.startswith("⏭️") for line in lines[2:])  # pas de clés Blizzard
+    assert len(lines) == 7 and all(line.startswith("⏭️") for line in lines[2:])  # pas de clés Blizzard
     assert cog._last_run() is not None  # la synchro de nuit ne sera pas rattrapée au prochain démarrage
 
 

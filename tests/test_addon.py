@@ -27,6 +27,14 @@ function select(n, ...) local t = { ... } return t[n] end
 function date(fmt, t) return os.date(fmt, t) end
 function time() return 1795000000 end
 function GetCoinTextureString(c) return c .. "c" end
+format, tinsert, unpack = string.format, table.insert, unpack or table.unpack
+function strsplit(sep, text)
+  local out = {}
+  for part in (text .. sep):gmatch("(.-)" .. sep:gsub("%p", "%%%0")) do out[#out + 1] = part end
+  return unpack(out)
+end
+clock = 1000
+function GetTime() return clock end
 BAGS = {
   [0] = { [1] = { 2589, 20 }, [2] = { 2589, 7 }, [3] = { 4306, 5 } },
   [1] = { [1] = { 2592, 3 } },
@@ -76,13 +84,31 @@ end
 GameTooltip, ItemRefTooltip = newTooltip("GameTooltip"), newTooltip("ItemRefTooltip")
 
 frames = {}
-function CreateFrame()
-  local f = { events = {} }
-  function f:RegisterEvent(e) self.events[e] = true end
-  function f:SetScript(_, fn) self.handler = fn end
+-- Cadre, texte ou texture de l'interface : les méthodes utiles sont simulées, les autres ne font rien.
+function mock(kind, name)
+  local o = { events = {}, scripts = {}, kind = kind, name = name, shown = true }
+  function o:RegisterEvent(e) self.events[e] = true end
+  function o:SetScript(event, fn) self.scripts[event] = fn; if event == "OnEvent" then self.handler = fn end end
+  function o:Show() self.shown = true; if self.scripts.OnShow then self.scripts.OnShow(self) end end
+  function o:Hide() self.shown = false end
+  function o:IsShown() return self.shown end
+  function o:SetText(t) self.label = t end
+  function o:GetText() return self.label end
+  function o:CreateFontString() return mock("FontString") end
+  function o:CreateTexture() return mock("Texture") end
+  function o:GetWidth() return 140 end
+  function o:GetCenter() return 100, 100 end
+  function o:GetEffectiveScale() return 1 end
+  function o:Click() if self.scripts.OnClick then self.scripts.OnClick(self) end end
+  return setmetatable(o, { __index = function() return function() end end })
+end
+function CreateFrame(kind, name)
+  local f = mock(kind, name)
   frames[#frames + 1] = f
+  if name then _G[name] = f end
   return f
 end
+UIParent, Minimap, UISpecialFrames = mock("Frame"), mock("Frame"), {}
 function fire(event, ...) for _, f in ipairs(frames) do if f.events[event] then f.handler(f, event, ...) end end end
 
 function hover(link, owner)
@@ -119,13 +145,24 @@ def lua_to_python(obj):
     return obj
 
 
-def run_addon(prices: dict | None, extra: str = ""):
+def toc_files() -> list[str]:
+    lines = (ADDON / "WowPlanner.toc").read_text(encoding="utf-8").splitlines()
+    return [line.strip() for line in lines if line.strip() and not line.startswith("#")]
+
+
+def run_addon(prices: dict | None, extra: str = "", data: str | None = None):
+    """Charge l'addon comme le jeu : les fichiers du .toc dans l'ordre, chacun avec (nom de l'addon, espace commun)."""
     lupa = pytest.importorskip("lupa")
     lua = lupa.LuaRuntime(unpack_returned_tuples=True)
     lua.execute(WOW_API + extra)
-    data = client.lua_prices(prices) if prices else (ADDON / "Data.lua").read_text(encoding="utf-8")
-    lua.execute(data)
-    lua.execute((ADDON / "WowPlanner.lua").read_text(encoding="utf-8"))
+    if data is None:
+        data = client.lua_prices(prices) if prices else (ADDON / "Data.lua").read_text(encoding="utf-8")
+    namespace = lua.table()
+    for name in toc_files():
+        code = data if name == "Data.lua" else (ADDON / name).read_text(encoding="utf-8")
+        chunk = lua.globals().load(code, "=" + name)
+        assert chunk is not None, name
+        chunk("WowPlanner", namespace)
     return lua
 
 

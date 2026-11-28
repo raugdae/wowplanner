@@ -2,13 +2,15 @@
 -- relevé de l'inventaire, des métiers et des recettes (WowPlannerDB, enregistré par le jeu à la déconnexion ou au
 -- /reload, puis envoyé au site par le client).
 
-local ADDON = "WowPlanner"
+local ADDON, ns = ...
+ADDON = ADDON or "WowPlanner"
+ns = ns or {}
 -- Sacs portés : le sac à dos (0), les sacs équipés, et l'emplacement « composants » des clients qui en ont un.
 local NUM_BAGS = NUM_TOTAL_EQUIPPED_BAG_SLOTS or ((NUM_BAG_SLOTS or 4) + (NUM_REAGENTBAG_SLOTS or 0))
 local NUM_BANK_BAGS = NUM_BANKBAGSLOTS or 6
 local BANK = BANK_CONTAINER or -1
 local COLOR = "|cff9d8cff"
-local VERSION = "1.0.4"
+local VERSION = "1.1.0"
 local AH_CUT = 0.05  -- commission de l'hôtel des ventes sur une vente (comme la calculatrice du site)
 local LOGO = "|TInterface\\AddOns\\WowPlanner\\logo:0|t"  -- logo à la taille du texte
 
@@ -220,6 +222,10 @@ SlashCmdList.WOWPLANNER = function(text)
   local command = strlower(strtrim(text or ""))
   if command == "maj" or command == "reload" then
     ReloadUI()
+  elseif command == "quetes" or command == "quêtes" or command == "donjons" then
+    if ns.toggleQuests then ns.toggleQuests() end
+  elseif command == "bouton" then
+    if ns.toggleButton then ns.toggleButton() end
   elseif command == "sacs" then
     -- Diagnostic : ce que l'addon lit dans chaque conteneur (y compris un cran au-delà des sacs portés).
     say("sacs portés : conteneurs 0 à " .. NUM_BAGS .. " (NUM_BAG_SLOTS=" .. tostring(NUM_BAG_SLOTS)
@@ -252,7 +258,7 @@ SlashCmdList.WOWPLANNER = function(text)
     else
       say("pas encore de prix : lance le client WoW Planner, puis /wp maj.")
     end
-    say("/wp maj : recharger l'interface pour prendre les derniers prix · /wp off, /wp on : prix dans les infobulles · /wp sacs : ce que l'addon voit dans tes sacs · /wp info : à propos.")
+    say("/wp quetes : quêtes de donjon (ou le bouton de la minimap) · /wp bouton : afficher ou masquer ce bouton · /wp maj : recharger l'interface pour prendre les derniers prix · /wp off, /wp on : prix dans les infobulles · /wp sacs : ce que l'addon voit dans tes sacs · /wp info : à propos.")
     say("Banque " .. (me.bankAt and ("vue le " .. date("%d/%m à %H:%M", me.bankAt)) or "jamais ouverte : ouvre-la une fois") .. ".")
     if lastError then say("dernière erreur d'infobulle (à signaler) : " .. lastError) end
   end

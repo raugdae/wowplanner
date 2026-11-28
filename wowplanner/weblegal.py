@@ -141,6 +141,12 @@ métiers et recettes vus en jeu, et l'empreinte de ton jeton (pas le jeton lui-m
 <td>Le client WoW Planner, que tu installes et relies au site avec ton jeton</td>
 <td>Remplir la calculatrice avec ton stock, compléter tes métiers et recettes ; ton inventaire et ton argent ne
 sont visibles que par toi</td></tr>
+<tr><td>Si tu utilises l'<b>addon WoW</b> : les quêtes que les PNJ te proposent en jeu (quête, nom du PNJ, ta
+position sur la carte à ce moment-là, niveau de la quête et le tien, ta faction, suites de quêtes) et le nom du perso
+qui les a repérées</td>
+<td>Le client WoW Planner, avec l'inventaire</td>
+<td>La chasse au trésor : donneurs, waypoints et suites des quêtes de donjon, partagés avec la guilde ; le nom du perso
+qui a repéré une quête n'est visible que des membres connectés</td></tr>
 <tr><td>Les <b>droits d'administration</b> qu'un admin du serveur t'a confiés sur le site, qui te les a confiés et
 quand</td><td>Un admin du serveur (page Administration)</td>
 <td>Te donner accès aux outils correspondants ; visible des admins du serveur seulement</td></tr>

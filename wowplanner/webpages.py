@@ -33,6 +33,7 @@ from .webcharacter import (
     roles_html,
     talents_html,
 )
+from .webquests import hunt_banner, quests_section
 from .webrecipes import (
     recipes_by_family_html,
 )
@@ -294,7 +295,8 @@ class GuildPages:
         body = f"""
 <h1 class="title">Donjons</h1>
 <p class="sub">{len(dungeons.DUNGEONS)} donjons de WoW Forever, du plus bas au plus haut niveau ; {intro}.
-Choisis un niveau pour voir ce qui est à faire, et clique sur un donjon pour voir son entrée et ses boss.</p>
+Choisis un niveau pour voir ce qui est à faire, et clique sur un donjon pour voir son entrée, ses boss et ses quêtes.</p>
+{hunt_banner(self.site.db)}
 <div class="filters">
   <input id="q" type="search" placeholder="Chercher un donjon, une zone…" autocomplete="off">
   <div class="lvl-pick">
@@ -430,9 +432,11 @@ Warcraft Tavern ({dungeons.SOURCES_CHECKED}) : l'API Blizzard ne fournit pas le 
 <h2>Parcours des boss</h2>
 <p class="sub">Dans l'ordre habituel ; ◇ = optionnel (rare, invoqué ou pas nécessaire pour finir).</p>
 {route}{notes}
+{quests_section(self.site.db, slug, members_visible())}
 <p class="src">Entrée et boss d'après les guides de Warcraft Tavern ({dungeons.SOURCES_CHECKED}) ; noms français du
 Journal de Blizzard quand il les donne. Vignette : Blizzard. L'API Blizzard ne fournit ni carte ni coordonnées pour
-Forever : la carte détaillée est sur le guide.</p>
+Forever : la carte détaillée est sur le guide. Quêtes : API Blizzard ; donneurs, positions, niveaux et suites
+relevés en jeu par les membres avec l'addon WoW Planner.</p>
 {nav}"""
         return page(found.name, "donjons", body, COPY_SCRIPT)
 

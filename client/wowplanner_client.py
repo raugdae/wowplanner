@@ -3,10 +3,10 @@ réseau).
 
 - Installe l'addon dans Interface/AddOns du dossier du jeu choisi, et le met à jour quand le site en a une version
   plus récente (vérifié avec les prix ; en jeu, /reload pour la prendre).
-- Toutes les 20 minutes, télécharge les prix de l'hôtel des ventes et les écrit dans Data.lua (pris par le jeu à la
-  connexion ou au /reload : « /wp maj » en jeu).
-- Dès que le jeu enregistre ce que l'addon a vu (déconnexion, /reload), envoie l'inventaire, les métiers et les
-  recettes au site.
+- Toutes les 20 minutes, télécharge les prix de l'hôtel des ventes et les quêtes de donjon, et les écrit dans
+  Data.lua (pris par le jeu à la connexion ou au /reload : « /wp maj » en jeu).
+- Dès que le jeu enregistre ce que l'addon a vu (déconnexion, /reload), envoie l'inventaire, les métiers, les
+  recettes et les relevés de la chasse au trésor (donneurs de quêtes, suites de quêtes) au site.
 
 Python 3.10+, sans dépendance (tkinter pour la fenêtre). `--once` : une synchro sans fenêtre (réglages déjà
 enregistrés), pour tester ou lancer depuis une tâche planifiée.
@@ -32,10 +32,10 @@ from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable
 
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 SITE_URL = "https://wow.raug-info.ch"
 REPO_URL = "https://github.com/raugdae/wowplanner"
-TERMS_VERSION = "2"  # à changer si les conditions ci-dessous changent : elles sont alors redemandées
+TERMS_VERSION = "3"  # à changer si les conditions ci-dessous changent : elles sont alors redemandées
 TERMS = f"""WoW Planner (client {VERSION} et addon) est gratuit, sans publicité ni abonnement, et libre : licence MIT,
 tu peux l'utiliser, le copier, le modifier et le partager en gardant cette licence.
 
@@ -44,8 +44,9 @@ loi, l'auteur n'est responsable d'aucun dommage, perte de données ou problème 
 ton compte de jeu.
 
 Ce que fait le client : il installe l'addon dans le dossier du jeu que tu choisis et le met à jour depuis le site,
-y écrit les prix de l'hôtel des ventes, et envoie au site, avec ton jeton, ce que l'addon a noté pour tes persos déclarés (sacs, banque, argent,
-niveau, métiers, recettes). Rien d'autre ne quitte ton ordinateur. Détails : page Confidentialité du site.
+y écrit les prix de l'hôtel des ventes et les quêtes de donjon, et envoie au site, avec ton jeton, ce que l'addon
+a noté pour tes persos déclarés (sacs, banque, argent, niveau, métiers, recettes) ainsi que les quêtes que les PNJ
+t'ont proposées (PNJ, ta position à ce moment-là, niveaux, suites de quêtes) pour la chasse au trésor de la guilde. Rien d'autre ne quitte ton ordinateur. Détails : page Confidentialité du site.
 
 Projet de fans, sans lien avec Blizzard Entertainment ni WoW Forever.
 
@@ -366,7 +367,24 @@ def inventory_payload(saved: dict[str, Any]) -> dict[str, Any]:
             "bank": counts(entry["bank"]) if isinstance(entry.get("bank"), dict) else None,
             "bank_at": entry.get("bankAt"), "professions": entry.get("professions") or None, "recipes": recipes,
         })
-    return {"client": VERSION, "characters": out}
+    return {"client": VERSION, "characters": out, "hunt": hunt_payload(db)}
+
+
+def hunt_payload(db: Any) -> dict[str, Any]:
+    """Relevés de la chasse au trésor (WowPlannerDB.hunt) : quêtes vues en jeu et suites de quêtes."""
+    hunt = db.get("hunt") if isinstance(db, dict) else None
+    if not isinstance(hunt, dict):
+        return {"quests": [], "links": []}
+    quests = []
+    for qid, entry in (hunt.get("quests") or {}).items():
+        if isinstance(entry, dict) and str(qid).isdigit():
+            quests.append({**entry, "id": int(qid)})
+    links = []
+    for key in (hunt.get("links") or {}):
+        prev, _, nxt = str(key).partition(">")
+        if prev.isdigit() and nxt.isdigit():
+            links.append([int(prev), int(nxt)])
+    return {"quests": quests, "links": links}
 
 
 # ====================================================================== site
@@ -470,6 +488,41 @@ class Sync:
         self.log(f"Addon mis à jour : {installed or '?'} → {remote['version']} (en jeu : /reload pour le prendre).")
 
     def prices(self, api: Api, root: Path, force: bool = False) -> None:
+        """Data.lua de l'addon (prix de l'HdV et quêtes de donjon), écrit tel que le site le prépare."""
+        headers = {} if force or not self.settings.prices_etag else {"If-None-Match": self.settings.prices_etag}
+        try:
+            status, resp_headers, body = api.request("GET", "/api/addon/data", headers=headers)
+        except ApiError as exc:
+            if str(exc).startswith("404"):  # site plus ancien : prix seuls
+                self.legacy_prices(api, root, force)
+            else:
+                self.log(f"Prix non téléchargés : {exc}")
+            return
+        self.last_prices = time.time()
+        if status == 304:
+            self.log("Prix et quêtes : rien de nouveau.")
+            return
+        text = body.decode("utf-8", errors="replace")
+        if "WowPlannerData = {" not in text:
+            self.log("Données du site illisibles : rien d'écrit.")
+            return
+        self.write_data(root, text)
+        self.settings.prices_etag = resp_headers.get("ETag", "")
+        self.settings.save()
+        ts = re.search(r"ts = (\d+)", text)
+        when = datetime.fromtimestamp(int(ts.group(1)) if ts else 0).strftime("%d/%m %H:%M")
+        hunt = re.search(r"found = (\d+), total = (\d+)", text)
+        quests = f", quêtes de donjon : {hunt.group(1)}/{hunt.group(2)} repérées" if hunt else ""
+        self.log(f"Prix du {when}{quests} : en jeu, /wp maj pour les prendre.")
+
+    @staticmethod
+    def write_data(root: Path, text: str) -> None:
+        target = addons_dir(root) / ADDON_NAME / "Data.lua"
+        tmp = target.with_suffix(".tmp")
+        tmp.write_text(text, encoding="utf-8")
+        os.replace(tmp, target)
+
+    def legacy_prices(self, api: Api, root: Path, force: bool = False) -> None:
         try:
             headers = {} if force or not self.settings.prices_etag else {"If-None-Match": self.settings.prices_etag}
             status, resp_headers, body = api.request("GET", "/api/addon/prix", headers=headers)
@@ -481,10 +534,7 @@ class Sync:
             self.log("Prix : pas de nouveau relevé.")
             return
         data = json.loads(body)
-        target = addons_dir(root) / ADDON_NAME / "Data.lua"
-        tmp = target.with_suffix(".tmp")
-        tmp.write_text(lua_prices(data), encoding="utf-8")
-        os.replace(tmp, target)
+        self.write_data(root, lua_prices(data))
         self.settings.prices_etag = resp_headers.get("ETag", "")
         self.settings.save()
         when = datetime.fromtimestamp(data.get("ts") or 0).strftime("%d/%m %H:%M")
@@ -519,6 +569,13 @@ class Sync:
                 self.log("Inventaire envoyé : " + ", ".join(result["updated"]) + ".")
             if result.get("unknown"):
                 self.log("Persos inconnus du site (à ajouter dans Mes persos) : " + ", ".join(result["unknown"]) + ".")
+            hunt = result.get("hunt") or {}
+            if hunt.get("discovered"):
+                dungeon = hunt.get("dungeon") or []
+                extra = f" dont, pour les donjons : {', '.join(dungeon[:5])}" if dungeon else ""
+                self.log(f"🔎 Chasse au trésor : {hunt['discovered']} quête(s) repérée(s) pour la première fois{extra} !")
+            if hunt.get("links"):
+                self.log(f"🔗 Chasse au trésor : {hunt['links']} suite(s) de quêtes découverte(s) !")
 
 
 # ====================================================================== fenêtre

@@ -593,7 +593,7 @@ lui-même.</li>
 {go("/calculatrice", "Ouvrir la calculatrice")}"""),
     ])
 
-    donjons = Chapter("donjons", "🏰", "Donjons", "Quels donjons à quel niveau, où est l'entrée, quels boss.", [
+    donjons = Chapter("donjons", "🏰", "Donjons", "Quels donjons à quel niveau, où est l'entrée, quels boss, quelles quêtes.", [
         Section("liste", "La liste des donjons", f"""
 {shot("donjons", "La page Donjons, avec un niveau choisi.", [
     ("q", "Chercher un donjon ou une zone."),
@@ -623,11 +623,21 @@ colle-la dans la fenêtre de discussion ({k("Ctrl")} + {k("V")} puis {k("Entrée
 l'entrée. Sans TomTom, les deux nombres sont les coordonnées sur la carte du jeu (de gauche à droite, puis de haut
 en bas).</p>
 {go("/donjons", "Ouvrir la page Donjons")}"""),
+        Section("quetes", "Les quêtes de donjon", f"""
+<p>En bas de la fiche d'un donjon, la section <b>Quêtes</b> liste les quêtes qui s'y rattachent, avec leurs
+<b>suites</b> : les étapes numérotées mènent jusqu'à la quête <b>finale</b>. Pour chaque quête : son niveau, le niveau
+à partir duquel elle est proposée, la faction, les récompenses, le texte, et surtout <b>qui la donne et où</b>, avec la
+commande <code>/way</code> à copier pour TomTom.</p>
+<p>La liste des quêtes vient de Blizzard. Le donneur, sa position, les niveaux et les suites, Blizzard ne les donne
+pas : c'est la guilde qui les trouve en jouant, avec l'addon WoW Planner. C'est la <b>chasse au trésor</b> : la page
+Donjons montre combien de quêtes ont déjà leur donneur repéré.</p>
+{note("« Dès niv. 14 » : le plus bas niveau auquel un membre s'est vu proposer la quête. Elle peut l'être un peu plus "
+      "tôt : si tu la trouves avant, ton relevé corrige le chiffre.")}"""),
     ])
 
-    addon = Chapter("addon", "🧩", "Addon WoW", "Les prix de l'HdV dans le jeu, ton inventaire envoyé au site.", [
+    addon = Chapter("addon", "🧩", "Addon WoW", "Les prix de l'HdV et les quêtes de donjon dans le jeu, ton inventaire envoyé au site.", [
         Section("principe", "À quoi ça sert", f"""
-<p>L'addon <b>WoW Planner</b> fait deux choses :</p>
+<p>L'addon <b>WoW Planner</b> fait trois choses :</p>
 <ul>
 <li>dans le jeu, quand tu survoles un objet, il affiche son <b>prix le plus bas</b> à l'hôtel des ventes (à
 l'unité et pour la pile), son <b>prix chez le marchand à l'unité</b> (le jeu, lui, donne celui de toute la pile), le
@@ -635,7 +645,10 @@ l'unité et pour la pile), son <b>prix chez le marchand à l'unité</b> (le jeu,
 déduite), et les <b>ventes estimées par jour</b> ;</li>
 <li>il note ce que tu as dans tes <b>sacs</b> et ta <b>banque</b>, ton argent, tes <b>métiers</b> et tes
 <b>recettes</b>, et les envoie au site : la {ui('🧮 Calculatrice HdV')} se remplit en un clic, et les recettes
-que l'armurerie ne montre pas apparaissent quand même.</li>
+que l'armurerie ne montre pas apparaissent quand même ;</li>
+<li>un bouton sur la <b>minimap</b> ouvre la liste des <b>quêtes de donjon</b> de ton niveau, avec leurs suites et
+un <b>waypoint</b> vers chaque donneur, et l'addon participe à la <b>chasse au trésor</b> de la guilde (voir plus
+bas).</li>
 </ul>
 {note("Le jeu interdit aux addons de parler à Internet. Un petit programme à installer sur ton ordinateur, le "
       "<b>client WoW Planner</b>, fait le lien : il télécharge les prix pour l'addon et envoie au site ce que l'addon "
@@ -662,12 +675,30 @@ que l'armurerie ne montre pas apparaissent quand même.</li>
     ["<code>/wp maj</code>", "Recharge l'interface pour prendre les derniers prix téléchargés par le client."],
     ["<code>/wp off</code>, <code>/wp on</code>", "Masque ou réaffiche les prix dans les infobulles."],
     ["<code>/wp sacs</code>", "Ce que l'addon lit dans chacun de tes sacs (pour vérifier qu'il voit bien tout)."],
+    ["<code>/wp quetes</code>", "Ouvre ou ferme la fenêtre des quêtes de donjon (comme le bouton de la minimap)."],
+    ["<code>/wp bouton</code>", "Masque ou réaffiche le bouton de la minimap (on peut aussi le glisser autour)."],
 ])}
 <p>Les prix sont chargés à la connexion : le jeu ne laisse pas un addon relire un fichier en cours de partie.
 Quand le client annonce de nouveaux prix, <code>/wp maj</code> les prend (ça recharge l'interface, comme
 <code>/reload</code>).</p>
 {tip("Ouvre une fois ta <b>banque</b> et chacune de tes <b>fenêtres de métier</b> (et la fenêtre d'enchantement) : "
      "l'addon ne peut lire leur contenu que quand elles sont ouvertes.")}"""),
+        Section("quetes", "Quêtes de donjon et chasse au trésor", f"""
+<p>Clique sur le bouton <b>WoW Planner</b> de la minimap (ou tape <code>/wp quetes</code>) : la fenêtre liste les
+donjons de ton niveau et leurs quêtes. {ui('Afficher tous les donjons')} montre aussi les autres.</p>
+<ul class="hlist">
+<li>Chaque quête donne son niveau entre crochets, le niveau à partir duquel elle est proposée, et dessous <b>qui la
+donne et où</b>. Les suites sont numérotées (1/3, 2/3…) jusqu'à la <b>finale</b>.</li>
+<li>✔ vert : quête déjà faite par ce perso. Les quêtes de l'autre faction sont masquées.</li>
+<li><b>Clique sur une quête</b> : une flèche TomTom si tu as cet addon, sinon une épingle sur la carte du jeu, vers
+son donneur.</li>
+<li>« <b>Donneur pas encore repéré</b> » : personne de la guilde ne l'a encore croisé. À toi de jouer !</li>
+</ul>
+<h3>La chasse au trésor</h3>
+<p>Quand un PNJ te propose une quête, l'addon note son nom, <b>ta position</b> à ce moment-là (tu es à côté de lui : c'est le waypoint), le niveau de la quête et le tien. Quand tu rends une quête et que le même PNJ t'en propose une nouvelle dans la foulée, il note que la seconde <b>suit</b> la première. Le client envoie ces relevés au site avec ton inventaire, et le site les fusionne pour toute la guilde : chaque quête repérée par un membre apparaît chez tous les autres, dans le jeu et sur le site.</p>
+{tip("Rien à faire de spécial : joue normalement avec le client lancé. Le client te prévient dans sa fenêtre quand tu "
+     "as repéré une quête pour la première fois, et les nouvelles trouvailles de la guilde arrivent avec les prix "
+     "(<code>/wp maj</code>).")}"""),
         Section("inventaire", "Ton inventaire sur le site", f"""
 <p>Le jeu enregistre ce que l'addon a noté <b>à la déconnexion</b> ou au <code>/reload</code>. Le client l'envoie
 alors au site, pour chacun de tes persos déclarés dans {ui('Mes persos')} (les autres sont ignorés).</p>

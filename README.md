@@ -493,14 +493,18 @@ Le jeu interdit aux addons tout accès réseau : trois pièces travaillent ensem
   valeur de la pile, prix marchand à l'unité, bénéfice ou perte à l'HdV au plus bas moins 5 % par rapport au marchand,
   ventes estimées par jour ; le prix médian, encore envoyé par le site, n'est plus affiché), lus dans `Data.lua` à la connexion ou au `/reload` (`/wp maj`).
   Il note aussi sacs, banque (à son ouverture), argent, niveau, métiers et recettes (fenêtres de métier ouvertes)
-  dans `WowPlannerDB`, que le jeu enregistre à la déconnexion ou au `/reload`.
+  dans `WowPlannerDB`, que le jeu enregistre à la déconnexion ou au `/reload`. `Quests.lua` : bouton de la minimap
+  et fenêtre des quêtes de donjon (donjons du niveau du perso ou tous, suites numérotées jusqu'à la finale, quêtes
+  faites cochées, waypoint TomTom ou épingle de la carte vers le donneur) et relevés de la chasse au trésor
+  (`WowPlannerDB.hunt` : quête proposée par un PNJ → PNJ, position du joueur, niveaux, faction ; quête rendue puis
+  nouvelle quête chez le même PNJ → suite).
 - **Client** `client/wowplanner_client.py` (Python, sans dépendance, fenêtre tkinter, Windows et macOS) : installe
   l'addon dans le dossier du jeu choisi et le met à jour depuis le site (`/api/addon/version`, vérifié avec les prix :
   si la version du `.toc` du site est plus récente, il télécharge `/api/addon/zip`, contrôle son SHA-256 et son contenu
   (fichiers à plat dans `WowPlanner/`), puis le pose sans écraser `Data.lua` ; l'addon livré avec le client ne remplace
   jamais une version plus récente). Pour diffuser un nouvel addon, il suffit donc d'augmenter `## Version` dans
-  `WowPlanner.toc` et de déployer le site. Il écrit `Data.lua` toutes les 20 minutes (ETag : rien n'est retéléchargé
-  sans nouveau relevé) et envoie `WTF/Account/*/SavedVariables/WowPlanner.lua` au site dès qu'il change. Réglages
+  `WowPlanner.toc` et de déployer le site. Il écrit `Data.lua` toutes les 20 minutes, tel que le site le prépare
+  (`/api/addon/data` : prix et quêtes ; ETag : rien n'est retéléchargé sans changement) et envoie `WTF/Account/*/SavedVariables/WowPlanner.lua` au site dès qu'il change. Réglages
   dans `%APPDATA%\WowPlanner` (macOS : `~/Library/Application Support/WowPlanner`). `--once` : une synchro sans
   fenêtre.
 - **Site** : page `/addon` (menu du compte) pour créer ou supprimer son jeton (seule son empreinte SHA-256 est
@@ -509,6 +513,14 @@ Le jeu interdit aux addons tout accès réseau : trois pièces travaillent ensem
   jour). L'inventaire n'est visible que par son propriétaire (calculatrice : « Remplir avec ce que l'addon a vu en
   jeu ») ; métiers et recettes vus en jeu complètent ceux de l'armurerie (les recettes du jeu restent après chaque
   synchro de l'armurerie).
+
+**Quêtes de donjon et chasse au trésor** (`wowplanner/quests.py`, `webquests.py`, étape « Quêtes de donjon » de la
+synchro) : l'API Blizzard (namespace `static-forever`) liste les quêtes par zone, dont les zones de donjon
+(`GROUPS_SPEC` : zone de quêtes → donjons du site), avec titre, texte, récompenses et parfois la faction, mais ni
+niveau, ni donneur, ni suite. Ce qui manque est relevé en jeu par les membres et fusionné par le site (`quest_givers` :
+premier donneur et première position gardés, plus bas niveau de joueur, factions ; `quest_links` : suites). Rien n'est
+repris d'une base tierce (Questie et consorts sont sous GPL) : tout reste en MIT. Les fiches de donjon du site
+montrent les quêtes et leurs suites (`/way` à copier), la page Donjons le compteur de la chasse.
 
 Exécutables du client : le workflow `.github/workflows/client.yml` (PyInstaller, addon inclus) les construit et
 les joint à une release GitHub quand on pousse un tag `client-v1.0.0` ; la page `/addon` renvoie vers la dernière

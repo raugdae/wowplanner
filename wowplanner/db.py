@@ -6,6 +6,7 @@ import sqlite3
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from .roles import ROLES
 
@@ -217,6 +218,43 @@ CREATE TABLE IF NOT EXISTS game_recipes (
     character_id INTEGER NOT NULL REFERENCES characters (id) ON DELETE CASCADE,
     recipe_id    INTEGER NOT NULL REFERENCES recipes (id),
     PRIMARY KEY (character_id, recipe_id)
+) WITHOUT ROWID;
+-- Quêtes (API Blizzard, namespace static-forever) : celles des zones de donjon, et celles de leurs suites.
+CREATE TABLE IF NOT EXISTS quests (
+    id          INTEGER PRIMARY KEY,
+    title       TEXT,
+    area_id     INTEGER,
+    kind        TEXT,
+    faction     TEXT,     -- « alliance » / « horde » quand Blizzard le précise
+    description TEXT,
+    xp          INTEGER,
+    money       INTEGER,
+    items       TEXT,     -- JSON [[id, nom], …]
+    fetched_at  INTEGER NOT NULL
+);
+-- Chasse au trésor : ce que les membres ont vu en jeu (addon), fusionné quête par quête.
+CREATE TABLE IF NOT EXISTS quest_givers (
+    quest_id    INTEGER PRIMARY KEY,
+    title       TEXT,     -- titre vu en jeu (en attendant celui de Blizzard)
+    source      TEXT,     -- « npc », « object », « item »
+    npc_id      INTEGER,
+    npc_name    TEXT,
+    map_id      INTEGER,  -- carte du jeu (UiMapID) des coordonnées
+    zone        TEXT,
+    x           REAL,
+    y           REAL,
+    quest_level INTEGER,
+    min_level   INTEGER,  -- plus bas niveau de joueur à qui elle a été proposée
+    factions    TEXT,     -- factions des joueurs qui l'ont vue (« alliance,horde »)
+    found_by    TEXT,     -- perso qui l'a repérée en premier
+    found_at    INTEGER NOT NULL,
+    updated_at  INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS quest_links (
+    prev_id  INTEGER NOT NULL,
+    next_id  INTEGER NOT NULL,
+    found_at INTEGER NOT NULL,
+    PRIMARY KEY (prev_id, next_id)
 ) WITHOUT ROWID;
 -- Droits du site confiés par un admin du serveur (« Gérer le serveur ») à un membre : rights = "persos,sorties".
 CREATE TABLE IF NOT EXISTS site_delegations (
@@ -1065,6 +1103,99 @@ class Database:
             (item_id, since),
         )
         return [tuple(r) for r in rows]
+
+    # ---------------------------------------------------- quêtes de donjon
+
+    def upsert_quests(self, rows: list[dict[str, Any]], now: int) -> None:
+        with self.conn:
+            self.conn.executemany(
+                """INSERT OR REPLACE INTO quests (id, title, area_id, kind, faction, description, xp, money, items,
+                   fetched_at) VALUES (:id, :title, :area_id, :kind, :faction, :description, :xp, :money, :items, :now)""",
+                [{**r, "now": now} for r in rows],
+            )
+
+    def quest_ids(self) -> set[int]:
+        return {r[0] for r in self.conn.execute("SELECT id FROM quests")}
+
+    def quests_to_fetch(self, area_quest_ids: set[int]) -> list[int]:
+        """Quêtes à demander à Blizzard : celles des zones de donjon et des suites relevées en jeu, pas encore lues."""
+        linked = {r[0] for r in self.conn.execute("SELECT prev_id FROM quest_links UNION SELECT next_id FROM quest_links")}
+        return sorted((area_quest_ids | linked) - self.quest_ids())
+
+    def store_hunt(self, sightings: list[Any], links: list[tuple[int, int]], now: int) -> tuple[list[int], int]:
+        """Fusionne les relevés d'un client. Renvoie (quêtes découvertes : jamais vues ou sans donneur jusque-là,
+        nombre de suites nouvelles)."""
+        discovered: list[int] = []
+        with self.conn:
+            for s in sightings:
+                row = self.conn.execute("SELECT * FROM quest_givers WHERE quest_id = ?", (s.quest_id,)).fetchone()
+                if row is None:
+                    self.conn.execute(
+                        """INSERT INTO quest_givers (quest_id, title, source, npc_id, npc_name, map_id, zone, x, y,
+                           quest_level, min_level, factions, found_by, found_at, updated_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (s.quest_id, s.title, s.source, s.npc_id, s.npc_name, s.map_id, s.zone, s.x, s.y, s.quest_level,
+                         s.player_level, s.faction, s.character, now, now),
+                    )
+                    discovered.append(s.quest_id)
+                    continue
+                changes: dict[str, Any] = {}
+                if s.title and not row["title"]:
+                    changes["title"] = s.title
+                if s.npc_name and not row["npc_name"]:
+                    changes.update(npc_name=s.npc_name, npc_id=s.npc_id, source=s.source)
+                if s.map_id and row["map_id"] is None:  # première position connue : gardée ensuite
+                    changes.update(map_id=s.map_id, zone=s.zone, x=s.x, y=s.y)
+                    if not row["npc_name"] and row["x"] is None:
+                        discovered.append(s.quest_id)
+                if s.quest_level and not row["quest_level"]:
+                    changes["quest_level"] = s.quest_level
+                if s.player_level and (row["min_level"] is None or s.player_level < row["min_level"]):
+                    changes["min_level"] = s.player_level
+                factions = set(filter(None, (row["factions"] or "").split(",")))
+                if s.faction and s.faction not in factions:
+                    changes["factions"] = ",".join(sorted(factions | {s.faction}))
+                if changes:
+                    changes["updated_at"] = now
+                    sets = ", ".join(f"{k} = :{k}" for k in changes)
+                    self.conn.execute(f"UPDATE quest_givers SET {sets} WHERE quest_id = :qid", {**changes, "qid": s.quest_id})
+            before = self.conn.total_changes
+            self.conn.executemany(
+                "INSERT OR IGNORE INTO quest_links (prev_id, next_id, found_at) VALUES (?, ?, ?)",
+                [(p, n, now) for p, n in links],
+            )
+            new_links = self.conn.total_changes - before
+        return discovered, new_links
+
+    def quest_links(self) -> list[tuple[int, int]]:
+        return [(r[0], r[1]) for r in self.conn.execute("SELECT prev_id, next_id FROM quest_links")]
+
+    def quest_rows(self) -> dict[int, dict[str, Any]]:
+        """Toutes les quêtes connues (Blizzard et/ou vues en jeu), fusionnées : id -> champs."""
+        out: dict[int, dict[str, Any]] = {}
+        for r in self.conn.execute("SELECT * FROM quests"):
+            out[r["id"]] = {
+                "title": r["title"], "area_id": r["area_id"], "kind": r["kind"], "faction": r["faction"],
+                "description": r["description"], "xp": r["xp"], "money": r["money"],
+                "items": json.loads(r["items"]) if r["items"] else [],
+            }
+        for r in self.conn.execute("SELECT * FROM quest_givers"):
+            q = out.setdefault(r["quest_id"], {"area_id": None, "faction": None, "items": []})
+            q["title"] = q.get("title") or r["title"]
+            for key in ("source", "npc_id", "npc_name", "map_id", "zone", "x", "y", "quest_level", "min_level",
+                        "found_by", "found_at"):
+                q[key] = r[key]
+            q["factions"] = [f for f in (r["factions"] or "").split(",") if f]
+        return out
+
+    def quests_version(self) -> str:
+        """Change dès qu'une quête, un relevé ou une suite change (ETag de Data.lua)."""
+        row = self.conn.execute(
+            """SELECT (SELECT COUNT(*) || '.' || COALESCE(MAX(fetched_at), 0) FROM quests) || '-' ||
+                      (SELECT COUNT(*) || '.' || COALESCE(MAX(updated_at), 0) FROM quest_givers) || '-' ||
+                      (SELECT COUNT(*) FROM quest_links)"""
+        ).fetchone()
+        return str(row[0])
 
     # ---------------------------------------------------- droits délégués (site)
 

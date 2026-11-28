@@ -1,6 +1,6 @@
 """Synchro de tout ce qui vient de l'extérieur (wiki, guide, API Blizzard), au même endroit.
 
-- **Chaque nuit à 4 h** (fuseau TIMEZONE) : donjons, priorités de stats, persos ; les arbres de talents
+- **Chaque nuit à 4 h** (fuseau TIMEZONE) : donjons, priorités de stats, persos, quêtes de donjon (nouvelles) ; les arbres de talents
   s'ils ont plus d'une semaine, et seulement les recettes nouvelles. Les persos ajoutés depuis Discord et
   introuvables dans l'armurerie depuis plus de 2 jours sont retirés (leur joueur est prévenu en MP). Au démarrage, si la dernière synchro
   date de plus de 20 h (bot éteint pendant la nuit, premier lancement), elle est rattrapée.
@@ -16,9 +16,12 @@ from datetime import time as dtime
 from pathlib import Path
 from typing import TYPE_CHECKING, Awaitable, Callable
 
+import aiohttp
 import discord
 from discord.ext import commands, tasks
 
+from .. import quests as quest_data
+from ..armory import ArmoryError
 from ..db import SOURCE_WEB
 from .armory import PURGE_GRACE_DAYS, FullSyncReport
 
@@ -179,6 +182,44 @@ class SyncCog(commands.Cog):
         what = "relue(s)" if full else "nouvelle(s) récupérée(s)"
         return (OK if done == len(ids) else WARN), f"{done}/{len(ids)} recette(s) {what}"
 
+    async def _quests(self, full: bool) -> StepResult:
+        """Quêtes des zones de donjon, et celles de leurs suites relevées en jeu : seulement les nouvelles la nuit,
+        toutes avec /admin sync."""
+        armory = self._armory
+        if armory is None or armory.client is None:
+            return SKIP, NO_ARMORY
+        client, db = armory.client, self.bot.db
+        listed: set[int] = set()
+        failed_areas = 0
+        for area in sorted(quest_data.AREAS):
+            try:
+                data = await client.get(f"/data/wow/quest/area/{area}", "static-forever")
+            except (ArmoryError, aiohttp.ClientError, asyncio.TimeoutError) as exc:
+                log.info("Quêtes de la zone %s : %s", area, exc)
+                failed_areas += 1
+                continue
+            listed.update(q["id"] for q in data.get("quests") or [] if isinstance(q, dict) and isinstance(q.get("id"), int))
+        wanted = sorted(listed | db.quest_ids()) if full else db.quests_to_fetch(listed)
+        rows, failed = [], 0
+        for qid in wanted:
+            try:
+                row = quest_data.parse_blizzard_quest(await client.get(f"/data/wow/quest/{qid}", "static-forever"))
+            except (ArmoryError, aiohttp.ClientError, asyncio.TimeoutError):
+                failed += 1
+                continue
+            if row:
+                rows.append(row)
+            if len(rows) >= 50:
+                db.upsert_quests(rows, int(time.time()))
+                rows = []
+            await asyncio.sleep(0.05)
+        if rows:
+            db.upsert_quests(rows, int(time.time()))
+        text = f"{len(listed)} quête(s) dans les donjons, {len(wanted) - failed}/{len(wanted)} lue(s)"
+        if failed_areas:
+            text += f", {failed_areas} zone(s) sans réponse"
+        return (WARN if failed or failed_areas else OK), text
+
     async def _run_steps(self, full: bool, progress: Progress | None = None) -> list[str]:
         """Enchaîne les étapes ; une étape en échec n'empêche pas les suivantes. Renvoie le bilan ligne à ligne."""
         steps: list[tuple[str, Callable[[bool], Awaitable[StepResult]]]] = [
@@ -188,6 +229,7 @@ class SyncCog(commands.Cog):
             ("Persos : métiers, recettes, équipement, talents (armurerie)", self._characters),
             ("Nettoyage des persos Discord introuvables", self._cleanup),
             ("Détails des recettes (Blizzard)", self._recipes),
+            ("Quêtes de donjon (Blizzard)", self._quests),
         ]
         lines: list[str] = []
         for label, step in steps:

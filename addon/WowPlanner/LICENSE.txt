@@ -11,7 +11,8 @@ En bref (le texte qui fait foi est la licence MIT plus bas)
   loi, l'auteur n'est responsable d'aucun dommage, perte de données ou problème lié à son utilisation, y compris
   avec ton compte de jeu.
 - Le client n'envoie au site que ce que l'addon a noté pour tes persos déclarés (sacs, banque, argent, niveau,
-  métiers, recettes), avec ton jeton. Voir la page Confidentialité du site.
+  métiers, recettes) et les quêtes que les PNJ t'ont proposées (PNJ, ta position à ce moment-là, niveaux, suites
+  de quêtes : la chasse au trésor de la guilde), avec ton jeton. Voir la page Confidentialité du site.
 - Projet de fans, sans lien avec Blizzard Entertainment ni WoW Forever. World of Warcraft et Blizzard sont des
   marques de Blizzard Entertainment, Inc.
 - Logo créé par ideapub (https://ideapub.ch/). La licence MIT couvre le code, pas le logo.

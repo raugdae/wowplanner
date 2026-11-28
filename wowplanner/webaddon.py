@@ -5,7 +5,9 @@ API (jeton dans l'en-tête « Authorization: Bearer wp_… ») :
 - GET  /api/addon/prix       : prix de l'HdV pour Data.lua (ETag : rien n'est renvoyé si rien n'a changé) ;
 - POST /api/addon/inventaire : ce que l'addon a vu en jeu (voir addon.parse_inventory) ;
 - GET  /api/addon/version    : version de l'addon servi par le site, et l'empreinte SHA-256 de son .zip ;
-- GET  /api/addon/zip        : l'addon en .zip (le client le pose dans le jeu quand le site en a un plus récent).
+- GET  /api/addon/zip        : l'addon en .zip (le client le pose dans le jeu quand le site en a un plus récent) ;
+- GET  /api/addon/data       : Data.lua complet (prix et quêtes de donjon), écrit tel quel par le client (ETag).
+L'envoi de l'inventaire peut aussi porter les relevés de la chasse au trésor (« hunt », voir quests.parse_hunt).
 Voir addon.py pour le fonctionnement d'ensemble.
 """
 from __future__ import annotations
@@ -26,6 +28,7 @@ from aiohttp import web
 
 from .addon import PayloadError, hash_token, match_recipes, new_token, parse_inventory
 from .db import Character
+from .quests import AREAS, lua_data, parse_hunt
 from .recipes import normalize
 from .webauth import MEMBER_RECHECK_SECONDS
 from .weblegal import REPO
@@ -91,6 +94,7 @@ class AddonPages:
         router.add_post("/api/addon/inventaire", self.api_inventory)
         router.add_get("/api/addon/version", self.api_version)
         router.add_get("/api/addon/zip", self.api_zip)
+        router.add_get("/api/addon/data", self.api_data)
 
     def _addon(self) -> bytes | None:
         """L'addon en .zip, construit une fois (il ne change qu'avec une nouvelle image du site)."""
@@ -172,6 +176,7 @@ décompresser dans <code>Interface/AddOns</code>. Il n'aura alors pas les prix n
 <section class="card admin-sec"><h2>2. Ton jeton</h2>{key_block}<div class="actions">{buttons}</div></section>
 <section class="card admin-sec"><h2>3. En jeu</h2>
 <ul>
+<li>Bouton sur la minimap (ou <code>/wp quetes</code>) : les quêtes de donjon de ton niveau, leurs suites et un waypoint vers chaque donneur. En jouant, tu participes à la chasse au trésor de la guilde : chaque quête qu'un PNJ te propose complète la carte pour tout le monde.</li>
 <li>Survole un objet : prix le plus bas à l'HdV (à l'unité et pour la pile), prix marchand à l'unité, bénéfice ou perte en le vendant à l'HdV plutôt qu'au marchand (5 % de commission déduits) et ventes estimées par jour.</li>
 <li><code>/wp</code> : date des prix et état de l'addon. <code>/wp maj</code> : recharge l'interface pour prendre les
 derniers prix téléchargés par le client.</li>
@@ -273,6 +278,24 @@ l'envoie au site juste après.</p>
             return self._error(404, "Addon introuvable sur ce serveur.")
         return web.Response(body=archive, content_type="application/zip")
 
+    async def api_data(self, request: web.Request) -> web.Response:
+        """Data.lua complet (prix de l'HdV et quêtes de donjon), prêt à écrire tel quel par le client."""
+        owner = await self._owner(request)
+        if isinstance(owner, web.Response):
+            return owner
+        db = self.site.db
+        snapshot = db.ah_snapshot_time() or 0
+        cover = db.conn.execute("SELECT MAX(ts) FROM ah_sales_cover").fetchone()[0] or 0
+        etag = f'"{snapshot}-{cover}-{db.quests_version()}"'
+        if request.headers.get("If-None-Match") == etag:
+            return web.Response(status=304, headers={"ETag": etag})
+        now = int(time.time())
+        prices = {"ts": snapshot, "generated": now, "items": db.addon_prices(now)}
+        text = lua_data(prices, db.quest_rows(), db.quest_links())
+        response = web.Response(text=text, content_type="text/plain", headers={"ETag": etag})
+        response.enable_compression()
+        return response
+
     async def api_prices(self, request: web.Request) -> web.Response:
         owner = await self._owner(request)
         if isinstance(owner, web.Response):
@@ -296,7 +319,8 @@ l'envoie au site juste après.</p>
         if isinstance(owner, web.Response):
             return owner
         try:
-            received = parse_inventory(await request.json())
+            payload = await request.json()
+            received = parse_inventory(payload)
         except PayloadError as exc:
             return self._error(400, str(exc))
         except ValueError:
@@ -324,4 +348,15 @@ l'envoie au site juste après.</p>
             updated.append(character.name)
         if updated:
             log.info("Addon : inventaire reçu pour %s (%s)", owner, ", ".join(updated))
-        return web.json_response({"updated": updated, "unknown": unknown, "unmatched_recipes": unmatched})
+        result: dict[str, Any] = {"updated": updated, "unknown": unknown, "unmatched_recipes": unmatched}
+        sightings, links = parse_hunt(payload.get("hunt"))
+        if sightings or links:
+            discovered, new_links = db.store_hunt(sightings, links, int(time.time()))
+            rows = db.quest_rows() if discovered else {}
+            in_dungeons = [
+                str(rows[q].get("title") or f"quête {q}") for q in discovered if rows.get(q, {}).get("area_id") in AREAS
+            ]
+            result["hunt"] = {"discovered": len(discovered), "dungeon": in_dungeons, "links": new_links}
+            if discovered or new_links:
+                log.info("Chasse au trésor : %d quête(s), %d suite(s) de %s", len(discovered), new_links, owner)
+        return web.json_response(result)

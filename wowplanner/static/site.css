@@ -360,6 +360,29 @@ tr[data-href] { cursor:pointer; }
 .step.opt .dot { background:var(--bg); color:var(--accent); border:2px dashed var(--accent); box-shadow:0 0 0 4px var(--bg); }
 .step .sbody { flex:1; background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:7px 12px; }
 .step.start .sbody { background:transparent; border:none; padding-top:8px; }
+/* Quêtes de donjon : une suite de quêtes = un parcours ; les étapes dans le donjon ressortent. */
+.qchain { margin:0 0 14px; }
+.qchain-head { margin:6px 0 0; color:var(--muted); font-size:13px; }
+.route.quests .step.in .dot { background:var(--accent); }
+.route.quests .step:not(.in) .dot { background:var(--panel2); color:var(--text); border:2px solid var(--accent); }
+.qtag { display:inline-block; margin:0 4px 0 0; padding:1px 7px; border-radius:10px; font-size:11px;
+  background:var(--panel2); border:1px solid var(--line); color:var(--muted); white-space:nowrap; }
+.qtag.dq { color:var(--accent); border-color:var(--accent); }
+.qtag.fin { color:#ff9d5c; border-color:#ff9d5c; }
+.giver { margin:4px 0 2px; font-size:14px; }
+.giver.hunting { color:#ff9d5c; }
+.route.quests .sbody { min-width:0; overflow-wrap:anywhere; }
+.sbody .copy { margin:4px 0; max-width:100%; min-width:0; }
+.sbody .copy code { min-width:0; }
+.sbody .side { margin:0 4px 0 0; }
+.qrew { font-size:13px; color:var(--muted); margin-top:2px; }
+.qtext summary { cursor:pointer; color:var(--muted); font-size:13px; }
+.qtext p { margin:4px 0; white-space:pre-line; font-size:13px; }
+.hunt { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:8px 12px; margin:8px 0 12px; }
+.hunt small { display:block; margin-top:4px; }
+.hbar { display:inline-block; vertical-align:middle; width:120px; height:8px; border-radius:4px; background:var(--panel2);
+  border:1px solid var(--line); overflow:hidden; margin-left:6px; }
+.hbar span { display:block; height:100%; background:var(--accent); }
 .step.opt .sbody { border-style:dashed; opacity:.85; }
 .step .en { display:block; color:var(--muted); font-size:12px; }
 .step .where { color:var(--muted); font-size:13px; margin-top:2px; }
