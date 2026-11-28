@@ -222,6 +222,9 @@ local function row(i)
   r.text:SetJustifyH("LEFT")
   if r.text.SetWordWrap then r.text:SetWordWrap(false) end
   r:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD")
+  r.bg = r:CreateTexture(nil, "BACKGROUND")  -- bandeau des titres de donjon
+  r.bg:SetAllPoints(r)
+  if r.bg.SetColorTexture then r.bg:SetColorTexture(1, 0.82, 0, 0.12) else r.bg:SetTexture(1, 0.82, 0, 0.12) end
   r:SetScript("OnClick", function(self) if self.onClick then self.onClick() end end)
   r:SetScript("OnEnter", function(self)
     if not self.tip then return end
@@ -249,9 +252,10 @@ local function refresh()
   local level = UnitLevel("player") or 1
   local data = WowPlannerData and WowPlannerData.dungeons
   local n = 0
-  local function add(indent, text, tip, onClick)
+  local function add(indent, text, tip, onClick, band)
     n = n + 1
     local r = row(n)
+    if band then r.bg:Show() else r.bg:Hide() end
     r:ClearAllPoints()
     r:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -(n - 1) * ROW_HEIGHT)
     r:SetPoint("RIGHT", content, "RIGHT", 0, 0)
@@ -264,36 +268,46 @@ local function refresh()
   end
 
   if not data then
-    add(0, "Pas encore de quêtes de donjon dans les données de l'addon.")
-    add(0, "Mets à jour le client WoW Planner (1.3 ou plus), laisse-le tourner, puis /wp maj.")
+    -- Data.lua sans quêtes : écrit par un client trop ancien, ou pas encore retéléchargé.
+    add(0, "|cffffd100Les quêtes de donjon arrivent avec le client WoW Planner 1.3 ou plus.|r", nil, nil, true)
+    add(10, "1. Installe la dernière version du client (page Addon WoW du site).")
+    add(10, "2. Laisse-le tourner : son journal dit « Prix … quêtes de donjon : … ».")
+    add(10, "3. En jeu, tape /wp maj.")
   else
+    local mine = playerFaction()
     local shown = 0
     for _, d in ipairs(data) do
       local inRange = level >= d.lo - 3 and level <= d.hi
-      if (settings.showAll or inRange) and #d.q > 0 then
+      local otherSide = d.side and mine and ((d.side == "A") ~= (mine == "alliance"))
+      if settings.showAll or (inRange and not otherSide) then
         shown = shown + 1
         local collapsed = settings.collapsed[d.n]
         local range = d.raid and "raid" or (d.lo .. "-" .. d.hi)
-        add(0, (collapsed and "|cffffd100+|r " or "|cffffd100-|r ") .. "|cffffd100" .. d.n .. "|r  |cffaaaaaa" .. range .. "|r",
+        local side = d.side and (" |cff888888(côté " .. (d.side == "A" and "Alliance" or "Horde") .. ")|r") or ""
+        local count = #d.q > 0 and (" |cff888888· " .. #d.q .. " quête" .. (#d.q > 1 and "s" or "") .. "|r") or ""
+        add(0, (collapsed and "|cffffd100+|r " or "|cffffd100-|r ") .. "|cffffd100" .. d.n .. "|r  |cffaaaaaa" .. range
+          .. "|r" .. side .. count,
           { d.n, "Clique pour " .. (collapsed and "déplier" or "replier") .. "." },
-          function() settings.collapsed[d.n] = not collapsed or nil; refresh() end)
-        if not collapsed then
+          function() settings.collapsed[d.n] = not collapsed or nil; refresh() end, true)
+        if not collapsed and #d.q == 0 then
+          add(10, "|cff888888Quêtes pas encore chargées par le site (synchro des données).|r")
+        elseif not collapsed then
           local listed = {}
           for _, qid in ipairs(d.q) do
             local steps = chain(qid)
             local fresh = false
-            for _, s in ipairs(steps) do if not listed[s] then fresh = true end end
+            for _, st in ipairs(steps) do if not listed[st] then fresh = true end end
             if fresh and not wrongFaction(questInfo(qid)) then
-              for i, s in ipairs(steps) do
-                listed[s] = true
-                local q = questInfo(s)
-                local done = isDone(s)
+              for i, st in ipairs(steps) do
+                listed[st] = true
+                local q = questInfo(st)
+                local done = isDone(st)
                 local mark = done and "|TInterface\\RaidFrame\\ReadyCheck-Ready:0|t " or "|TInterface\\GossipFrame\\AvailableQuestIcon:0|t "
                 local stepText = #steps > 1 and format("|cffaaaaaa%d/%d|r ", i, #steps) or ""
                 local finale = (#steps > 1 and i == #steps) and " |cffff8040(finale)|r" or ""
                 local lvl = q.level and ("[" .. q.level .. "] ") or ""
-                local title = done and ("|cff808080" .. lvl .. (q.title or ("Quête " .. s)) .. "|r")
-                  or (difficultyColor(q.level) .. lvl .. (q.title or ("Quête " .. s)) .. "|r")
+                local title = done and ("|cff808080" .. lvl .. (q.title or ("Quête " .. st)) .. "|r")
+                  or (difficultyColor(q.level) .. lvl .. (q.title or ("Quête " .. st)) .. "|r")
                 local minText = q.min and ("  |cffaaaaaadès niv. " .. q.min .. "|r") or ""
                 local giver
                 if q.npc or q.x then
@@ -304,7 +318,7 @@ local function refresh()
                 else
                   giver = "|cffff9933Donneur pas encore repéré : à toi de le trouver !|r"
                 end
-                local tip = { q.title or ("Quête " .. s) }
+                local tip = { q.title or ("Quête " .. st) }
                 if q.level then tip[#tip + 1] = "Niveau de la quête : " .. q.level end
                 if q.min then tip[#tip + 1] = "Proposée dès le niveau " .. q.min .. " (plus bas niveau relevé)" end
                 if q.npc then tip[#tip + 1] = "Donneur : " .. q.npc end
@@ -320,7 +334,7 @@ local function refresh()
       end
     end
     if shown == 0 then
-      add(0, "Aucun donjon de ton niveau avec des quêtes connues.")
+      add(0, "Aucun donjon de ton niveau.")
       add(0, "Clique sur « Afficher tous les donjons » en haut.")
     end
   end
@@ -329,7 +343,7 @@ local function refresh()
 
   local found = WowPlannerData and WowPlannerData.found
   local total = WowPlannerData and WowPlannerData.total
-  counter:SetText(found and total and format("Chasse au trésor : %d/%d quêtes repérées", found, total) or "")
+  counter:SetText(found and total and total > 0 and format("Chasse au trésor : %d/%d quêtes de donjon ont leur donneur repéré", found, total) or "")
   header:SetText(settings.showAll and "Tous les donjons" or ("Donjons de ton niveau (" .. level .. ")"))
   toggle:SetText(settings.showAll and "Seulement mon niveau" or "Afficher tous les donjons")
 end

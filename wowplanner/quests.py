@@ -69,6 +69,7 @@ class QuestGroup:
     low: int
     high: int
     raid: bool
+    side: str | None = None  # « alliance » / « horde » : entrée en territoire d'une faction
 
 
 def _build_groups() -> tuple[QuestGroup, ...]:
@@ -82,7 +83,9 @@ def _build_groups() -> tuple[QuestGroup, ...]:
             continue  # donjon retiré de la liste du site
         low = min((d.low for d in found), default=dungeons.RAID_LEVEL)
         high = max((d.high for d in found), default=dungeons.RAID_LEVEL)
-        groups.append(QuestGroup(slugs[0], name, slugs, areas, low, high, raid))
+        sides = {d.side for d in found}
+        side = sides.pop() if len(sides) == 1 else None
+        groups.append(QuestGroup(slugs[0], name, slugs, areas, low, high, raid, side))
     return tuple(sorted(groups, key=lambda g: (g.raid, g.low, g.high, g.name)))
 
 
@@ -282,8 +285,9 @@ def lua_data(prices: dict[str, Any], quests: dict[int, dict[str, Any]], links: l
     for g in GROUPS:
         ids = sorted({qid for area in g.areas for qid in by_area.get(area, [])})
         shown.update(ids)
+        side = f",side={lua_string(g.side[0].upper())}" if g.side else ""
         lines.append(
-            f"{{n={lua_string(g.name)},lo={g.low},hi={g.high},raid={'true' if g.raid else 'false'},"
+            f"{{n={lua_string(g.name)},lo={g.low},hi={g.high},raid={'true' if g.raid else 'false'}{side},"
             f"q={{{','.join(map(str, ids))}}}}},"
         )
     lines.append("},")

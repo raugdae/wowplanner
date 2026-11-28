@@ -134,31 +134,43 @@ def test_hunt_merge_data_file_and_window(tmp_path):
     g.fire("PLAYER_LOGIN")
     g.SlashCmdList.WOWPLANNER("quetes")
     shown = [t for t, _ in rows_of(lua)]
-    assert "Les Mortemines" in shown[0] and "17-26" in shown[0]
-    assert "1/3" in shown[1] and "La Confrérie défias" in shown[1] and "ReadyCheck-Ready" in shown[1]  # déjà faite
-    assert "Gryan Stoutmantle" in shown[2] and "Marche de l'Ouest 56, 47" in shown[2]
-    assert "2/3" in shown[3] and "dès niv. 15" in shown[3] and "pas encore repéré" in shown[4]
-    assert "3/3" in shown[5] and "(finale)" in shown[5] and "pas encore repéré" in shown[6]
-    assert len(shown) == 7 and not any("masques rouges" in t for t in shown)  # quête Horde, joueur Alliance
+    # Niveau 20, Alliance : les donjons de la tranche, même sans quête connue ; pas ceux en territoire Horde.
+    heads = [t for t in shown if "|cffffd100-|r" in t]
+    assert any("La Salle des Thanes" in t and "côté Alliance" in t for t in heads)
+    assert not any("Ruines de Lordaeron" in t for t in shown)
+    wc = next(i for i, t in enumerate(shown) if "Cavernes des lamentations" in t)
+    assert "pas encore chargées" in shown[wc + 1]
+    dm = next(i for i, t in enumerate(shown) if "Les Mortemines" in t)
+    assert "17-26" in shown[dm] and "2 quêtes" in shown[dm]
+    steps = shown[dm + 1:dm + 7]
+    assert "1/3" in steps[0] and "La Confrérie défias" in steps[0] and "ReadyCheck-Ready" in steps[0]  # déjà faite
+    assert "Gryan Stoutmantle" in steps[1] and "Marche de l'Ouest 56, 47" in steps[1]
+    assert "2/3" in steps[2] and "dès niv. 15" in steps[2] and "pas encore repéré" in steps[3]
+    assert "3/3" in steps[4] and "(finale)" in steps[4] and "pas encore repéré" in steps[5]
+    assert "Donjon d'Ombrecroc" in shown[dm + 7]
+    assert not any("masques rouges" in t for t in shown)  # quête Horde, joueur Alliance
 
-    click(rows_of(lua)[2][1])  # clic sur le donneur : épingle sur la carte du jeu
+    click(rows_of(lua)[dm + 2][1])  # clic sur le donneur : épingle sur la carte du jeu
     assert (g.WAYPOINT.m, g.WAYPOINT.x) == (1436, 0.56)
     lua.execute("TomTom = { AddWaypoint = function(self, m, x, y, opts) TT = { m, x, y, opts.title } end }")
-    click(rows_of(lua)[1][1])  # avec TomTom : sa flèche
+    click(rows_of(lua)[dm + 1][1])  # avec TomTom : sa flèche
     assert g.TT[1] == 1436 and "Gryan Stoutmantle" in g.TT[4]
-    click(rows_of(lua)[4][1])  # donneur inconnu : un message, pas de waypoint
+    click(rows_of(lua)[dm + 4][1])  # donneur inconnu : un message, pas de waypoint
     assert "toi de le trouver" in printed(lua)[-1]
+    click(rows_of(lua)[dm][1])  # replier les Mortemines
+    assert "Donjon d'Ombrecroc" in rows_of(lua)[dm + 1][0]
 
-    lua.execute("LEVEL = 50")  # plus du niveau des Mortemines : rien, sauf en affichant tout
+    lua.execute("LEVEL = 70")  # aucun donjon à ce niveau : tout s'affiche à la demande
     g.SlashCmdList.WOWPLANNER("quetes")
     g.SlashCmdList.WOWPLANNER("quetes")
     assert "Aucun donjon de ton niveau" in rows_of(lua)[0][0]
     lua.execute("WowPlannerDB.settings.showAll = true")
     g.SlashCmdList.WOWPLANNER("quetes")
     g.SlashCmdList.WOWPLANNER("quetes")
-    assert "Les Mortemines" in rows_of(lua)[0][0]
-    click(rows_of(lua)[0][1])  # replier le donjon
-    assert len(rows_of(lua)) == 1
+    shown = [t for t, _ in rows_of(lua)]
+    assert "Gouffre de Ragefeu" in shown[0] and any("Ruines de Lordaeron" in t and "côté Horde" in t for t in shown)
+    g.SlashCmdList.WOWPLANNER("")
+    assert any("quêtes de donjon : 2 connues, donneur repéré pour 0" in t for t in printed(lua))
     db.close()
 
 
@@ -168,7 +180,9 @@ def test_quests_window_without_data():
     g.fire("ADDON_LOADED", "WowPlanner")
     g.fire("PLAYER_LOGIN")
     g.SlashCmdList.WOWPLANNER("quetes")
-    assert "Pas encore de quêtes" in rows_of(lua)[0][0]
+    assert "client WoW Planner 1.3 ou plus" in rows_of(lua)[0][0]
+    g.SlashCmdList.WOWPLANNER("")
+    assert any("pas de quêtes de donjon dans les données" in t for t in printed(lua))
     g.SlashCmdList.WOWPLANNER("bouton")
     assert "masqué" in printed(lua)[-1] and g.WowPlannerDB.settings.hideButton
 

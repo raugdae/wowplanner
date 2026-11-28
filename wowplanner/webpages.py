@@ -45,6 +45,7 @@ from .webui import (
     FILTER_SCRIPT,
     FOLD_BUTTONS,
     GEAR_SCRIPT,
+    PAGE_TABS_SCRIPT,
     ROW_LINK_SCRIPT,
     SPEC_SCRIPT,
     TABS_SCRIPT,
@@ -53,6 +54,7 @@ from .webui import (
     esc,
     login_url,
     members_visible,
+    page_tabs,
     page,
 )
 
@@ -162,23 +164,27 @@ class GuildPages:
             talents_block = ""
         title = f"""<h1 class="title" style="color:{CLASS_COLORS.get(character.wow_class, "inherit")}">{esc(character.name)}</h1>
 <p class="sub">{level}{esc(class_label(character.wow_class))} {esc(race_label(character.race))}{spec} · {roles_html(character)}{synced}</p>"""
-        # Ordre : perso (équipement, stats), talents, puis métiers et recettes.
-        if armory:
-            top = f"{title}{armory}"
-        else:
-            top = f'<div class="hero"><div class="info">{title}</div>{render}</div>'
+        # Onglets : perso (équipement, stats et talents), ce que la guilde peut lui fabriquer, métiers et recettes.
+        top = title if armory else f'<div class="hero"><div class="info">{title}</div>{render}</div>'
         viewer = _VIEWER.get()
         viewer_id = int(viewer.user["id"]) if viewer is not None and viewer.user else None
         top_stats = list(gear.PRIORITIES[spec_key][2][:3]) if spec_key in gear.PRIORITIES else []
         gear_block = crafted_gear_html(character, all_recipes, self.site.db.recipe_crafters(gid), viewer_id, top_stats)
+        tabs = []
+        if armory:
+            tabs.append(("equipement", "⚔️ Équipement et talents", armory))
+        elif talents_block:
+            tabs.append(("talents", "✨ Talents", talents_block))
+        if gear_block:
+            tabs.append(("fabricable", "🔨 À lui fabriquer", gear_block))
+        recipe_count = len(known)
+        tabs.append(("metiers", "🛠️ Métiers et recettes" + (f'<span class="n">{recipe_count}</span>' if recipe_count else ""),
+                     professions_block + recipes_html))
         body = f"""
 {top}
-{talents_block}
-{gear_block}
-<h2>Métiers</h2>
-{professions_block}
-{recipes_html}"""
-        return page(character.name, "persos", body, FILTER_SCRIPT + TABS_SCRIPT + SPEC_SCRIPT + GEAR_SCRIPT)
+{page_tabs(tabs, "Fiche du perso")}"""
+        return page(character.name, "persos", body,
+                    FILTER_SCRIPT + TABS_SCRIPT + SPEC_SCRIPT + GEAR_SCRIPT + PAGE_TABS_SCRIPT)
 
     async def professions(self, request: web.Request) -> web.Response:
         gid = self.site._scope()
@@ -223,8 +229,12 @@ class GuildPages:
             + recipes_by_family_html(recipes, crafted_by, links)
             if recipes else '<p class="empty">Aucune recette connue (seuls les persos trouvés dans l\'armurerie en ont).</p>'
         )
-        body = f"<h1 class=\"title\">{esc(label)}</h1><h2>Qui l'a</h2>{who}<h2>Recettes</h2>{recipes_html}"
-        return page(label, "metiers", body, FILTER_SCRIPT)
+        tabs = [
+            ("qui", "👥 Qui l'a" + (f'<span class="n">{len(holders)}</span>' if holders else ""), who),
+            ("recettes", "📜 Recettes" + (f'<span class="n">{len(recipes)}</span>' if recipes else ""), recipes_html),
+        ]
+        body = f'<h1 class="title">{esc(label)}</h1>{page_tabs(tabs, "Métier")}'
+        return page(label, "metiers", body, FILTER_SCRIPT + PAGE_TABS_SCRIPT)
 
     async def dungeons(self, request: web.Request) -> web.Response:
         # Page publique : les persos du serveur ne sont montrés qu'aux membres connectés.
@@ -419,24 +429,31 @@ Warcraft Tavern ({dungeons.SOURCES_CHECKED}) : l'API Blizzard ne fournit pas le 
             f'<a href="/donjon/{prev_.slug}">← {esc(prev_.name)}</a>' if prev_ else "<span></span>"
         ) + (f'<a href="/donjon/{next_.slug}">{esc(next_.name)} →</a>' if next_ else "<span></span>") + "</nav>"
 
+        infos = f"""<div class="dgrid">
+<section class="card"><h2>Entrée</h2>{"".join(entry)}{link}</section>
+<section class="card"><h2>Persos dans la tranche</h2><div class="who-list">{who}</div></section>
+</div>"""
+        bosses = f"""<p class="sub">Dans l'ordre habituel ; ◇ = optionnel (rare, invoqué ou pas nécessaire pour finir).</p>
+{route}{notes}"""
+        count = len(guide.bosses)
+        tabs = [
+            ("infos", "🚪 Entrée", infos),
+            ("boss", "💀 Boss" + (f'<span class="n">{count}</span>' if count else ""), bosses),
+        ]
+        quests = quests_section(self.site.db, slug, members_visible())
+        if quests is not None:
+            tabs.append(("quetes", "📜 Quêtes" + (f'<span class="n">{quests[0]}</span>' if quests[0] else ""), quests[1]))
         body = f"""
 <p class="crumb"><a href="/donjons">← Tous les donjons</a></p>
 <div class="dhero">{tile}<div>
 <h1 class="title">{esc(found.name)}{badge}</h1>
 <p class="sub">{esc(found.english)} · {sub}</p>
 <div class="facts">{"".join(facts)}</div>{create}</div></div>
-<div class="dgrid">
-<section class="card"><h2>Entrée</h2>{"".join(entry)}{link}</section>
-<section class="card"><h2>Persos dans la tranche</h2><div class="who-list">{who}</div></section>
-</div>
-<h2>Parcours des boss</h2>
-<p class="sub">Dans l'ordre habituel ; ◇ = optionnel (rare, invoqué ou pas nécessaire pour finir).</p>
-{route}{notes}
-{quests_section(self.site.db, slug, members_visible())}
+{page_tabs(tabs, "Fiche du donjon")}
 <p class="src">Entrée et boss d'après les guides de Warcraft Tavern ({dungeons.SOURCES_CHECKED}) ; noms français du
 Journal de Blizzard quand il les donne. Vignette : Blizzard. L'API Blizzard ne fournit ni carte ni coordonnées pour
 Forever : la carte détaillée est sur le guide. Quêtes : API Blizzard ; donneurs, positions, niveaux et suites
 relevés en jeu par les membres avec l'addon WoW Planner.</p>
 {nav}"""
-        return page(found.name, "donjons", body, COPY_SCRIPT)
+        return page(found.name, "donjons", body, COPY_SCRIPT + PAGE_TABS_SCRIPT)
 

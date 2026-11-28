@@ -7,8 +7,10 @@ on:
     tags: ["client-v*"]
   workflow_dispatch:
 
+# Lecture seule par défaut ; seule la publication de la release peut écrire. Actions et dépendances figées sur une
+# version exacte (commit, numéro) : une mise à jour piégée chez un tiers ne s'invite pas dans l'exécutable.
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -23,13 +25,13 @@ jobs:
             icon: client/logo.png
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
         with:
           python-version: "3.12"
       - name: Outils
         # Pillow : PyInstaller convertit le logo PNG en icône macOS (.icns).
-        run: pip install pyinstaller==6.11.1 certifi pillow
+        run: pip install pyinstaller==6.22.3 certifi==2026.11.20 pillow==13.0.0
       - name: Exécutable
         shell: bash
         run: |
@@ -50,7 +52,7 @@ jobs:
       - name: Archive (macOS)
         if: runner.os == 'macOS'
         run: cd package && ditto -c -k --keepParent WowPlanner ../${{ matrix.artifact }}
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.artifact }}
@@ -59,11 +61,13 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/client-v')
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
         with:
           merge-multiple: true
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65  # v2
         with:
           files: WowPlanner-*.zip
           make_latest: true

@@ -1180,6 +1180,9 @@ def test_website_discord_login(tmp_path):
     assert "connecte-toi avec Discord" in text
     status, text, _ = got["dungeon_anon"]
     assert status == 200 and "Hollie" not in text and "Réservé aux membres du serveur" in text
+    # Fiche en onglets (Entrée, Boss, Quêtes), chacun avec son titre pour une lecture sans JavaScript.
+    assert 'role="tablist"' in text and 'data-ptab="infos"' in text and 'data-ptab="boss"' in text
+    assert 'data-ptab="quetes"' in text and 'id="quetes"' in text and text.count('class="ppanel-title"') == 3
     assert "scope=identify" in got["authorize"] and "redirect_uri=https%3A%2F%2Fwow.fr%2Fauth%2Fcallback" in got["authorize"]
     assert got["bad_state"][0] == 400
     assert got["callback"][0] == 302 and got["callback"][2] == "/metiers"  # retour à la page demandée

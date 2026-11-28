@@ -21,7 +21,9 @@ import queue
 import re
 import shutil
 import ssl
+import subprocess
 import sys
+import tempfile
 import threading
 import time
 import urllib.error
@@ -32,10 +34,10 @@ from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable
 
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 SITE_URL = "https://wow.raug-info.ch"
 REPO_URL = "https://github.com/raugdae/wowplanner"
-TERMS_VERSION = "3"  # à changer si les conditions ci-dessous changent : elles sont alors redemandées
+TERMS_VERSION = "4"  # à changer si les conditions ci-dessous changent : elles sont alors redemandées
 TERMS = f"""WoW Planner (client {VERSION} et addon) est gratuit, sans publicité ni abonnement, et libre : licence MIT,
 tu peux l'utiliser, le copier, le modifier et le partager en gardant cette licence.
 
@@ -43,7 +45,8 @@ Il est fourni « tel quel », SANS AUCUNE GARANTIE. Tu l'utilises à tes risques
 loi, l'auteur n'est responsable d'aucun dommage, perte de données ou problème lié à son utilisation, y compris avec
 ton compte de jeu.
 
-Ce que fait le client : il installe l'addon dans le dossier du jeu que tu choisis et le met à jour depuis le site,
+Ce que fait le client : il se met à jour tout seul depuis le dépôt GitHub du projet, il installe l'addon dans le
+dossier du jeu que tu choisis et le met à jour depuis le site,
 y écrit les prix de l'hôtel des ventes et les quêtes de donjon, et envoie au site, avec ton jeton, ce que l'addon
 a noté pour tes persos déclarés (sacs, banque, argent, niveau, métiers, recettes) ainsi que les quêtes que les PNJ
 t'ont proposées (PNJ, ta position à ce moment-là, niveaux, suites de quêtes) pour la chasse au trésor de la guilde. Rien d'autre ne quitte ton ordinateur. Détails : page Confidentialité du site.
@@ -58,6 +61,12 @@ DEFAULT_SERVER = "https://wow.raug-info.ch"
 PRICES_EVERY = 20 * 60
 WATCH_EVERY = 15
 ADDON_NAME = "WowPlanner"
+# Mise à jour du client : dernière release GitHub (tag client-vX.Y.Z), vérifiée toutes les 6 heures.
+RELEASES_API = (os.environ.get("WOWPLANNER_RELEASES_API")  # tests : une fausse release locale
+                or "https://api.github.com/repos/raugdae/wowplanner/releases/latest")
+CLIENT_ASSETS = {"win32": "WowPlanner-Windows.zip", "darwin": "WowPlanner-macOS.zip"}
+CLIENT_CHECK_EVERY = 6 * 3600
+MAX_CLIENT_SIZE = 80 * 1024 * 1024
 MAX_ADDON_SIZE = 5 * 1024 * 1024  # garde-fou : l'addon pèse quelques dizaines de Ko (hors prix)
 ADDON_FILE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]*$")  # fichiers à plat dans WowPlanner/, sans chemin
 GAME_FOLDERS = ("_classic_era_", "_classic_", "_anniversary_", "_retail_")
@@ -432,6 +441,125 @@ class Api:
         return json.loads(self.request("GET", "/api/addon/moi")[2])
 
 
+# ====================================================================== mise à jour du client
+
+
+def frozen_target() -> Path | None:
+    """Ce qu'il faut remplacer pour mettre le client à jour : l'exécutable (Windows) ou l'app (macOS). None si le
+    client tourne depuis ses sources (python wowplanner_client.py) : pas de mise à jour automatique."""
+    if not getattr(sys, "frozen", False):
+        return None
+    exe = Path(sys.executable).resolve()
+    if sys.platform == "darwin":
+        return next((parent for parent in exe.parents if parent.suffix == ".app"), None)
+    return exe
+
+
+def release_asset(release: Any, platform: str = sys.platform) -> tuple[str, str, str | None] | None:
+    """(version, adresse du .zip, empreinte « sha256:… » ou None) de la dernière release GitHub du client pour ce
+    système ; None si elle ne le concerne pas."""
+    if not isinstance(release, dict):
+        return None
+    tag = str(release.get("tag_name") or "")
+    if not tag.startswith("client-v"):
+        return None
+    wanted = CLIENT_ASSETS.get(platform)
+    for asset in release.get("assets") or []:
+        if isinstance(asset, dict) and asset.get("name") == wanted and asset.get("browser_download_url"):
+            return tag.removeprefix("client-v"), str(asset["browser_download_url"]), asset.get("digest")
+    return None
+
+
+def fetch(url: str, accept: str = "application/octet-stream", limit: int = MAX_CLIENT_SIZE) -> bytes:
+    req = urllib.request.Request(url, headers={"Accept": accept, "User-Agent": f"WowPlannerClient/{VERSION}"})
+    try:
+        with urllib.request.urlopen(req, timeout=120, context=_ssl_context()) as resp:
+            data = resp.read(limit + 1)
+    except (urllib.error.URLError, OSError) as exc:
+        raise ApiError(f"GitHub injoignable ({getattr(exc, 'reason', exc)})") from None
+    if len(data) > limit:
+        raise ApiError("fichier trop gros")
+    return data
+
+
+def check_digest(data: bytes, digest: str | None) -> None:
+    """Vérifie l'empreinte publiée par GitHub pour le fichier (« sha256:… ») : un téléchargement abîmé ou modifié
+    en route est refusé."""
+    if not digest:
+        return
+    kind, _, value = digest.partition(":")
+    if kind != "sha256" or hashlib.sha256(data).hexdigest() != value.lower():
+        raise ValueError("empreinte du téléchargement incorrecte")
+
+
+def apply_client_update(target: Path, archive: bytes, platform: str = sys.platform) -> Path:
+    """Remplace le client par celui de l'archive de la release (WowPlanner/WowPlanner.exe ou WowPlanner.app).
+    L'ancien est gardé à côté (« .old ») jusqu'au prochain lancement : un programme lancé ne peut pas s'effacer, mais
+    il peut se renommer. Renvoie ce qu'il faut relancer."""
+    with zipfile.ZipFile(io.BytesIO(archive)) as content:
+        names = content.namelist()
+        if platform == "darwin":
+            if not any(n.startswith("WowPlanner/WowPlanner.app/") for n in names):
+                raise ValueError("archive sans WowPlanner.app")
+            with tempfile.TemporaryDirectory() as tmp:
+                zipped = Path(tmp) / "client.zip"
+                zipped.write_bytes(archive)
+                # ditto garde les droits d'exécution et les liens de l'app (zipfile les perdrait).
+                subprocess.run(["ditto", "-x", "-k", str(zipped), str(Path(tmp) / "out")], check=True)
+                fresh = Path(tmp) / "out" / "WowPlanner" / "WowPlanner.app"
+                old = target.with_name(target.stem + ".old.app")
+                shutil.rmtree(old, ignore_errors=True)
+                os.replace(target, old)
+                shutil.move(str(fresh), str(target))
+            return target
+        member = next((n for n in names if n.replace("\\", "/").endswith("WowPlanner/WowPlanner.exe")), None)
+        if member is None:
+            raise ValueError("archive sans WowPlanner.exe")
+        data = content.read(member)
+    if not data.startswith(b"MZ"):
+        raise ValueError("exécutable illisible")
+    fresh = target.with_name(target.stem + ".new" + target.suffix)
+    old = target.with_name(target.stem + ".old" + target.suffix)
+    fresh.write_bytes(data)
+    try:
+        old.unlink()
+    except OSError:
+        pass
+    os.replace(target, old)
+    os.replace(fresh, target)
+    return target
+
+
+def remove_old_client(target: Path | None = None, tries: int = 10, pause: float = 3.0) -> None:
+    """Efface l'ancienne version laissée par la dernière mise à jour (au lancement de la nouvelle ; elle peut mettre
+    quelques secondes à se fermer, d'où les essais répétés)."""
+    target = target or frozen_target()
+    if target is None:
+        return
+    old = target.with_name(target.stem + ".old" + target.suffix)
+    for attempt in range(tries):
+        try:
+            if old.is_dir():
+                shutil.rmtree(old)
+            elif old.exists():
+                old.unlink()
+            return
+        except OSError:
+            if attempt + 1 < tries:
+                time.sleep(pause)
+
+
+def relaunch(target: Path) -> None:
+    """Lance la nouvelle version (environnement PyInstaller remis à zéro : elle se décompresse dans son propre
+    dossier) ; l'appelant se ferme ensuite."""
+    env = {**os.environ, "PYINSTALLER_RESET_ENVIRONMENT": "1"}
+    if sys.platform == "darwin":
+        subprocess.Popen(["open", "-n", str(target)], env=env)
+    else:
+        flags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        subprocess.Popen([str(target)], env=env, creationflags=flags, close_fds=True)
+
+
 # ====================================================================== synchro
 
 
@@ -441,11 +569,45 @@ class Sync:
     def __init__(self, settings: Settings, log: Callable[[str], None]):
         self.settings, self.log = settings, log
         self.last_prices = 0.0
+        self.last_client_check = 0.0
+        self.told_version: str | None = None
+        # Appelé avec le client mis à jour à relancer (fenêtre) ; None : mise à jour seulement signalée (--once).
+        self.restart: Callable[[Path], None] | None = None
+
+    def update_client(self) -> bool:
+        """Installe la dernière version du client si GitHub en a une plus récente. True si le client doit redémarrer."""
+        self.last_client_check = time.time()
+        try:
+            found = release_asset(json.loads(fetch(RELEASES_API, "application/vnd.github+json", 1_000_000)))
+        except (ApiError, ValueError):
+            return False  # GitHub injoignable : on réessaiera plus tard, sans encombrer le journal
+        if found is None or parse_version(found[0]) <= parse_version(VERSION):
+            return False
+        version, url, digest = found
+        target = frozen_target()
+        if target is None or self.restart is None:
+            if self.told_version != version:
+                self.told_version = version
+                self.log(f"Nouvelle version du client disponible : {version} ({REPO_URL}/releases/latest).")
+            return False
+        self.log(f"Nouvelle version du client : {VERSION} → {version}, téléchargement…")
+        try:
+            archive = fetch(url)
+            check_digest(archive, digest)
+            target = apply_client_update(target, archive)
+        except (ApiError, ValueError, OSError, zipfile.BadZipFile, subprocess.CalledProcessError) as exc:
+            self.log(f"Client non mis à jour : {exc}")
+            return False
+        self.log(f"Client {version} installé : redémarrage…")
+        self.restart(target)
+        return True
 
     def root(self) -> Path | None:
         return game_root(self.settings.game_dir) if self.settings.game_dir else None
 
     def run(self, force_prices: bool = False) -> None:
+        if time.time() - self.last_client_check >= CLIENT_CHECK_EVERY and self.update_client():
+            return  # le client redémarre dans sa nouvelle version
         root = self.root()
         if root is None:
             self.log("Choisis le dossier du jeu.")
@@ -588,6 +750,19 @@ def run_window(settings: Settings) -> None:
     messages: queue.Queue[str] = queue.Queue()
     log = lambda text: messages.put(f"{datetime.now():%H:%M:%S}  {text}")  # noqa: E731
     sync = Sync(settings, log)
+
+    def restart(target: Path) -> None:  # appelé par le fil de synchro : la fenêtre se ferme depuis le sien
+        def go() -> None:
+            try:
+                relaunch(target)
+            except OSError as exc:
+                log(f"Relance impossible ({exc}) : relance WoW Planner à la main.")
+                return
+            window.destroy()
+            os._exit(0)
+        window.after(1500, go)
+
+    sync.restart = restart
     wake = threading.Event()
     force = threading.Event()
 
@@ -753,6 +928,7 @@ def run_window(settings: Settings) -> None:
 
 
 def main() -> None:
+    threading.Thread(target=remove_old_client, daemon=True).start()
     settings = Settings.load()
     if "--once" in sys.argv:
         Sync(settings, lambda text: print(text, flush=True)).run(force_prices=True)

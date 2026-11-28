@@ -18,7 +18,7 @@ from aiohttp import web
 from .armory import icon_url
 from .auctions import money_parts, money_text
 from .recipes import normalize
-from .webui import QUALITY_COLORS, esc
+from .webui import PAGE_TABS_SCRIPT, QUALITY_COLORS, esc, page_tabs
 from .webmember import MemberPages
 
 PAGE_SIZE = 50
@@ -627,12 +627,11 @@ autocomplete="off">
         if profile is not None and sum(profile[0]):
             averages, covered = profile
             best = max(range(24), key=lambda h: averages[h])
-            demand = f"""<h2>Quand ça se vend</h2>
-<p class="muted">Ventes moyennes selon l'heure de la journée, sur les {covered} dernières heures relevées
+            demand = f"""<p class="muted">Ventes moyennes selon l'heure de la journée, sur les {covered} dernières heures relevées
 (7 jours au plus). Le plus actif : <b>entre {best}h et {(best + 1) % 24}h</b>. L'heure actuelle est en surbrillance.</p>
 {hour_profile_svg(averages, datetime.now(tz).hour)}"""
         elif sales:
-            demand = ('<h2>Quand ça se vend</h2><p class="muted">Pas encore assez de relevés : la demande heure par '
+            demand = ('<p class="muted">Pas encore assez de relevés : la demande heure par '
                       'heure apparaît après une journée complète.</p>')
         else:
             demand = ""
@@ -662,18 +661,19 @@ autocomplete="off">
                              + (f" et {len(uses) - 12} autre(s)" if len(uses) > 12 else "") + "</p>")
             guild = "".join(parts)
 
+        sections = [("cours", f"📈 Cours sur {esc(period_label)}",
+                     f'<div class="period-tabs">{tabs}</div>{history}')]
+        if demand:
+            sections.append(("demande", "🕐 Quand ça se vend", demand))
         body = f"""
 <p class="crumb"><a href="/hdv">← Hôtel des ventes</a></p>
 <div class="ah-head">{item_icon(row)}<div><h1 class="title">{item_name(row)} {favorite}</h1>
 <p class="sub">{esc(kind)}{esc(vendor)}</p></div></div>
 {now_block}
 {guild}
-<h2>Cours sur {esc(period_label)}</h2>
-<div class="period-tabs">{tabs}</div>
-{history}
-{demand}"""
+{page_tabs(sections, "Fiche de l'objet")}"""
         title = row["name"] or f"Objet n° {item_id}"
-        return self._render(request, title, "hdv", body, CHART_SCRIPT)
+        return self._render(request, title, "hdv", body, CHART_SCRIPT + PAGE_TABS_SCRIPT)
 
     @staticmethod
     def _sales_note(sales: list[tuple[int, int, int]]) -> str:

@@ -503,7 +503,12 @@ Le jeu interdit aux addons tout accès réseau : trois pièces travaillent ensem
   si la version du `.toc` du site est plus récente, il télécharge `/api/addon/zip`, contrôle son SHA-256 et son contenu
   (fichiers à plat dans `WowPlanner/`), puis le pose sans écraser `Data.lua` ; l'addon livré avec le client ne remplace
   jamais une version plus récente). Pour diffuser un nouvel addon, il suffit donc d'augmenter `## Version` dans
-  `WowPlanner.toc` et de déployer le site. Il écrit `Data.lua` toutes les 20 minutes, tel que le site le prépare
+  `WowPlanner.toc` et de déployer le site. Le client se met lui-même à jour (1.4.0 et plus) : toutes les 6 heures, il
+  lit la dernière release GitHub (`client-v*`), et si elle est plus récente il télécharge le .zip de son système,
+  contrôle l'empreinte SHA-256 publiée par GitHub, se renomme en `.old` (un programme lancé peut se renommer, pas
+  s'effacer), pose le nouveau, le relance (`PYINSTALLER_RESET_ENVIRONMENT=1`) et se ferme ; la nouvelle version
+  efface l'ancienne au démarrage. Pour diffuser un nouveau client : augmenter `VERSION` et pousser un tag
+  `client-vX.Y.Z`. Test : `WOWPLANNER_RELEASES_API` pointe vers une fausse release. Il écrit `Data.lua` toutes les 20 minutes, tel que le site le prépare
   (`/api/addon/data` : prix et quêtes ; ETag : rien n'est retéléchargé sans changement) et envoie `WTF/Account/*/SavedVariables/WowPlanner.lua` au site dès qu'il change. Réglages
   dans `%APPDATA%\WowPlanner` (macOS : `~/Library/Application Support/WowPlanner`). `--once` : une synchro sans
   fenêtre.

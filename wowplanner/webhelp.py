@@ -611,11 +611,11 @@ les donjons propres à WoW Forever. Plus bas, le tableau des <b>raids</b> donne 
 {shot("donjon", "La fiche d'un donjon.", [
     ("faits", "Niveaux, taille du groupe et nombre de boss."),
     ("creer", "Créer une sortie pour ce donjon (formulaire prérempli)."),
+    ("onglets", "Les onglets : l'entrée, les boss dans l'ordre habituel (◇ = optionnel) et les quêtes du donjon."),
     ("entree", "Comment trouver l'entrée."),
     ("way", "Les coordonnées : clique pour copier la commande /way."),
     ("guide", "La carte détaillée et les stratégies, sur un site de guides."),
     ("qui", "Les persos du serveur qui ont le bon niveau."),
-    ("route", "Les boss dans l'ordre habituel ; ◇ = boss optionnel."),
 ])}
 <h3>À quoi sert le bouton /way ?</h3>
 <p>Il copie une commande comme <code>/way Marche de l'Ouest 42 72</code>. Si tu as l'addon <b>TomTom</b> dans le jeu,
@@ -664,9 +664,10 @@ bas).</li>
 )}
 {tip("Laisse le client ouvert (ou réduit) pendant que tu joues : il retélécharge les prix toutes les 20 minutes "
      "et envoie ton inventaire dès que le jeu l'enregistre.")}
-{note("<b>Mises à jour de l'addon</b> : le client vérifie en même temps que les prix si le site a une version plus "
-      "récente de l'addon, et l'installe tout seul (tes prix sont gardés). Il te le dit dans sa fenêtre : en jeu, "
-      "un <code>/reload</code> suffit pour la prendre. Pas besoin de retélécharger le client.")}
+{note("<b>Mises à jour</b> : le client se met à jour tout seul. Toutes les 6 heures, il regarde s'il existe une "
+      "nouvelle version, la télécharge, la vérifie et redémarre dessus (quelques secondes). Il vérifie aussi, avec les "
+      "prix, si le site a une version plus récente de l'addon, et l'installe (tes prix sont gardés) : en jeu, un "
+      "<code>/reload</code> suffit pour la prendre. Plus besoin de retélécharger quoi que ce soit.")}
 {warn("Ton jeton, c'est ta clé : ne le partage pas. Si tu penses qu'il a fuité, crée-en un nouveau sur la page "
       "Addon WoW : l'ancien ne marche plus.")}"""),
         Section("jeu", "Dans le jeu", f"""
@@ -823,7 +824,8 @@ privés du bot (rappels, commandes) arrivent toujours sur Discord.</p>"""),
 <p>Visible des membres qui ont la permission « Gérer le serveur » sur Discord, et de ceux à qui ils ont confié des
 droits (voir plus bas), depuis le menu → {ui('🛠️ Administration')}. Chacun n'y voit que les sections de ses droits.</p>
 {shot("admin", "La page Administration.", [
-    ("sync", "Relancer toute la synchro maintenant (sinon chaque nuit à 4 h). Ça peut prendre plusieurs minutes."),
+    ("onglets", "Un onglet par outil : persos des membres, sorties, synchro des données (sinon chaque nuit à 4 h), "
+                "droits confiés, atelier. Chacun ne voit que ceux de ses droits."),
     ("q", "Chercher un perso, un joueur ou une classe."),
     ("role", "Changer le rôle préféré d'un perso."),
     ("suppr", "Supprimer un perso : son joueur est prévenu en MP."),

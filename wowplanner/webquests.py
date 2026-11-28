@@ -94,16 +94,17 @@ def _step(qid: int, q: dict[str, Any], index: int, count: int, in_dungeon: bool,
             f"{giver}{reward_html}{details}</div></li>")
 
 
-def quests_section(db: Database, slug: str, show_names: bool) -> str:
-    """Section « Quêtes » de la fiche du donjon (vide si ce donjon n'a pas de zone de quêtes connue)."""
+def quests_section(db: Database, slug: str, show_names: bool) -> tuple[int, str] | None:
+    """Onglet « Quêtes » de la fiche du donjon : (nombre de quêtes, contenu), None si ce donjon n'a pas de zone de
+    quêtes connue."""
     group: QuestGroup | None = group_of_slug(slug)
     if group is None:
-        return ""
+        return None
     rows = db.quest_rows()
     links = db.quest_links()
     ids = sorted(qid for qid, q in rows.items() if q.get("area_id") in group.areas)
     if not ids:
-        return ('<h2>Quêtes</h2><p class="empty">Quêtes pas encore lues dans l\'API Blizzard (synchro de nuit).</p>')
+        return 0, '<p class="empty">Quêtes pas encore lues dans l\'API Blizzard (synchro de nuit).</p>'
     chains, listed = [], set()
     for qid in ids:
         if qid in listed:
@@ -121,7 +122,6 @@ def quests_section(db: Database, slug: str, show_names: bool) -> str:
         blocks.append(f'<div class="qchain">{head}<ol class="route quests">{steps}</ol></div>')
     found = sum(1 for qid in ids if rows[qid].get("npc_name") or rows[qid].get("x") is not None)
     shared = (f" Quêtes communes aux {len(group.slugs)} ailes : {esc(group.name)}." if len(group.slugs) > 1 else "")
-    return f"""<h2>Quêtes</h2>
-<p class="sub">{len(ids)} quête(s) liée(s) à ce donjon, avec leurs suites ; donneur repéré pour {found}/{len(ids)}.{shared}
+    return len(ids), f"""<p class="sub">{len(ids)} quête(s) liée(s) à ce donjon, avec leurs suites ; donneur repéré pour {found}/{len(ids)}.{shared}
 Le niveau « dès » est le plus bas niveau auquel un membre s'est vu proposer la quête.</p>
 {"".join(blocks)}"""

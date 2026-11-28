@@ -208,6 +208,69 @@ FILTER_SCRIPT = """
 </script>
 """
 
+def page_tabs(tabs: list[tuple[str, str, str]], label: str = "Sections de la page", default: str | None = None) -> str:
+    """Onglets d'une page longue : [(clé, libellé HTML, contenu HTML)]. L'onglet ouvert suit l'adresse (#quetes),
+    pour qu'un lien ouvre le bon ; sinon `default`, sinon le premier. Sans JavaScript, tout s'affiche à la suite avec
+    un titre par partie. La page doit inclure PAGE_TABS_SCRIPT."""
+    if len(tabs) == 1:  # un seul : pas d'onglet
+        return f'<h2>{tabs[0][1]}</h2>{tabs[0][2]}'
+    buttons, panels = [], []
+    for key, title, content in tabs:
+        buttons.append(
+            f'<button type="button" role="tab" id="tab-{key}" aria-controls="{key}" data-ptab="{key}">{title}</button>'
+        )
+        panels.append(
+            f'<section class="ppanel" role="tabpanel" id="{key}" aria-labelledby="tab-{key}" data-ppanel="{key}">'
+            f'<h2 class="ppanel-title">{title}</h2>{content}</section>'
+        )
+    first = f' data-default="{default}"' if default else ""
+    return (f'<div class="ptabs" role="tablist" aria-label="{esc(label)}"{first}>{"".join(buttons)}</div>'
+            f'{"".join(panels)}')
+
+
+PAGE_TABS_SCRIPT = """
+<script>
+(() => {
+  const bar = document.querySelector(".ptabs");
+  if (!bar) return;
+  const buttons = [...bar.querySelectorAll("button[data-ptab]")];
+  const panels = [...document.querySelectorAll("[data-ppanel]")];
+  document.documentElement.classList.add("has-ptabs");
+  // La barre d'onglets reste visible sous l'en-tête du site (dont la hauteur change sur mobile).
+  const header = document.querySelector("header");
+  const fit = () => document.documentElement.style.setProperty("--head-h", (header ? header.offsetHeight : 0) + "px");
+  fit();
+  addEventListener("resize", fit);
+  function show(key, scroll) {
+    if (!buttons.some(b => b.dataset.ptab === key)) key = bar.dataset.default || buttons[0].dataset.ptab;
+    buttons.forEach(b => {
+      const on = b.dataset.ptab === key;
+      b.classList.toggle("active", on);
+      b.setAttribute("aria-selected", on);
+      b.tabIndex = on ? 0 : -1;
+    });
+    panels.forEach(p => p.hidden = p.dataset.ppanel !== key);
+    if (scroll && bar.getBoundingClientRect().top < 0) bar.scrollIntoView({block: "start"});
+  }
+  buttons.forEach((b, i) => {
+    b.addEventListener("click", () => {
+      history.replaceState(null, "", "#" + b.dataset.ptab);
+      show(b.dataset.ptab, true);
+    });
+    b.addEventListener("keydown", e => {  // flèches gauche / droite entre les onglets
+      const step = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
+      if (!step) return;
+      const next = buttons[(i + step + buttons.length) % buttons.length];
+      next.focus();
+      next.click();
+    });
+  });
+  addEventListener("hashchange", () => show(location.hash.slice(1), true));
+  show(location.hash.slice(1), false);
+})();
+</script>
+"""
+
 TABS_SCRIPT = """
 <script>
 (() => {

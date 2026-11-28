@@ -19,7 +19,7 @@ BASE = sys.argv[1].rstrip("/")
 ONLY = set(sys.argv[2:])
 OUT = Path(__file__).resolve().parents[2] / "wowplanner" / "static" / "aide"
 CHROME = os.getenv("CHROME_PATH") or None
-STATIC_HEADER = "header{position:static !important}"
+STATIC_HEADER = "header{position:static !important} .ptabs{position:static !important}"
 
 
 async def union_box(page, selectors, pad):
@@ -179,9 +179,9 @@ shot("infobulle-objet", "/perso/1", [".armory .slot:not(.empty) >> nth=0", ".arm
 shot("infobulle-stat", "/perso/1", [".statbox .srow[tabindex] >> nth=3", ".statbox .srow[tabindex] >> nth=3 >> .tt"],
      prep=hover_stat, pad=10)
 shot("talents", "/perso/1", ".talents", {"arbre": ".tree-head >> nth=2", "talent": ".tree >> nth=2 >> .tal >> nth=2"})
-shot("equipement", "/perso/1", ["#equipement-fabricable summary", "#equipement-fabricable .gear-group >> nth=1"], {
+shot("equipement", "/perso/1#fabricable", ["#equipement-fabricable summary", "#equipement-fabricable .gear-group >> nth=1"], {
     "case": "#gear-only-up", "groupe": ".gear-group h4 >> nth=0", "carte": ".gear-list > * >> nth=0"}, prep=open_gear)
-shot("recettes", "/perso/1", ["main h2:has-text('Recettes')", "[data-panel]:not([hidden]) details.fold >> nth=2"], {
+shot("recettes", "/perso/1#metiers", ["main h2:not(.ppanel-title):has-text('Recettes')", "[data-panel]:not([hidden]) details.fold >> nth=2"], {
     "q": "#q", "plier": "button[data-fold=open]", "onglets": ".tabs button >> nth=0",
     "famille": "[data-panel]:not([hidden]) details.fold summary >> nth=0"}, prep=scroll_recipes)
 shot("mes-persos", "/mes-persos", ["main h1", "main form.form"], {
@@ -213,11 +213,11 @@ shot("donjons", "/donjons", ["main h1", "#dungeons tbody tr >> nth=8"], {
     "q": "#q", "perso": "#lvl-who", "niveau": "#lvl", "tranche": "#lvl-only", "ligne": "#dungeons tr.d-in >> nth=0",
     "barre": "#dungeons tr.d-in >> nth=0 >> .lbar", "qui": "#dungeons tr.d-in >> nth=0 >> .who-avatars"},
      prep=dungeon_level)
-shot("donjon", "/donjon/the-deadmines", ["main .crumb", ".route .step >> nth=4"], {
-    "faits": ".facts", "creer": ".create-ev", "entree": ".dgrid .card >> nth=0 >> p >> nth=0", "way": "button.copy",
-    "guide": ".dgrid a.btn[target]", "qui": ".who-list", "route": ".route .step >> nth=1"})
+shot("donjon", "/donjon/the-deadmines", ["main .crumb", ".dgrid"], {
+    "faits": ".facts", "creer": ".create-ev", "onglets": ".ptabs", "entree": ".dgrid .card >> nth=0 >> p >> nth=0",
+    "way": "button.copy", "guide": ".dgrid a.btn[target]", "qui": ".who-list"})
 shot("admin", "/admin", ["main h1", "#persos tbody tr >> nth=3"], {
-    "sync": "form[action='/admin/sync'] button", "q": "#persos #q", "role": "#persos select.pick",
+    "onglets": ".ptabs", "q": "#persos #q", "role": "#persos select.pick",
     "suppr": "#persos button.danger"})
 shot("mobile", "/sorties", ["header", "#s1001 .ev-role >> nth=0"], {"nav": "header nav", "menu": "details.usermenu summary"},
      viewport=(390, 844), pad=0, static_header=False, dsf=2)

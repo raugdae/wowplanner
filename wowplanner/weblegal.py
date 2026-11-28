@@ -174,6 +174,7 @@ données du site dans ton navigateur.</p>
 (Union européenne). Comme tout serveur web, il peut garder brièvement des journaux techniques (adresse IP,
 page demandée) pour la sécurité et le dépannage.</li>
 <li><b>Discord</b> sert à la connexion et au bot ; il applique sa propre politique de confidentialité.</li>
+<li><b>GitHub</b> : si tu utilises le client WoW Planner, il y vérifie toutes les 6 heures s'il existe une nouvelle version, et la télécharge (GitHub voit ton adresse IP, comme pour tout téléchargement ; rien d'autre ne lui est envoyé).</li>
 <li><b>Blizzard</b> : le site lit l'armurerie et l'hôtel des ventes via l'API officielle. Les images du jeu
 (icônes, portraits) sont chargées directement depuis les serveurs de Blizzard : ton navigateur s'y connecte donc
 pour les afficher, sans qu'on leur transmette quoi que ce soit sur toi.</li>

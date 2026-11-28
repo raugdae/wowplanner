@@ -32,7 +32,8 @@ from .recipes import normalize
 from .roles import LABELS, ROLES
 from .webrecipes import recipe_card
 from .webui import (
-    _VIEWER, CLASS_COLORS, FILTER_SCRIPT, QUALITY_COLORS, avatar_html, class_span, esc, login_url, page,
+    _VIEWER, CLASS_COLORS, FILTER_SCRIPT, PAGE_TABS_SCRIPT, QUALITY_COLORS, avatar_html, class_span, esc, login_url, page,
+    page_tabs,
 )
 from .webauth import unsign
 
@@ -953,7 +954,7 @@ placeholder="Prénom Nom (ex. Grommash Hurlenfer)" data-armory="{int(strict)}"><
 déjà vus par le bot (inscrits à une sortie, persos déclarés, connectés au site).</p>
 </form>"""
 
-        persos_html = f"""<section class="card admin-sec" id="persos"><h2>👥 Persos des membres</h2>
+        persos_html = f"""<section class="card admin-sec"><h2>👥 Persos des membres</h2>
 <p class="muted">{len(characters)} perso(s). Modifier le rôle préféré ou supprimer un perso (son joueur est prévenu en MP
 quand c'est un autre que toi).{missing_text}</p>
 {table}
@@ -971,22 +972,27 @@ prévenus sur Discord) et retirer un inscrit, {discord_too}.</p>
 <p class="muted">Le panneau de l'atelier se poste depuis Discord, dans le salon voulu : <code>/admin atelier</code>.</p>
 </section>"""
 
+        # Un onglet par outil (le délégué ne voit que les siens) ; les actions reviennent sur leur onglet (#persos…).
+        tabs = [
+            ("persos", f'👥 Persos<span class="n">{len(characters)}</span>', persos_html, RIGHT_PERSOS),
+            ("sorties", "📅 Sorties", sorties_html, RIGHT_SORTIES),
+            ("synchro", "🔄 Synchro", sync_html, RIGHT_SYNC),
+        ]
         if is_admin:
             intro = "Les outils de <code>/admin</code>, pour les membres qui ont la permission « Gérer le serveur » sur Discord."
-            sections = [sync_html, persos_html, sorties_html, self._delegations_html(delegations, member_ids, names, user.id),
-                        atelier_html]
+            tabs.append(("delegations", f'🔑 Droits confiés<span class="n">{len(delegations)}</span>' if delegations
+                         else "🔑 Droits confiés", self._delegations_html(delegations, member_ids, names, user.id),
+                         RIGHT_DELEGATE))
+            tabs.append(("atelier", "🔨 Atelier", atelier_html, RIGHT_DELEGATE))
         else:
             labels = ", ".join(f"<b>{esc(right_label(r))}</b>" for r in RIGHTS if r in rights)
             intro = f"Les droits qu'un admin du serveur t'a confiés sur le site : {labels}."
-            sections = [
-                html for right, html in ((RIGHT_SYNC, sync_html), (RIGHT_PERSOS, persos_html), (RIGHT_SORTIES, sorties_html))
-                if right in rights
-            ]
+        shown = [(key, label, html) for key, label, html, right in tabs if right in rights]
         body = f"""
 <h1 class="title">Administration</h1>
 <p class="sub">{intro}</p>
-{"".join(sections)}"""
-        return self._render(request, "Administration", "", body, LOOKUP_SCRIPT + FILTER_SCRIPT)
+{page_tabs(shown, "Administration")}"""
+        return self._render(request, "Administration", "", body, LOOKUP_SCRIPT + FILTER_SCRIPT + PAGE_TABS_SCRIPT)
 
     def _delegations_html(self, delegations: list, member_ids: list[int], names: dict[int, str], me: int) -> str:
         """Section « Droits confiés » (admins du serveur seulement) : qui a quels droits, en confier, en retirer."""
@@ -1024,7 +1030,7 @@ prévenus sur Discord) et retirer un inscrit, {discord_too}.</p>
             for uid in sorted((u for u in member_ids if u not in taken), key=lambda u: normalize(names.get(u, "")))
         )
         explain = "".join(f"<li><b>{esc(label)}</b> : {esc(desc)}.</li>" for label, desc in RIGHTS.values())
-        return f"""<section class="card admin-sec" id="delegations"><h2>🔑 Droits confiés</h2>
+        return f"""<section class="card admin-sec"><h2>🔑 Droits confiés</h2>
 <p class="muted">Pour confier une partie de l'administration à un membre (raid lead, officier…) sans lui donner de
 permission sur Discord. Ces droits ne valent que <b>sur le site</b> ; le membre est prévenu en MP.</p>
 <ul class="hlist">{explain}</ul>
@@ -1049,7 +1055,7 @@ confies des droits ne peut pas en confier à son tour.</p>
         return await self._act(request, "/admin#delegations", action)
 
     async def admin_sync(self, request: web.Request) -> web.StreamResponse:
-        return await self._act(request, "/admin", lambda user, form: self.backend.start_sync(user))
+        return await self._act(request, "/admin#synchro", lambda user, form: self.backend.start_sync(user))
 
     async def admin_add_character(self, request: web.Request) -> web.StreamResponse:
         async def action(user, form) -> str:

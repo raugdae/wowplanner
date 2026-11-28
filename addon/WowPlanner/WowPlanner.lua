@@ -10,7 +10,7 @@ local NUM_BAGS = NUM_TOTAL_EQUIPPED_BAG_SLOTS or ((NUM_BAG_SLOTS or 4) + (NUM_RE
 local NUM_BANK_BAGS = NUM_BANKBAGSLOTS or 6
 local BANK = BANK_CONTAINER or -1
 local COLOR = "|cff9d8cff"
-local VERSION = "1.1.0"
+local VERSION = "1.1.1"
 local AH_CUT = 0.05  -- commission de l'hôtel des ventes sur une vente (comme la calculatrice du site)
 local LOGO = "|TInterface\\AddOns\\WowPlanner\\logo:0|t"  -- logo à la taille du texte
 
@@ -257,6 +257,13 @@ SlashCmdList.WOWPLANNER = function(text)
       say(n .. " objets, prix du " .. date("%d/%m à %H:%M", WowPlannerData.ts) .. ".")
     else
       say("pas encore de prix : lance le client WoW Planner, puis /wp maj.")
+    end
+    if WowPlannerData and WowPlannerData.dungeons then
+      local total = WowPlannerData.total or 0
+      say("quêtes de donjon : " .. total .. " connues, donneur repéré pour " .. (WowPlannerData.found or 0) .. "."
+        .. (total == 0 and " Le site ne les a pas encore chargées (synchro des données)." or ""))
+    else
+      say("pas de quêtes de donjon dans les données : client WoW Planner 1.3 ou plus, puis /wp maj.")
     end
     say("/wp quetes : quêtes de donjon (ou le bouton de la minimap) · /wp bouton : afficher ou masquer ce bouton · /wp maj : recharger l'interface pour prendre les derniers prix · /wp off, /wp on : prix dans les infobulles · /wp sacs : ce que l'addon voit dans tes sacs · /wp info : à propos.")
     say("Banque " .. (me.bankAt and ("vue le " .. date("%d/%m à %H:%M", me.bankAt)) or "jamais ouverte : ouvre-la une fois") .. ".")

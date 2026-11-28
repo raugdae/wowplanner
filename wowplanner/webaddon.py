@@ -32,7 +32,7 @@ from .quests import AREAS, lua_data, parse_hunt
 from .recipes import normalize
 from .webauth import MEMBER_RECHECK_SECONDS
 from .weblegal import REPO
-from .webui import COPY_SCRIPT, _VIEWER, esc
+from .webui import COPY_SCRIPT, PAGE_TABS_SCRIPT, _VIEWER, esc, page_tabs
 
 if TYPE_CHECKING:
     from .web import WebSite
@@ -157,24 +157,20 @@ maintenant dans le client WoW Planner) :</p>
             f'<th class="num">Objets</th><th></th></tr></thead><tbody>{"".join(lines)}</tbody></table></div>'
             if lines else '<p class="muted">Rien reçu du jeu pour l\'instant.</p>'
         )
-        body = f"""
-<h1 class="title">🧩 Addon WoW</h1>
-<p class="sub">Les prix de l'hôtel des ventes dans les infobulles du jeu, et ton inventaire (sacs, banque), tes
-métiers et tes recettes envoyés au site pour la calculatrice.</p>
-<section class="card admin-sec"><h2>1. Installer</h2>
+        install = f"""<section class="card admin-sec">
 <ol>
 <li>Télécharge le <a href="{CLIENT_URL}" target="_blank" rel="noopener">client WoW Planner</a> (Windows ou macOS) et
 lance-le.</li>
 <li>Dans le client, choisis le dossier du jeu (celui qui contient <code>Interface</code> et <code>WTF</code>) :
 le client y installe l'addon tout seul, puis le met à jour quand le site en a une nouvelle version (en jeu :
-<code>/reload</code>).</li>
+<code>/reload</code>). Le client lui-même se met aussi à jour tout seul (version 1.4 ou plus).</li>
 <li>Colle ton jeton (ci-dessous) dans le client.</li>
 </ol>
 <p class="muted">Sans le client, tu peux poser l'addon à la main : <a href="/addon/WowPlanner.zip">WowPlanner.zip</a>, à
 décompresser dans <code>Interface/AddOns</code>. Il n'aura alors pas les prix ni l'envoi de l'inventaire.</p>
-</section>
-<section class="card admin-sec"><h2>2. Ton jeton</h2>{key_block}<div class="actions">{buttons}</div></section>
-<section class="card admin-sec"><h2>3. En jeu</h2>
+</section>"""
+        key = f'<section class="card admin-sec">{key_block}<div class="actions">{buttons}</div></section>'
+        in_game = """<section class="card admin-sec">
 <ul>
 <li>Bouton sur la minimap (ou <code>/wp quetes</code>) : les quêtes de donjon de ton niveau, leurs suites et un waypoint vers chaque donneur. En jouant, tu participes à la chasse au trésor de la guilde : chaque quête qu'un PNJ te propose complète la carte pour tout le monde.</li>
 <li>Survole un objet : prix le plus bas à l'HdV (à l'unité et pour la pile), prix marchand à l'unité, bénéfice ou perte en le vendant à l'HdV plutôt qu'au marchand (5 % de commission déduits) et ventes estimées par jour.</li>
@@ -184,9 +180,21 @@ derniers prix téléchargés par le client.</li>
 </ul>
 <p class="muted">Le jeu n'enregistre ce que voit l'addon qu'à la déconnexion ou au <code>/reload</code> : le client
 l'envoie au site juste après.</p>
-</section>
-<section class="card admin-sec"><h2>Reçu du jeu</h2>{received}</section>"""
-        return self.pages._render(request, title, "", body, COPY_SCRIPT)
+</section>"""
+        tabs = [
+            ("installer", "1. Installer", install),
+            ("jeton", "2. Ton jeton", key),
+            ("jeu", "3. En jeu", in_game),
+            ("recu", "📦 Reçu du jeu", f'<section class="card admin-sec">{received}</section>'),
+        ]
+        # Jeton tout juste créé (affiché une seule fois) : cet onglet ; déjà en route : ce que le site a reçu.
+        default = "jeton" if token else ("recu" if lines else None)
+        body = f"""
+<h1 class="title">🧩 Addon WoW</h1>
+<p class="sub">Les prix de l'hôtel des ventes et les quêtes de donjon dans le jeu, et ton inventaire (sacs, banque),
+tes métiers et tes recettes envoyés au site pour la calculatrice.</p>
+{page_tabs(tabs, "Addon WoW", default)}"""
+        return self.pages._render(request, title, "", body, COPY_SCRIPT + PAGE_TABS_SCRIPT)
 
     def _form_ok(self, request: web.Request, form: Any, user_id: int) -> bool:
         return self.pages._same_origin(request) and hmac.compare_digest(

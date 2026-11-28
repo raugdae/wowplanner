@@ -171,6 +171,17 @@ td .none { color:var(--muted); opacity:.5; }
 .tabs button .n { color:var(--muted); font-size:12px; margin-left:6px; }
 .tabs button.active { background:var(--panel2); color:var(--accent); border-color:var(--accent); font-weight:700; }
 .tabs button:disabled { opacity:.45; cursor:default; }
+/* Onglets d'une page longue (fiche de donjon…) : barre collée sous l'en-tête ; sans JavaScript, tout est affiché. */
+.ptabs { display:none; }
+.has-ptabs .ptabs { display:flex; gap:6px; overflow-x:auto; position:sticky; top:var(--head-h, 0px); z-index:4;
+  background:var(--bg); padding:10px 0 0; margin:14px 0 12px; border-bottom:1px solid var(--line); scrollbar-width:none; }
+.ptabs::-webkit-scrollbar { display:none; }
+.ptabs button { flex:none; background:var(--panel); color:var(--text); border:1px solid var(--line); border-bottom:none;
+  border-radius:8px 8px 0 0; padding:8px 16px; font:inherit; cursor:pointer; margin-bottom:-1px; white-space:nowrap; }
+.ptabs button .n { color:var(--muted); font-size:12px; margin-left:6px; }
+.ptabs button.active { background:var(--panel2); color:var(--accent); border-color:var(--accent); font-weight:700; }
+.has-ptabs .ppanel-title { display:none; }
+.ppanel { scroll-margin-top:calc(var(--head-h, 60px) + 60px); }
 /* Armurerie : équipement façon fiche du jeu + caractéristiques. */
 .armory { display:grid; grid-template-columns:minmax(0, 1fr) 300px; gap:18px; align-items:start; margin:10px 0 6px; }
 .armory .main { min-width:0; }
